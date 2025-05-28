@@ -108,9 +108,9 @@ def get_ohlcv(symbol):
     return df
 
 def analyze(df):
-    """Анализ по индикаторам: SMA, MACD, ATR, RSI (SMA30 и SMA70)."""
-    df['sma30'] = ta.trend.sma_indicator(df['close'], window=30)
-    df['sma70'] = ta.trend.sma_indicator(df['close'], window=70)
+    """Анализ по индикаторам: SMA, MACD, ATR, RSI (SMA50 и SMA100)."""
+    df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
+    df['sma100'] = ta.trend.sma_indicator(df['close'], window=100)
     macd = ta.trend.macd_diff(df['close'])
     df['macd'] = macd
     df['rsi'] = ta.momentum.rsi(df['close'], window=14)
@@ -118,16 +118,16 @@ def analyze(df):
     return df
 
 def check_signals(df):
-    """Golden/Death Cross по SMA30/70 + MACD + мягкий фильтр RSI."""
+    """Golden/Death Cross по SMA50/100 + MACD + строгий фильтр RSI."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
-    # Golden Cross (SMA30 пересёк SMA70 вверх) + MACD бычий + RSI < 70
-    if prev['sma30'] < prev['sma70'] and last['sma30'] > last['sma70'] and last['macd'] > 0 and last['rsi'] < 70:
-        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA30 пересёк SMA70 вверх (Golden Cross), MACD бычий, RSI < 70.')
-    # Death Cross (SMA30 пересёк SMA70 вниз) + MACD медвежий + RSI > 30
-    if prev['sma30'] > prev['sma70'] and last['sma30'] < last['sma70'] and last['macd'] < 0 and last['rsi'] > 30:
-        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA30 пересёк SMA70 вниз (Death Cross), MACD медвежий, RSI > 30.')
+    # Golden Cross (SMA50 пересёк SMA100 вверх) + MACD бычий + RSI < 60
+    if prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100'] and last['macd'] > 0 and last['rsi'] < 60:
+        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 60.')
+    # Death Cross (SMA50 пересёк SMA100 вниз) + MACD медвежий + RSI > 40
+    if prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100'] and last['macd'] < 0 and last['rsi'] > 40:
+        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 40.')
     return signals
 
 # ========== ОТПРАВКА В TELEGRAM ==========
