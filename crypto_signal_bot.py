@@ -282,8 +282,8 @@ async def send_daily_report():
 # ========== ОСНОВНОЙ ЦИКЛ ==========
 TIME_SHIFT_HOURS = 3  # Сдвиг времени для локального времени пользователя
 async def main():
-    last_report = datetime.now()
-    last_alive = datetime.now() - timedelta(hours=3)  # чтобы сразу отправить первое alive-сообщение
+    last_report_hours = set()  # Часы, когда уже был отправлен отчёт (например, {9, 22})
+    last_alive = datetime.now() - timedelta(hours=6)  # чтобы сразу отправить первое alive-сообщение
     last_long_signal = datetime.now() - timedelta(days=1)
     adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
     while True:
@@ -373,20 +373,24 @@ async def main():
                 except Exception as e:
                     print(f"Ошибка долгосрок по {symbol}: {e}")
             last_long_signal = now
-        # Alive-отчёт раз в 3 часа + список обработанных монет
-        now = datetime.now() + timedelta(hours=TIME_SHIFT_HOURS)
-        if (now - last_alive) > timedelta(hours=3):
-            msg = f"⏳ Бот работает, обновил данные на {now.strftime('%d.%m.%Y %H:%M')}\n"
+        # Alive-отчёт раз в 6 часов + список обработанных монет
+        now_msk = datetime.utcnow() + timedelta(hours=3)  # Московское время
+        if (now_msk - last_alive) > timedelta(hours=6):
+            msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
             msg += f"Обработано монет: {len(processed_symbols)}\n"
             msg += ', '.join(processed_symbols) if processed_symbols else 'Монеты не обработаны.'
             if not signals_sent:
                 msg += "\nСигналов нет."
             await send_telegram_message(msg)
-            last_alive = now
-        # Ежедневный отчёт (раз в сутки)
-        if (now - last_report) > timedelta(hours=24):
+            last_alive = now_msk
+        # Ежедневный отчёт в 9:00 и 22:00 по Москве
+        report_hours = [9, 22]
+        current_hour = now_msk.hour
+        if current_hour in report_hours and current_hour not in last_report_hours:
             await send_daily_report()
-            last_report = now
+            last_report_hours = {current_hour}  # Сбросить, чтобы не было дублирования в этом часу
+        if current_hour not in report_hours:
+            last_report_hours = set()  # Обнуляем, чтобы в следующий раз снова отправить
         await asyncio.sleep(60 * 3)  # Проверять каждые 3 минуты
 
 if __name__ == '__main__':
