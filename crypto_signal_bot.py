@@ -108,26 +108,27 @@ def get_ohlcv(symbol):
     return df
 
 def analyze(df):
-    """Анализ по индикаторам: SMA, MACD, ATR, RSI (SMA50 и SMA100)."""
+    """Анализ по индикаторам: SMA, MACD, ATR (8ч и сутки), RSI (SMA50 и SMA100)."""
     df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
     df['sma100'] = ta.trend.sma_indicator(df['close'], window=100)
     macd = ta.trend.macd_diff(df['close'])
     df['macd'] = macd
     df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-    df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=100)
+    df['atr8h'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=100)
+    df['atr1d'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=288)
     return df
 
 def check_signals(df):
-    """Golden/Death Cross по SMA50/100 + MACD + строгий фильтр RSI."""
+    """Golden/Death Cross по SMA50/100 + MACD + мягкий фильтр RSI."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
-    # Golden Cross (SMA50 пересёк SMA100 вверх) + MACD бычий + RSI < 60
-    if prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100'] and last['macd'] > 0 and last['rsi'] < 60:
-        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 60.')
-    # Death Cross (SMA50 пересёк SMA100 вниз) + MACD медвежий + RSI > 40
-    if prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100'] and last['macd'] < 0 and last['rsi'] > 40:
-        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 40.')
+    # Golden Cross (SMA50 пересёк SMA100 вверх) + MACD бычий + RSI < 70
+    if prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100'] and last['macd'] > 0 and last['rsi'] < 70:
+        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
+    # Death Cross (SMA50 пересёк SMA100 вниз) + MACD медвежий + RSI > 30
+    if prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100'] and last['macd'] < 0 and last['rsi'] > 30:
+        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
     return signals
 
 # ========== ОТПРАВКА В TELEGRAM ==========
@@ -171,10 +172,12 @@ async def main():
                 time = df['timestamp'].iloc[-1] + timedelta(hours=TIME_SHIFT_HOURS)
                 processed_symbols.append(symbol)
                 # Расчёт адаптивных целей
-                atr = df['atr'].iloc[-1]
-                if not pd.isna(atr) and price > 0:
-                    tp = max(round((atr * 3.0) / price, 4), 0.01)  # минимум 1%
-                    sl = max(round((atr * 2.0) / price, 4), 0.01)
+                atr8h = df['atr8h'].iloc[-1]
+                atr1d = df['atr1d'].iloc[-1]
+                if not pd.isna(atr8h) and not pd.isna(atr1d) and price > 0:
+                    atr = max(atr8h, atr1d)
+                    tp = min(max(round((atr * 3.0) / price, 4), 0.01), 0.2)  # минимум 1%, максимум 20%
+                    sl = min(max(round((atr * 2.0) / price, 4), 0.01), 0.2)
                     adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 else:
                     tp = 0.01
