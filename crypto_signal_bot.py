@@ -13,14 +13,22 @@ TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'  # Токен 
 TELEGRAM_CHAT_ID = 931346988  # chat_id пользователя
 
 EXCHANGE = ccxt.binance()
-# Белый список топ-30 популярных монет
+# Белый список топ-50 популярных монет + перспективные альткойны и волатильные монеты
 TOP_SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
     'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'LINK/USDT', 'MATIC/USDT',
     'TRX/USDT', 'DOT/USDT', 'LTC/USDT', 'BCH/USDT', 'UNI/USDT',
     'ATOM/USDT', 'XLM/USDT', 'FIL/USDT', 'APT/USDT', 'OP/USDT',
     'ARB/USDT', 'NEAR/USDT', 'ETC/USDT', 'HBAR/USDT', 'VET/USDT',
-    'ICP/USDT', 'SUI/USDT', 'INJ/USDT', 'STX/USDT', 'RNDR/USDT'
+    'ICP/USDT', 'SUI/USDT', 'INJ/USDT', 'STX/USDT', 'RNDR/USDT',
+    'MKR/USDT', 'AAVE/USDT', 'EGLD/USDT', 'ALGO/USDT', 'GRT/USDT',
+    'MANA/USDT', 'SAND/USDT', 'AXS/USDT', 'FTM/USDT', 'LDO/USDT',
+    'CRV/USDT', 'DYDX/USDT', 'PEPE/USDT', 'TWT/USDT', 'CAKE/USDT',
+    'ENS/USDT', 'BLUR/USDT', 'GMT/USDT', '1INCH/USDT', 'COMP/USDT',
+    # Перспективные альткойны
+    'PYTH/USDT', 'JUP/USDT', 'TIA/USDT', 'SEI/USDT', 'WIF/USDT', 'RON/USDT', 'BEAMX/USDT',
+    # Фьючерсные/волатильные
+    '1000PEPE/USDT', 'FLOKI/USDT', 'BONK/USDT', 'SHIB/USDT'
 ]
 markets = EXCHANGE.load_markets()
 SYMBOLS = [symbol for symbol in TOP_SYMBOLS if symbol in markets and markets[symbol]['active']]
@@ -199,12 +207,12 @@ async def main():
                 atr1d = df['atr1d'].iloc[-1]
                 if not pd.isna(atr8h) and not pd.isna(atr1d) and price > 0:
                     atr = max(atr8h, atr1d)
-                    tp = min(max(round((atr * 3.0) / price, 4), 0.01), 0.2)  # минимум 1%, максимум 20%
-                    sl = min(max(round((atr * 2.0) / price, 4), 0.01), 0.2)
+                    tp = min(max(round((atr * 3.0) / price, 4), 0.008), 0.2)  # минимум 0.8%, максимум 20%
+                    sl = min(max(round((atr * 2.0) / price, 4), 0.008), 0.2)
                     adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 else:
-                    tp = 0.01
-                    sl = 0.01
+                    tp = 0.008
+                    sl = 0.008
                     adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 # Проверка на открытые сделки
                 if symbol in open_trades:
