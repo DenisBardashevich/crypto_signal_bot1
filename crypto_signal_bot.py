@@ -145,6 +145,7 @@ async def send_daily_report():
     await send_telegram_message(text)
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
+TIME_SHIFT_HOURS = 3  # Сдвиг времени для локального времени пользователя
 async def main():
     last_report = datetime.now()
     last_alive = datetime.now() - timedelta(hours=3)  # чтобы сразу отправить первое alive-сообщение
@@ -164,7 +165,7 @@ async def main():
                 df = analyze(df)
                 signals = check_signals(df)
                 price = df['close'].iloc[-1]
-                time = df['timestamp'].iloc[-1]
+                time = df['timestamp'].iloc[-1] + timedelta(hours=TIME_SHIFT_HOURS)
                 processed_symbols.append(symbol)
                 # Проверка на открытые сделки
                 if symbol in open_trades:
@@ -203,7 +204,7 @@ async def main():
                 print(error_text)
                 await send_telegram_message(f"❗️ {error_text}")
         # Alive-отчёт раз в 3 часа + список обработанных монет
-        now = datetime.now()  # теперь без TZ_SHIFT
+        now = datetime.now() + timedelta(hours=TIME_SHIFT_HOURS)
         if (now - last_alive) > timedelta(hours=3):
             msg = f"⏳ Бот работает, обновил данные на {now.strftime('%d.%m.%Y %H:%M')}\n"
             msg += f"Обработано монет: {len(processed_symbols)}\n"
