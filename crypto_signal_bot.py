@@ -297,7 +297,10 @@ TIME_SHIFT_HOURS = 3  # Сдвиг времени для локального в
 async def telegram_bot():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("stats", stats_command))
-    await app.run_polling()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await asyncio.Event().wait()  # чтобы задача не завершалась
 
 async def main():
     tz_msk = timezone(timedelta(hours=3))
