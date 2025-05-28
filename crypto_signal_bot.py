@@ -108,11 +108,12 @@ def get_ohlcv(symbol):
     return df
 
 def analyze(df):
-    """Анализ по индикаторам: SMA, MACD (SMA20 и SMA50)."""
+    """Анализ по индикаторам: SMA, MACD (SMA20 и SMA50), ATR."""
     df['sma20'] = ta.trend.sma_indicator(df['close'], window=20)
     df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
     macd = ta.trend.macd_diff(df['close'])
     df['macd'] = macd
+    df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=100)  # ATR за ~8 часов (100 пятиминуток)
     return df
 
 def check_signals(df):
@@ -149,6 +150,7 @@ TIME_SHIFT_HOURS = 3  # Сдвиг времени для локального в
 async def main():
     last_report = datetime.now()
     last_alive = datetime.now() - timedelta(hours=3)  # чтобы сразу отправить первое alive-сообщение
+    adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
     while True:
         # Проверка наличия монет
         if not SYMBOLS:
@@ -167,21 +169,33 @@ async def main():
                 price = df['close'].iloc[-1]
                 time = df['timestamp'].iloc[-1] + timedelta(hours=TIME_SHIFT_HOURS)
                 processed_symbols.append(symbol)
+                # Расчёт адаптивных целей
+                atr = df['atr'].iloc[-1]
+                if not pd.isna(atr) and price > 0:
+                    tp = round((atr * 1.5) / price, 4)  # в долях (например, 0.0123 = 1.23%)
+                    sl = round((atr * 1.0) / price, 4)
+                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
+                else:
+                    tp = 0.02
+                    sl = 0.02
+                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 # Проверка на открытые сделки
                 if symbol in open_trades:
                     buy_price = open_trades[symbol]['buy_price']
                     change = (price - buy_price) / buy_price
+                    tp = adaptive_targets[symbol]['tp']
+                    sl = adaptive_targets[symbol]['sl']
                     # Тейк-профит
-                    if change >= TAKE_PROFIT:
-                        msg = f"🎯 {symbol} достиг цели +2%!\nРекомендуется ПРОДАТЬ для фиксации прибыли.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
+                    if change >= tp:
+                        msg = f"🎯 {symbol} достиг цели +{tp*100:.2f}% (адаптивный тейк-профит)\nРекомендуется ПРОДАТЬ для фиксации прибыли.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
                         await send_telegram_message(msg)
                         record_trade(symbol, 'SELL', price, time)
                         close_trade(symbol)
                         signals_sent = True
                         continue
                     # Стоп-лосс
-                    if change <= STOP_LOSS:
-                        msg = f"⚠️ {symbol} снизился на 2% от точки входа.\nРекомендуется ПРОДАТЬ для ограничения убытков.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
+                    if change <= -sl:
+                        msg = f"⚠️ {symbol} снизился на -{sl*100:.2f}% (адаптивный стоп-лосс)\nРекомендуется ПРОДАТЬ для ограничения убытков.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
                         await send_telegram_message(msg)
                         record_trade(symbol, 'SELL', price, time)
                         close_trade(symbol)
@@ -189,7 +203,10 @@ async def main():
                         continue
                 # Сигналы на вход/выход
                 if signals:
+                    tp = adaptive_targets[symbol]['tp'] if symbol in adaptive_targets else 0.02
+                    sl = adaptive_targets[symbol]['sl'] if symbol in adaptive_targets else 0.02
                     msg = f"\n\U0001F4B0 Сигналы для {symbol} на {time.strftime('%d.%m.%Y %H:%M')}:\n" + '\n\n'.join(signals)
+                    msg += f"\nАдаптивный тейк-профит: +{tp*100:.2f}%, стоп-лосс: -{sl*100:.2f}%"
                     await send_telegram_message(msg)
                     signals_sent = True
                     for s in signals:
