@@ -22,7 +22,7 @@ SYMBOLS = [
     and markets[symbol].get('quoteVolume', 0) is not None
     and markets[symbol].get('quoteVolume', 0) > 1_000_000
 ]
-TIMEFRAME = '15m'  # Интервал свечей
+TIMEFRAME = '5m'  # Интервал свечей теперь 5 минут
 LIMIT = 200  # Количество свечей для анализа
 
 TAKE_PROFIT = 0.03  # +3%
@@ -106,25 +106,24 @@ def get_ohlcv(symbol):
     return df
 
 def analyze(df):
-    """Анализ по индикаторам: SMA, RSI, MACD."""
+    """Анализ по индикаторам: SMA, MACD (SMA20 и SMA50)."""
+    df['sma20'] = ta.trend.sma_indicator(df['close'], window=20)
     df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
-    df['sma200'] = ta.trend.sma_indicator(df['close'], window=200)
-    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
     macd = ta.trend.macd_diff(df['close'])
     df['macd'] = macd
     return df
 
 def check_signals(df):
-    """Проверка на сигналы по стратегиям: теперь только Golden/Death Cross + MACD."""
+    """Golden/Death Cross по SMA20/50 + MACD."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
-    # Golden Cross (SMA50 пересёк SMA200 вверх) + MACD бычий
-    if prev['sma50'] < prev['sma200'] and last['sma50'] > last['sma200'] and last['macd'] > 0:
-        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA50 пересёк SMA200 вверх (Golden Cross), MACD бычий.')
-    # Death Cross (SMA50 пересёк SMA200 вниз) + MACD медвежий
-    if prev['sma50'] > prev['sma200'] and last['sma50'] < last['sma200'] and last['macd'] < 0:
-        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA50 пересёк SMA200 вниз (Death Cross), MACD медвежий.')
+    # Golden Cross (SMA20 пересёк SMA50 вверх) + MACD бычий
+    if prev['sma20'] < prev['sma50'] and last['sma20'] > last['sma50'] and last['macd'] > 0:
+        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA20 пересёк SMA50 вверх (Golden Cross), MACD бычий.')
+    # Death Cross (SMA20 пересёк SMA50 вниз) + MACD медвежий
+    if prev['sma20'] > prev['sma50'] and last['sma20'] < last['sma50'] and last['macd'] < 0:
+        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA20 пересёк SMA50 вниз (Death Cross), MACD медвежий.')
     return signals
 
 # ========== ОТПРАВКА В TELEGRAM ==========
