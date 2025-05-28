@@ -173,12 +173,12 @@ async def main():
                 # Расчёт адаптивных целей
                 atr = df['atr'].iloc[-1]
                 if not pd.isna(atr) and price > 0:
-                    tp = round((atr * 1.5) / price, 4)  # в долях (например, 0.0123 = 1.23%)
-                    sl = round((atr * 1.0) / price, 4)
+                    tp = max(round((atr * 3.0) / price, 4), 0.01)  # минимум 1%
+                    sl = max(round((atr * 2.0) / price, 4), 0.01)
                     adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 else:
-                    tp = 0.02
-                    sl = 0.02
+                    tp = 0.01
+                    sl = 0.01
                     adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 # Проверка на открытые сделки
                 if symbol in open_trades:
