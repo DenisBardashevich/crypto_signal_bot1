@@ -384,7 +384,9 @@ async def main():
                 print(error_text)
                 await send_telegram_message(f"❗️ {error_text}")
         # Долгосрочный анализ раз в сутки
-        now = datetime.now()
+        now_utc = datetime.now(timezone.utc)
+        now_msk = now_utc.astimezone(tz_msk)
+        now = datetime.now(tz_msk)  # timezone-aware now для сравнения с last_long_signal
         if (now - last_long_signal) > timedelta(hours=23):
             for symbol in SYMBOLS:
                 try:
@@ -400,8 +402,6 @@ async def main():
                     print(f"Ошибка долгосрок по {symbol}: {e}")
             last_long_signal = now
         # Alive-отчёт раз в 6 часов + список обработанных монет
-        now_utc = datetime.now(timezone.utc)
-        now_msk = now_utc.astimezone(tz_msk)
         if (now_msk - last_alive) > timedelta(hours=6):
             msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
             msg += f"Обработано монет: {len(processed_symbols)}\n"
