@@ -8,6 +8,8 @@ import json
 from datetime import datetime, timedelta, timezone
 import time
 import math
+from telegram.ext import Application, CommandHandler, ContextTypes
+import threading
 
 # ========== НАСТРОЙКИ ==========
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'  # Токен Telegram-бота
@@ -279,9 +281,26 @@ async def send_daily_report():
     text += f"\n\nВсего по всем монетам: {total:+.2f} USDT\nПрибыльных сделок: {win}\nУбыточных сделок: {loss}"
     await send_telegram_message(text)
 
+# ========== ОБРАБОТЧИК КОМАНДЫ /stats ==========
+async def stats_command(update, context):
+    report, total, win, loss = calculate_profit()
+    text = '📊 Статистика по виртуальным сделкам:\n'
+    if report:
+        text += '\n'.join(report)
+    else:
+        text += 'Нет завершённых сделок.'
+    text += f"\n\nВсего по всем монетам: {total:+.2f} USDT\nПрибыльных сделок: {win}\nУбыточных сделок: {loss}"
+    await update.message.reply_text(text)
+
 # ========== ОСНОВНОЙ ЦИКЛ ==========
 TIME_SHIFT_HOURS = 3  # Сдвиг времени для локального времени пользователя
 async def main():
+    # Запускаем Telegram-бота для команд параллельно с торговым циклом
+    def run_telegram_bot():
+        app = Application.builder().token(TELEGRAM_TOKEN).build()
+        app.add_handler(CommandHandler("stats", stats_command))
+        app.run_polling()
+    threading.Thread(target=run_telegram_bot, daemon=True).start()
     last_report_hours = set()  # Часы, когда уже был отправлен отчёт (например, {9, 22})
     last_alive = datetime.now() - timedelta(hours=6)  # чтобы сразу отправить первое alive-сообщение
     last_long_signal = datetime.now() - timedelta(days=1)
@@ -374,7 +393,8 @@ async def main():
                     print(f"Ошибка долгосрок по {symbol}: {e}")
             last_long_signal = now
         # Alive-отчёт раз в 6 часов + список обработанных монет
-        now_msk = datetime.utcnow() + timedelta(hours=3)  # Московское время
+        now_utc = datetime.now(timezone.utc)
+        now_msk = now_utc.astimezone(timezone(timedelta(hours=3)))  # Московское время
         if (now_msk - last_alive) > timedelta(hours=6):
             msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
             msg += f"Обработано монет: {len(processed_symbols)}\n"
@@ -394,4 +414,11 @@ async def main():
         await asyncio.sleep(60 * 3)  # Проверять каждые 3 минуты
 
 if __name__ == '__main__':
-    asyncio.run(main()) 
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == 'statsbot':
+        # Запуск только Telegram-бота для команд
+        app = Application.builder().token(TELEGRAM_TOKEN).build()
+        app.add_handler(CommandHandler("stats", stats_command))
+        app.run_polling()
+    else:
+        asyncio.run(main()) 
