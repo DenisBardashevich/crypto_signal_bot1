@@ -7,6 +7,7 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 import time
+import math
 
 # ========== НАСТРОЙКИ ==========
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'  # Токен Telegram-бота
@@ -133,17 +134,112 @@ def analyze(df):
     df['atr1d'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=288)
     return df
 
-def check_signals(df):
-    """Golden/Death Cross по SMA50/100 + MACD + мягкий фильтр RSI."""
+# ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
+def evaluate_signal_strength(df):
+    """Оценка силы сигнала по индикаторам (0-3 балла)."""
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    score = 0
+    # SMA пересечение
+    if (prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100']) or (prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100']):
+        score += 1
+    # MACD
+    if (last['macd'] > 0 and prev['macd'] <= 0) or (last['macd'] < 0 and prev['macd'] >= 0):
+        score += 1
+    # RSI
+    if 30 < last['rsi'] < 70:
+        score += 1
+    return score
+
+def signal_strength_label(score):
+    if score == 3:
+        return 'Сильный', 0.85
+    elif score == 2:
+        return 'Средний', 0.65
+    elif score == 1:
+        return 'Слабый', 0.45
+    else:
+        return 'Очень слабый', 0.3
+
+# ========== СТАТИСТИКА ПО ИСТОРИИ ==========
+def get_signal_stats(symbol, action):
+    """Возвращает процент успешных сигналов по монете и действию ('BUY'/'SELL')."""
+    if symbol not in virtual_portfolio:
+        return 0, 0
+    trades = virtual_portfolio[symbol]
+    total = 0
+    success = 0
+    last_buy = None
+    for trade in trades:
+        if trade['action'] == 'BUY':
+            last_buy = float(trade['price'])
+        elif trade['action'] == 'SELL' and last_buy is not None:
+            total += 1
+            if float(trade['price']) > last_buy and action == 'BUY':
+                success += 1
+            if float(trade['price']) < last_buy and action == 'SELL':
+                success += 1
+            last_buy = None
+    percent = (success / total * 100) if total > 0 else 0
+    return percent, total
+
+# ========== РЕКОМЕНДАЦИЯ ПО ПЛЕЧУ ==========
+def recommend_leverage(strength_score, history_percent):
+    # Усредняем силу по графику и по истории
+    avg = (strength_score + (history_percent / 100 * 3)) / 2
+    if avg >= 2.5:
+        return 'x10'
+    elif avg >= 1.5:
+        return 'x5'
+    elif avg >= 1.0:
+        return 'x3'
+    else:
+        return 'x2'
+
+# ========== ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ОБЪЁМА ==========
+def get_24h_volume(symbol):
+    try:
+        ticker = EXCHANGE.fetch_ticker(symbol)
+        # Bybit возвращает объём в baseVolume (количество монет) и quoteVolume (в валюте котировки)
+        volume = ticker.get('quoteVolume', 0)
+        return volume
+    except Exception as e:
+        print(f"Ошибка получения объёма по {symbol}: {e}")
+        return 0
+
+def check_signals(df, symbol):
+    """Golden/Death Cross по SMA50/100 + MACD + мягкий фильтр RSI + оценка шанса и плеча + фильтр по объёму."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
+    # Получаем объём торгов за 24ч
+    volume = get_24h_volume(symbol)
+    volume_mln = volume / 1_000_000
+    min_volume = 1_000_000
     # Golden Cross (SMA50 пересёк SMA100 вверх) + MACD бычий + RSI < 70
     if prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100'] and last['macd'] > 0 and last['rsi'] < 70:
-        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
+        action = 'BUY'
+        score = evaluate_signal_strength(df)
+        label, strength_chance = signal_strength_label(score)
+        history_percent, total = get_signal_stats(symbol, action)
+        avg_chance = int((strength_chance * 100 + history_percent) / 2)
+        leverage = recommend_leverage(score, history_percent)
+        if volume < min_volume:
+            signals.append(f'Сигнал: КУПИТЬ!\nОбъём торгов слишком низкий ({volume_mln:.2f} млн USDT/сутки) — сигнал не рекомендуется к исполнению.')
+        else:
+            signals.append(f'Сигнал: КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nРекомендуемый риск: не более 2% от депозита\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
     # Death Cross (SMA50 пересёк SMA100 вниз) + MACD медвежий + RSI > 30
     if prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100'] and last['macd'] < 0 and last['rsi'] > 30:
-        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
+        action = 'SELL'
+        score = evaluate_signal_strength(df)
+        label, strength_chance = signal_strength_label(score)
+        history_percent, total = get_signal_stats(symbol, action)
+        avg_chance = int((strength_chance * 100 + history_percent) / 2)
+        leverage = recommend_leverage(score, history_percent)
+        if volume < min_volume:
+            signals.append(f'Сигнал: ПРОДАТЬ!\nОбъём торгов слишком низкий ({volume_mln:.2f} млн USDT/сутки) — сигнал не рекомендуется к исполнению.')
+        else:
+            signals.append(f'Сигнал: ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nРекомендуемый риск: не более 2% от депозита\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
     return signals
 
 def analyze_long(df):
@@ -204,7 +300,7 @@ async def main():
             try:
                 df = get_ohlcv(symbol)
                 df = analyze(df)
-                signals = check_signals(df)
+                signals = check_signals(df, symbol)
                 price = df['close'].iloc[-1]
                 time = df['timestamp'].iloc[-1] + timedelta(hours=TIME_SHIFT_HOURS)
                 processed_symbols.append(symbol)
