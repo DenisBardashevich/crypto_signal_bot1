@@ -14,7 +14,7 @@ TELEGRAM_CHAT_ID = 931346988  # chat_id пользователя
 EXCHANGE = ccxt.binance()
 # Получаем все монеты с парой к USDT и фильтруем по объёму
 markets = EXCHANGE.load_markets()
-# Оставляем только монеты с объёмом > 1 000 000 USDT за сутки
+# Оставляем только монеты с объёмом > 1 500 000 USDT за сутки
 SYMBOLS = [
     symbol for symbol in markets
     if symbol.endswith('/USDT')
@@ -115,16 +115,16 @@ def analyze(df):
     return df
 
 def check_signals(df):
-    """Проверка на сигналы по стратегиям и выдача только чётких рекомендаций КУПИТЬ/ПРОДАТЬ."""
+    """Проверка на сигналы по стратегиям: теперь только Golden/Death Cross + MACD."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
-    # Golden Cross (SMA50 пересёк SMA200 вверх) + RSI < 70 + MACD бычий
-    if prev['sma50'] < prev['sma200'] and last['sma50'] > last['sma200'] and last['rsi'] < 70 and last['macd'] > 0:
-        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA50 пересёк SMA200 вверх (Golden Cross), RSI не перекуплен, MACD бычий.')
-    # Death Cross (SMA50 пересёк SMA200 вниз) + RSI > 30 + MACD медвежий
-    if prev['sma50'] > prev['sma200'] and last['sma50'] < last['sma200'] and last['rsi'] > 30 and last['macd'] < 0:
-        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA50 пересёк SMA200 вниз (Death Cross), RSI не перепродан, MACD медвежий.')
+    # Golden Cross (SMA50 пересёк SMA200 вверх) + MACD бычий
+    if prev['sma50'] < prev['sma200'] and last['sma50'] > last['sma200'] and last['macd'] > 0:
+        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA50 пересёк SMA200 вверх (Golden Cross), MACD бычий.')
+    # Death Cross (SMA50 пересёк SMA200 вниз) + MACD медвежий
+    if prev['sma50'] > prev['sma200'] and last['sma50'] < last['sma200'] and last['macd'] < 0:
+        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA50 пересёк SMA200 вниз (Death Cross), MACD медвежий.')
     return signals
 
 # ========== ОТПРАВКА В TELEGRAM ==========
@@ -146,6 +146,7 @@ async def send_daily_report():
 # ========== ОСНОВНОЙ ЦИКЛ ==========
 async def main():
     last_report = datetime.now()
+    last_alive = datetime.now() - timedelta(hours=3)  # чтобы сразу отправить первое alive-сообщение
     while True:
         signals_sent = False
         for symbol in SYMBOLS:
@@ -189,16 +190,16 @@ async def main():
                             close_trade(symbol)
             except Exception as e:
                 print(f"Ошибка по {symbol}: {e}")
-        # Если не было сигналов, отправляем сообщение о работе
-        if not signals_sent:
-            now = datetime.now().strftime('%d.%m.%Y %H:%M')
-            await send_telegram_message(f"⏳ Бот работает, обновил данные на {now}. Сигналов нет.")
-        # Ежедневный отчёт (раз в сутки)
+        # Если не было сигналов, отправляем сообщение о работе раз в 3 часа
         now = datetime.now()
+        if not signals_sent and (now - last_alive) > timedelta(hours=3):
+            await send_telegram_message(f"⏳ Бот работает, обновил данные на {now.strftime('%d.%m.%Y %H:%M')}. Сигналов нет.")
+            last_alive = now
+        # Ежедневный отчёт (раз в сутки)
         if (now - last_report) > timedelta(hours=24):
             await send_daily_report()
             last_report = now
-        await asyncio.sleep(60 * 3)  # Проверять каждые 3 минуты
+        await asyncio.sleep(60 * 5)  # Проверять каждые 5 минуты
 
 if __name__ == '__main__':
     asyncio.run(main()) 
