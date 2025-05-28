@@ -16,19 +16,17 @@ EXCHANGE = ccxt.binance()
 # Белый список топ-50 популярных монет + перспективные альткойны и волатильные монеты
 TOP_SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
-    'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'LINK/USDT', 'MATIC/USDT',
-    'TRX/USDT', 'DOT/USDT', 'LTC/USDT', 'BCH/USDT', 'UNI/USDT',
-    'ATOM/USDT', 'XLM/USDT', 'FIL/USDT', 'APT/USDT', 'OP/USDT',
-    'ARB/USDT', 'NEAR/USDT', 'ETC/USDT', 'HBAR/USDT', 'VET/USDT',
-    'ICP/USDT', 'SUI/USDT', 'INJ/USDT', 'STX/USDT', 'RNDR/USDT',
-    'MKR/USDT', 'AAVE/USDT', 'EGLD/USDT', 'ALGO/USDT', 'GRT/USDT',
-    'MANA/USDT', 'SAND/USDT', 'AXS/USDT', 'FTM/USDT', 'LDO/USDT',
-    'CRV/USDT', 'DYDX/USDT', 'PEPE/USDT', 'TWT/USDT', 'CAKE/USDT',
-    'ENS/USDT', 'BLUR/USDT', 'GMT/USDT', '1INCH/USDT', 'COMP/USDT',
-    # Перспективные альткойны
-    'PYTH/USDT', 'JUP/USDT', 'TIA/USDT', 'SEI/USDT', 'WIF/USDT', 'RON/USDT', 'BEAMX/USDT',
-    # Фьючерсные/волатильные
-    '1000PEPE/USDT', 'FLOKI/USDT', 'BONK/USDT', 'SHIB/USDT'
+    'ADA/USDT', 'DOGE/USDT', 'DOT/USDT', 'AVAX/USDT', 'MATIC/USDT',
+    'LINK/USDT', 'UNI/USDT', 'ATOM/USDT', 'LTC/USDT', 'TRX/USDT',
+    'EOS/USDT', 'XLM/USDT', 'VET/USDT', 'FIL/USDT', 'ALGO/USDT',
+    'NEAR/USDT', 'EGLD/USDT', 'FTM/USDT', 'MANA/USDT', 'SAND/USDT',
+    'AXS/USDT', 'AAVE/USDT', 'MKR/USDT', 'SNX/USDT', 'COMP/USDT',
+    'YFI/USDT', '1INCH/USDT', 'ZIL/USDT', 'ENJ/USDT', 'CHZ/USDT',
+    'THETA/USDT', 'HBAR/USDT', 'ONE/USDT', 'ICX/USDT', 'QTUM/USDT',
+    'IOTA/USDT', 'NEO/USDT', 'WAVES/USDT', 'ZEN/USDT', 'OMG/USDT',
+    'KSM/USDT', 'DASH/USDT', 'XMR/USDT', 'ZEC/USDT', 'BCH/USDT',
+    # Пары с RUB
+    'BTC/RUB', 'ETH/RUB', 'USDT/RUB'
 ]
 markets = EXCHANGE.load_markets()
 SYMBOLS = [symbol for symbol in TOP_SYMBOLS if symbol in markets and markets[symbol]['active']]
