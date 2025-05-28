@@ -6,6 +6,7 @@ from telegram import Bot
 import os
 import json
 from datetime import datetime, timedelta, timezone
+import time
 
 # ========== НАСТРОЙКИ ==========
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'  # Токен Telegram-бота
@@ -25,7 +26,7 @@ markets = EXCHANGE.load_markets()
 SYMBOLS = [symbol for symbol in TOP_SYMBOLS if symbol in markets and markets[symbol]['active']]
 print(f"SYMBOLS: {SYMBOLS}")  # Для отладки
 TIMEFRAME = '5m'  # Интервал свечей теперь 5 минут
-LIMIT = 200  # Количество свечей для анализа
+LIMIT = 400  # Количество свечей для анализа (с запасом для всех индикаторов)
 
 TAKE_PROFIT = 0.02  # +2%
 STOP_LOSS = -0.02   # -2%
@@ -131,6 +132,27 @@ def check_signals(df):
         signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
     return signals
 
+def analyze_long(df):
+    """Долгосрочный анализ: SMA50/200, MACD, RSI на дневках."""
+    df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
+    df['sma200'] = ta.trend.sma_indicator(df['close'], window=200)
+    df['macd'] = ta.trend.macd_diff(df['close'])
+    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+    return df
+
+def check_signals_long(df):
+    """Сигналы для долгосрока: Golden/Death Cross + MACD + RSI на дневках."""
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    signals = []
+    # Golden Cross (SMA50 пересёк SMA200 вверх) + MACD бычий + RSI < 65
+    if prev['sma50'] < prev['sma200'] and last['sma50'] > last['sma200'] and last['macd'] > 0 and last['rsi'] < 65:
+        signals.append('Сигнал: КУПИТЬ НА ДОЛГОСРОК!\nПричина: SMA50 пересёк SMA200 вверх (Golden Cross), MACD бычий, RSI < 65.')
+    # Death Cross (SMA50 пересёк SMA200 вниз) + MACD медвежий + RSI > 35
+    if prev['sma50'] > prev['sma200'] and last['sma50'] < last['sma200'] and last['macd'] < 0 and last['rsi'] > 35:
+        signals.append('Сигнал: ПРОДАТЬ НА ДОЛГОСРОК!\nПричина: SMA50 пересёк SMA200 вниз (Death Cross), MACD медвежий, RSI > 35.')
+    return signals
+
 # ========== ОТПРАВКА В TELEGRAM ==========
 async def send_telegram_message(text):
     bot = Bot(token=TELEGRAM_TOKEN)
@@ -152,6 +174,7 @@ TIME_SHIFT_HOURS = 3  # Сдвиг времени для локального в
 async def main():
     last_report = datetime.now()
     last_alive = datetime.now() - timedelta(hours=3)  # чтобы сразу отправить первое alive-сообщение
+    last_long_signal = datetime.now() - timedelta(days=1)
     adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
     while True:
         # Проверка наличия монет
@@ -224,6 +247,22 @@ async def main():
                 error_text = f"Ошибка по {symbol}: {e}"
                 print(error_text)
                 await send_telegram_message(f"❗️ {error_text}")
+        # Долгосрочный анализ раз в сутки
+        now = datetime.now()
+        if (now - last_long_signal) > timedelta(hours=23):
+            for symbol in SYMBOLS:
+                try:
+                    ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe='1d', limit=400)
+                    df_long = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                    df_long['timestamp'] = pd.to_datetime(df_long['timestamp'], unit='ms')
+                    df_long = analyze_long(df_long)
+                    signals_long = check_signals_long(df_long)
+                    if signals_long:
+                        msg = f"\n\U0001F4BC Сигнал (долгосрок) для {symbol} на {df_long['timestamp'].iloc[-1].strftime('%d.%m.%Y')}:\n" + '\n\n'.join(signals_long)
+                        await send_telegram_message(msg)
+                except Exception as e:
+                    print(f"Ошибка долгосрок по {symbol}: {e}")
+            last_long_signal = now
         # Alive-отчёт раз в 3 часа + список обработанных монет
         now = datetime.now() + timedelta(hours=TIME_SHIFT_HOURS)
         if (now - last_alive) > timedelta(hours=3):
