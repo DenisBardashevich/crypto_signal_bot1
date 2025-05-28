@@ -5,7 +5,7 @@ import asyncio
 from telegram import Bot
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # ========== НАСТРОЙКИ ==========
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'  # Токен Telegram-бота
@@ -143,6 +143,7 @@ async def send_daily_report():
     await send_telegram_message(text)
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
+TZ_SHIFT = timedelta(hours=3)  # Сдвиг времени для твоего часового пояса
 async def main():
     last_report = datetime.now()
     last_alive = datetime.now() - timedelta(hours=3)  # чтобы сразу отправить первое alive-сообщение
@@ -154,7 +155,7 @@ async def main():
                 df = analyze(df)
                 signals = check_signals(df)
                 price = df['close'].iloc[-1]
-                time = df['timestamp'].iloc[-1]
+                time = df['timestamp'].iloc[-1] + TZ_SHIFT
                 # Проверка на открытые сделки
                 if symbol in open_trades:
                     buy_price = open_trades[symbol]['buy_price']
@@ -190,7 +191,7 @@ async def main():
             except Exception as e:
                 print(f"Ошибка по {symbol}: {e}")
         # Если не было сигналов, отправляем сообщение о работе раз в 3 часа
-        now = datetime.now()
+        now = datetime.now() + TZ_SHIFT
         if not signals_sent and (now - last_alive) > timedelta(hours=3):
             await send_telegram_message(f"⏳ Бот работает, обновил данные на {now.strftime('%d.%m.%Y %H:%M')}. Сигналов нет.")
             last_alive = now
@@ -198,7 +199,7 @@ async def main():
         if (now - last_report) > timedelta(hours=24):
             await send_daily_report()
             last_report = now
-        await asyncio.sleep(60 * 5)  # Проверять каждые 5 минуты
+        await asyncio.sleep(60 * 3)  # Проверять каждые 3 минуты
 
 if __name__ == '__main__':
     asyncio.run(main()) 
