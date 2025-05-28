@@ -12,16 +12,18 @@ TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'  # Токен 
 TELEGRAM_CHAT_ID = 931346988  # chat_id пользователя
 
 EXCHANGE = ccxt.binance()
-# Получаем все монеты с парой к USDT и фильтруем по объёму
-markets = EXCHANGE.load_markets()
-# Оставляем только монеты с объёмом > 1 500 000 USDT за сутки
-SYMBOLS = [
-    symbol for symbol in markets
-    if symbol.endswith('/USDT')
-    and markets[symbol]['active']
-    and markets[symbol].get('quoteVolume', 0) is not None
-    and markets[symbol].get('quoteVolume', 0) > 1_000_000
+# Белый список топ-30 популярных монет
+TOP_SYMBOLS = [
+    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
+    'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'LINK/USDT', 'MATIC/USDT',
+    'TRX/USDT', 'DOT/USDT', 'LTC/USDT', 'BCH/USDT', 'UNI/USDT',
+    'ATOM/USDT', 'XLM/USDT', 'FIL/USDT', 'APT/USDT', 'OP/USDT',
+    'ARB/USDT', 'NEAR/USDT', 'ETC/USDT', 'HBAR/USDT', 'VET/USDT',
+    'ICP/USDT', 'SUI/USDT', 'INJ/USDT', 'STX/USDT', 'RNDR/USDT'
 ]
+markets = EXCHANGE.load_markets()
+SYMBOLS = [symbol for symbol in TOP_SYMBOLS if symbol in markets and markets[symbol]['active']]
+print(f"SYMBOLS: {SYMBOLS}")  # Для отладки
 TIMEFRAME = '5m'  # Интервал свечей теперь 5 минут
 LIMIT = 200  # Количество свечей для анализа
 
@@ -143,19 +145,27 @@ async def send_daily_report():
     await send_telegram_message(text)
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
-TZ_SHIFT = timedelta(hours=3)  # Сдвиг времени для твоего часового пояса
 async def main():
     last_report = datetime.now()
     last_alive = datetime.now() - timedelta(hours=3)  # чтобы сразу отправить первое alive-сообщение
     while True:
+        # Проверка наличия монет
+        if not SYMBOLS:
+            error_msg = "❗️ Ошибка: список монет для анализа пуст. Проверь подключение к бирже или фильтры."
+            print(error_msg)
+            await send_telegram_message(error_msg)
+            await asyncio.sleep(60 * 10)  # Ждать 10 минут перед повтором
+            continue
         signals_sent = False
+        processed_symbols = []
         for symbol in SYMBOLS:
             try:
                 df = get_ohlcv(symbol)
                 df = analyze(df)
                 signals = check_signals(df)
                 price = df['close'].iloc[-1]
-                time = df['timestamp'].iloc[-1] + TZ_SHIFT
+                time = df['timestamp'].iloc[-1]
+                processed_symbols.append(symbol)
                 # Проверка на открытые сделки
                 if symbol in open_trades:
                     buy_price = open_trades[symbol]['buy_price']
@@ -189,11 +199,18 @@ async def main():
                             record_trade(symbol, 'SELL', price, time)
                             close_trade(symbol)
             except Exception as e:
-                print(f"Ошибка по {symbol}: {e}")
-        # Если не было сигналов, отправляем сообщение о работе раз в 3 часа
-        now = datetime.now() + TZ_SHIFT
-        if not signals_sent and (now - last_alive) > timedelta(hours=3):
-            await send_telegram_message(f"⏳ Бот работает, обновил данные на {now.strftime('%d.%m.%Y %H:%M')}. Сигналов нет.")
+                error_text = f"Ошибка по {symbol}: {e}"
+                print(error_text)
+                await send_telegram_message(f"❗️ {error_text}")
+        # Alive-отчёт раз в 3 часа + список обработанных монет
+        now = datetime.now()  # теперь без TZ_SHIFT
+        if (now - last_alive) > timedelta(hours=3):
+            msg = f"⏳ Бот работает, обновил данные на {now.strftime('%d.%m.%Y %H:%M')}\n"
+            msg += f"Обработано монет: {len(processed_symbols)}\n"
+            msg += ', '.join(processed_symbols) if processed_symbols else 'Монеты не обработаны.'
+            if not signals_sent:
+                msg += "\nСигналов нет."
+            await send_telegram_message(msg)
             last_alive = now
         # Ежедневный отчёт (раз в сутки)
         if (now - last_report) > timedelta(hours=24):
