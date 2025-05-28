@@ -108,25 +108,26 @@ def get_ohlcv(symbol):
     return df
 
 def analyze(df):
-    """Анализ по индикаторам: SMA, MACD (SMA20 и SMA50), ATR."""
-    df['sma20'] = ta.trend.sma_indicator(df['close'], window=20)
-    df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
+    """Анализ по индикаторам: SMA, MACD, ATR, RSI (SMA30 и SMA70)."""
+    df['sma30'] = ta.trend.sma_indicator(df['close'], window=30)
+    df['sma70'] = ta.trend.sma_indicator(df['close'], window=70)
     macd = ta.trend.macd_diff(df['close'])
     df['macd'] = macd
-    df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=100)  # ATR за ~8 часов (100 пятиминуток)
+    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+    df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=100)
     return df
 
 def check_signals(df):
-    """Golden/Death Cross по SMA20/50 + MACD."""
+    """Golden/Death Cross по SMA30/70 + MACD + мягкий фильтр RSI."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
-    # Golden Cross (SMA20 пересёк SMA50 вверх) + MACD бычий
-    if prev['sma20'] < prev['sma50'] and last['sma20'] > last['sma50'] and last['macd'] > 0:
-        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA20 пересёк SMA50 вверх (Golden Cross), MACD бычий.')
-    # Death Cross (SMA20 пересёк SMA50 вниз) + MACD медвежий
-    if prev['sma20'] > prev['sma50'] and last['sma20'] < last['sma50'] and last['macd'] < 0:
-        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA20 пересёк SMA50 вниз (Death Cross), MACD медвежий.')
+    # Golden Cross (SMA30 пересёк SMA70 вверх) + MACD бычий + RSI < 70
+    if prev['sma30'] < prev['sma70'] and last['sma30'] > last['sma70'] and last['macd'] > 0 and last['rsi'] < 70:
+        signals.append('Сигнал: КУПИТЬ!\nПричина: SMA30 пересёк SMA70 вверх (Golden Cross), MACD бычий, RSI < 70.')
+    # Death Cross (SMA30 пересёк SMA70 вниз) + MACD медвежий + RSI > 30
+    if prev['sma30'] > prev['sma70'] and last['sma30'] < last['sma70'] and last['macd'] < 0 and last['rsi'] > 30:
+        signals.append('Сигнал: ПРОДАТЬ!\nПричина: SMA30 пересёк SMA70 вниз (Death Cross), MACD медвежий, RSI > 30.')
     return signals
 
 # ========== ОТПРАВКА В TELEGRAM ==========
