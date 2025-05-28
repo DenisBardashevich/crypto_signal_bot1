@@ -294,17 +294,21 @@ async def stats_command(update, context):
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
 TIME_SHIFT_HOURS = 3  # Сдвиг времени для локального времени пользователя
+async def telegram_bot():
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("stats", stats_command))
+    await app.run_polling()
+
 async def main():
-    # Запускаем Telegram-бота для команд параллельно с торговым циклом
-    def run_telegram_bot():
-        app = Application.builder().token(TELEGRAM_TOKEN).build()
-        app.add_handler(CommandHandler("stats", stats_command))
-        app.run_polling()
-    threading.Thread(target=run_telegram_bot, daemon=True).start()
+    tz_msk = timezone(timedelta(hours=3))
+    last_alive = datetime.now(tz_msk) - timedelta(hours=6)  # timezone-aware
     last_report_hours = set()  # Часы, когда уже был отправлен отчёт (например, {9, 22})
-    last_alive = datetime.now() - timedelta(hours=6)  # чтобы сразу отправить первое alive-сообщение
-    last_long_signal = datetime.now() - timedelta(days=1)
+    last_long_signal = datetime.now(tz_msk) - timedelta(days=1)  # timezone-aware
     adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
+
+    # Запускаем Telegram-бота как асинхронную задачу
+    asyncio.create_task(telegram_bot())
+
     while True:
         # Проверка наличия монет
         if not SYMBOLS:
@@ -394,7 +398,7 @@ async def main():
             last_long_signal = now
         # Alive-отчёт раз в 6 часов + список обработанных монет
         now_utc = datetime.now(timezone.utc)
-        now_msk = now_utc.astimezone(timezone(timedelta(hours=3)))  # Московское время
+        now_msk = now_utc.astimezone(tz_msk)
         if (now_msk - last_alive) > timedelta(hours=6):
             msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
             msg += f"Обработано монет: {len(processed_symbols)}\n"
@@ -414,11 +418,4 @@ async def main():
         await asyncio.sleep(60 * 3)  # Проверять каждые 3 минуты
 
 if __name__ == '__main__':
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == 'statsbot':
-        # Запуск только Telegram-бота для команд
-        app = Application.builder().token(TELEGRAM_TOKEN).build()
-        app.add_handler(CommandHandler("stats", stats_command))
-        app.run_polling()
-    else:
-        asyncio.run(main()) 
+    asyncio.run(main()) 
