@@ -283,13 +283,13 @@ async def send_daily_report():
 
 # ========== ОБРАБОТЧИК КОМАНДЫ /stats ==========
 async def stats_command(update, context):
-    report, total, win, loss = calculate_profit()
+    report, win, loss = calculate_profit()
     text = '📊 Статистика по виртуальным сделкам:\n'
     if report:
         text += '\n'.join(report)
     else:
         text += 'Нет завершённых сделок.'
-    text += f"\n\nВсего по всем монетам: {total:+.2f} USDT\nПрибыльных сделок: {win}\nУбыточных сделок: {loss}"
+    text += f"\n\nВсего прибыльных сделок: {win}\nВсего убыточных сделок: {loss}"
     await update.message.reply_text(text)
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
