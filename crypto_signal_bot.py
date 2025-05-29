@@ -99,23 +99,26 @@ def calculate_profit():
     total_profit = 0
     win, loss = 0, 0
     for symbol, trades in virtual_portfolio.items():
-        profit = 0
+        if symbol == 'open_trades':
+            continue
+        win_count = 0
+        loss_count = 0
         last_buy = None
         for trade in trades:
             if trade['action'] == 'BUY':
                 last_buy = float(trade['price'])
             elif trade['action'] == 'SELL' and last_buy is not None:
                 p = float(trade['price']) - last_buy
-                profit += p
                 if p > 0:
-                    win += 1
+                    win_count += 1
                 else:
-                    loss += 1
+                    loss_count += 1
                 last_buy = None
-        if profit != 0:
-            report.append(f"{symbol}: {profit:+.2f} USDT")
-        total_profit += profit
-    return report, total_profit, win, loss
+        if win_count > 0 or loss_count > 0:
+            report.append(f"{symbol}: прибыльных {win_count}, убыточных {loss_count}")
+        win += win_count
+        loss += loss_count
+    return report, win, loss
 
 # ========== ФУНКЦИИ АНАЛИЗА ==========
 def get_ohlcv(symbol):
@@ -229,7 +232,7 @@ def check_signals(df, symbol):
         history_percent, total = get_signal_stats(symbol, action)
         avg_chance = int((strength_chance * 100 + history_percent) / 2)
         leverage = recommend_leverage(score, history_percent)
-        signals.append(f'Сигнал: КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nРекомендуемый риск: не более 2% от депозита\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
+        signals.append(f'Сигнал: КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
     # Death Cross (SMA50 пересёк SMA100 вниз) + MACD медвежий + RSI > 30
     if prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100'] and last['macd'] < 0 and last['rsi'] > 30:
         action = 'SELL'
@@ -238,7 +241,7 @@ def check_signals(df, symbol):
         history_percent, total = get_signal_stats(symbol, action)
         avg_chance = int((strength_chance * 100 + history_percent) / 2)
         leverage = recommend_leverage(score, history_percent)
-        signals.append(f'Сигнал: ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nРекомендуемый риск: не более 2% от депозита\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
+        signals.append(f'Сигнал: ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
     return signals
 
 def analyze_long(df):
@@ -269,13 +272,13 @@ async def send_telegram_message(text):
 
 # ========== ОТПРАВКА ОТЧЁТА ==========
 async def send_daily_report():
-    report, total, win, loss = calculate_profit()
+    report, win, loss = calculate_profit()
     text = '📊 Отчёт по виртуальным сделкам за сутки:\n'
     if report:
         text += '\n'.join(report)
     else:
         text += 'Нет завершённых сделок.'
-    text += f"\n\nВсего по всем монетам: {total:+.2f} USDT\nПрибыльных сделок: {win}\nУбыточных сделок: {loss}"
+    text += f"\n\nВсего прибыльных сделок: {win}\nВсего убыточных сделок: {loss}"
     await send_telegram_message(text)
 
 # ========== ОБРАБОТЧИК КОМАНДЫ /stats ==========
