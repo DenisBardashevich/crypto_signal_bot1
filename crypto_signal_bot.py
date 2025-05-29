@@ -10,6 +10,7 @@ import time
 import math
 from telegram.ext import Application, CommandHandler, ContextTypes
 import threading
+import logging
 
 # ========== НАСТРОЙКИ ==========
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'  # Токен Telegram-бота
@@ -129,14 +130,13 @@ def get_ohlcv(symbol):
     return df
 
 def analyze(df):
-    """Анализ по индикаторам: SMA, MACD, ATR (8ч и сутки), RSI (SMA50 и SMA100)."""
+    """Анализ по индикаторам: SMA, MACD, ATR (5m), RSI (SMA50 и SMA100)."""
     df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
     df['sma100'] = ta.trend.sma_indicator(df['close'], window=100)
     macd = ta.trend.macd_diff(df['close'])
     df['macd'] = macd
     df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-    df['atr8h'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=100)
-    df['atr1d'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=288)
+    df['atr5m'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=20)
     return df
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
@@ -213,16 +213,24 @@ def get_24h_volume(symbol):
         return 0
 
 def check_signals(df, symbol):
-    """Golden/Death Cross по SMA50/100 + MACD + мягкий фильтр RSI + оценка шанса и плеча + фильтр по объёму."""
+    """Golden/Death Cross по SMA50/100 + MACD + фильтр RSI + фильтр по тренду + фильтр по объёму."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
     # Получаем объём торгов за 24ч
     volume = get_24h_volume(symbol)
     volume_mln = volume / 1_000_000
-    min_volume = 1_000_000
-    # Если объём слишком низкий — не формируем сигнал вообще
+    min_volume = 5_000_000  # Усиленный фильтр по объёму
     if volume < min_volume:
+        logging.info(f"{symbol}: объём {volume_mln:.2f} млн < 10 млн, сигнал не формируется")
+        return []
+    # Фильтр по тренду
+    if last['close'] < last['sma100']:
+        logging.info(f"{symbol}: цена ниже SMA100, сигнал на покупку не формируется")
+        return []
+    # Фильтр по RSI (нейтральная зона)
+    if 45 <= last['rsi'] <= 55:
+        logging.info(f"{symbol}: RSI {last['rsi']:.2f} в нейтральной зоне, сигнал не формируется")
         return []
     # Golden Cross (SMA50 пересёк SMA100 вверх) + MACD бычий + RSI < 70
     if prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100'] and last['macd'] > 0 and last['rsi'] < 70:
@@ -233,6 +241,7 @@ def check_signals(df, symbol):
         avg_chance = int((strength_chance * 100 + history_percent) / 2)
         leverage = recommend_leverage(score, history_percent)
         signals.append(f'Сигнал: КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
+        logging.info(f"{symbol}: BUY сигнал сформирован")
     # Death Cross (SMA50 пересёк SMA100 вниз) + MACD медвежий + RSI > 30
     if prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100'] and last['macd'] < 0 and last['rsi'] > 30:
         action = 'SELL'
@@ -242,6 +251,7 @@ def check_signals(df, symbol):
         avg_chance = int((strength_chance * 100 + history_percent) / 2)
         leverage = recommend_leverage(score, history_percent)
         signals.append(f'Сигнал: ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
+        logging.info(f"{symbol}: SELL сигнал сформирован")
     return signals
 
 def analyze_long(df):
@@ -330,17 +340,15 @@ async def main():
                 price = df['close'].iloc[-1]
                 time = df['timestamp'].iloc[-1] + timedelta(hours=TIME_SHIFT_HOURS)
                 processed_symbols.append(symbol)
-                # Расчёт адаптивных целей
-                atr8h = df['atr8h'].iloc[-1]
-                atr1d = df['atr1d'].iloc[-1]
-                if not pd.isna(atr8h) and not pd.isna(atr1d) and price > 0:
-                    atr = max(atr8h, atr1d)
-                    tp = min(max(round((atr * 3.0) / price, 4), 0.008), 0.2)  # минимум 0.8%, максимум 20%
-                    sl = min(max(round((atr * 2.0) / price, 4), 0.008), 0.2)
+                # Расчёт адаптивных целей по ATR 5m
+                atr5m = df['atr5m'].iloc[-1]
+                if not pd.isna(atr5m) and price > 0:
+                    tp = min(max(round((atr5m * 3.0) / price, 4), 0.015), 0.15)  # минимум 1.5%, максимум 15%
+                    sl = min(max(round((atr5m * 2.0) / price, 4), 0.015), 0.15)
                     adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 else:
-                    tp = 0.008
-                    sl = 0.008
+                    tp = 0.015
+                    sl = 0.015
                     adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 # Проверка на открытые сделки
                 if symbol in open_trades:
@@ -348,40 +356,50 @@ async def main():
                     change = (price - buy_price) / buy_price
                     tp = adaptive_targets[symbol]['tp']
                     sl = adaptive_targets[symbol]['sl']
+                    tp_price = round(buy_price * (1 + tp), 6)
+                    sl_price = round(buy_price * (1 - sl), 6)
                     # Тейк-профит
                     if change >= tp:
-                        msg = f"🎯 {symbol} достиг цели +{tp*100:.2f}% (адаптивный тейк-профит)\nРекомендуется ПРОДАТЬ для фиксации прибыли.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
+                        msg = f"🎯 {symbol} достиг цели +{tp*100:.2f}% ({tp_price}) (адаптивный тейк-профит)\nРекомендуется ПРОДАТЬ для фиксации прибыли.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
                         await send_telegram_message(msg)
                         record_trade(symbol, 'SELL', price, time)
                         close_trade(symbol)
+                        logging.info(f"{symbol}: сделка закрыта по TP, прибыль {change*100:.2f}%")
                         signals_sent = True
                         continue
                     # Стоп-лосс
                     if change <= -sl:
-                        msg = f"⚠️ {symbol} снизился на -{sl*100:.2f}% (адаптивный стоп-лосс)\nРекомендуется ПРОДАТЬ для ограничения убытков.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
+                        msg = f"⚠️ {symbol} снизился на -{sl*100:.2f}% ({sl_price}) (адаптивный стоп-лосс)\nРекомендуется ПРОДАТЬ для ограничения убытков.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
                         await send_telegram_message(msg)
                         record_trade(symbol, 'SELL', price, time)
                         close_trade(symbol)
+                        logging.info(f"{symbol}: сделка закрыта по SL, убыток {change*100:.2f}%")
                         signals_sent = True
                         continue
                 # Сигналы на вход/выход
                 if signals:
                     tp = adaptive_targets[symbol]['tp'] if symbol in adaptive_targets else 0.02
                     sl = adaptive_targets[symbol]['sl'] if symbol in adaptive_targets else 0.02
+                    tp_price = round(price * (1 + tp), 6)
+                    sl_price = round(price * (1 - sl), 6)
                     msg = f"\n\U0001F4B0 Сигналы для {symbol} на {time.strftime('%d.%m.%Y %H:%M')}:\n" + '\n\n'.join(signals)
-                    msg += f"\nАдаптивный тейк-профит: +{tp*100:.2f}%, стоп-лосс: -{sl*100:.2f}%"
+                    msg += f"\nАдаптивный тейк-профит: +{tp*100:.2f}% ({tp_price}), стоп-лосс: -{sl*100:.2f}% ({sl_price})"
                     await send_telegram_message(msg)
+                    logging.info(f"{symbol}: сигнал отправлен в Telegram")
                     signals_sent = True
                     for s in signals:
                         if 'КУПИТЬ' in s and symbol not in open_trades:
                             record_trade(symbol, 'BUY', price, time)
                             open_trade(symbol, price, time)
+                            logging.info(f"{symbol}: сделка открыта по цене {price}")
                         if 'ПРОДАТЬ' in s and symbol in open_trades:
                             record_trade(symbol, 'SELL', price, time)
                             close_trade(symbol)
+                            logging.info(f"{symbol}: сделка закрыта по сигналу ПРОДАТЬ")
             except Exception as e:
                 error_text = f"Ошибка по {symbol}: {e}"
                 print(error_text)
+                logging.error(error_text)
                 await send_telegram_message(f"❗️ {error_text}")
         # Долгосрочный анализ раз в сутки
         now_utc = datetime.now(timezone.utc)
