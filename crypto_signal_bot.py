@@ -218,6 +218,9 @@ def check_signals(df, symbol):
     volume = get_24h_volume(symbol)
     volume_mln = volume / 1_000_000
     min_volume = 1_000_000
+    # Если объём слишком низкий — не формируем сигнал вообще
+    if volume < min_volume:
+        return []
     # Golden Cross (SMA50 пересёк SMA100 вверх) + MACD бычий + RSI < 70
     if prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100'] and last['macd'] > 0 and last['rsi'] < 70:
         action = 'BUY'
@@ -226,10 +229,7 @@ def check_signals(df, symbol):
         history_percent, total = get_signal_stats(symbol, action)
         avg_chance = int((strength_chance * 100 + history_percent) / 2)
         leverage = recommend_leverage(score, history_percent)
-        if volume < min_volume:
-            signals.append(f'Сигнал: КУПИТЬ!\nОбъём торгов слишком низкий ({volume_mln:.2f} млн USDT/сутки) — сигнал не рекомендуется к исполнению.')
-        else:
-            signals.append(f'Сигнал: КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nРекомендуемый риск: не более 2% от депозита\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
+        signals.append(f'Сигнал: КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nРекомендуемый риск: не более 2% от депозита\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
     # Death Cross (SMA50 пересёк SMA100 вниз) + MACD медвежий + RSI > 30
     if prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100'] and last['macd'] < 0 and last['rsi'] > 30:
         action = 'SELL'
@@ -238,10 +238,7 @@ def check_signals(df, symbol):
         history_percent, total = get_signal_stats(symbol, action)
         avg_chance = int((strength_chance * 100 + history_percent) / 2)
         leverage = recommend_leverage(score, history_percent)
-        if volume < min_volume:
-            signals.append(f'Сигнал: ПРОДАТЬ!\nОбъём торгов слишком низкий ({volume_mln:.2f} млн USDT/сутки) — сигнал не рекомендуется к исполнению.')
-        else:
-            signals.append(f'Сигнал: ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nРекомендуемый риск: не более 2% от депозита\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
+        signals.append(f'Сигнал: ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nРекомендуемый риск: не более 2% от депозита\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
     return signals
 
 def analyze_long(df):
