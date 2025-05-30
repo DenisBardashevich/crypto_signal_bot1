@@ -296,7 +296,7 @@ def check_signals(df, symbol):
         signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вверх (Golden Cross), MACD бычий, RSI < 70.\nWinrate: {winrate if winrate is not None else "нет данных"}')
         logging.info(f"{symbol}: BUY сигнал сформирован (фьючерсы)")
     # Death Cross (EMA50 пересёк EMA100 вниз) + MACD медвежий + RSI > 30
-    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0 and last['rsi'] > 30:
+    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0 and 30 < last['rsi'] < 70:
         action = 'SELL'
         score = evaluate_signal_strength(df, symbol)
         label, strength_chance = signal_strength_label(score)

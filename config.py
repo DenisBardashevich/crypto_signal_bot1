@@ -21,7 +21,7 @@ ATR_WINDOW = 20
 TRAIL_ATR_MULT = 2.5   # множитель для trailing-стопа
 
 # --- Объём ---
-MIN_VOLUME_USDT = 10_000_000  # минимальный объём торгов за 24ч (USDT)
+MIN_VOLUME_USDT = 5_000_000  # минимальный объём торгов за 24ч (USDT)
 
 # --- Signal Cooldown ---
 SIGNAL_COOLDOWN_MINUTES = 15
@@ -31,11 +31,11 @@ TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
 TELEGRAM_CHAT_ID = 931346988
 
 # --- Take Profit ---
-TP_MIN = 0.015   # минимум 1.5%
+TP_MIN = 0.007   # минимум 0.7%
 TP_MAX = 0.15    # максимум 15%
 TP_ATR_MULT = 3.0
 
 # --- Stop Loss ---
-SL_MIN = 0.015   # минимум 1.5%
+SL_MIN = 0.007   # минимум 0.7%
 SL_MAX = 0.15    # максимум 15%
 SL_ATR_MULT = 2.0 
