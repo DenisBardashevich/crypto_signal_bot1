@@ -227,7 +227,7 @@ def get_24h_volume(symbol):
         print(f"Ошибка получения объёма по {symbol}: {e}")
         return 0
 
-last_signal_time = defaultdict(lambda: datetime.min)
+last_signal_time = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
 
 def check_signals(df, symbol):
     """Golden/Death Cross по EMA + MACD + фильтр RSI + фильтр по тренду + фильтр по объёму + глобальный тренд."""
@@ -274,7 +274,9 @@ def check_signals(df, symbol):
         leverage = recommend_leverage(score, history_percent)
         signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
         logging.info(f"{symbol}: SELL сигнал сформирован (фьючерсы)")
-    # Cooldown между сигналами
+    # Защита от naive datetime
+    if last_signal_time[symbol].tzinfo is None:
+        last_signal_time[symbol] = last_signal_time[symbol].replace(tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
     if now - last_signal_time[symbol] < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES):
         return []
