@@ -295,8 +295,8 @@ def check_signals(df, symbol):
     prev = df.iloc[-2]
     signals = []
     # ADX фильтр
-    if last['adx'] < 20:
-        logging.info(f"{symbol}: ADX {last['adx']:.2f} < 20, сигнал не формируется")
+    if last['adx'] < 15:
+        logging.info(f"{symbol}: ADX {last['adx']:.2f} < 15, сигнал не формируется")
         return []
     # Получаем объём торгов за 24ч
     volume = get_24h_volume(symbol)
@@ -314,14 +314,17 @@ def check_signals(df, symbol):
         logging.info(f"{symbol}: RSI {last['rsi']:.2f} в нейтральной зоне, сигнал не формируется")
         return []
     # Фильтр по глобальному тренду (только для BUY)
-    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-        if not is_global_uptrend(symbol):
-            logging.info(f"{symbol}: глобальный тренд вниз — BUY пропущен")
-            return []
+    global_trend = True
+    try:
+        global_trend = is_global_uptrend(symbol)
+    except Exception:
+        pass
     # Golden Cross (EMA50 пересёк EMA100 вверх) + MACD бычий + RSI < 70
     if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow'] and last['macd'] > 0 and last['rsi'] < 70:
         action = 'BUY'
         score = evaluate_signal_strength(df, symbol)
+        if not global_trend:
+            score -= 1
         label, strength_chance = signal_strength_label(score)
         history_percent, total = get_signal_stats(symbol, action)
         winrate = get_score_winrate(score, action)
@@ -331,6 +334,8 @@ def check_signals(df, symbol):
     if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0 and 30 < last['rsi'] < 70:
         action = 'SELL'
         score = evaluate_signal_strength(df, symbol)
+        if not global_trend:
+            score -= 1
         label, strength_chance = signal_strength_label(score)
         history_percent, total = get_signal_stats(symbol, action)
         winrate = get_score_winrate(score, action)

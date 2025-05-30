@@ -13,18 +13,18 @@ LIMIT = 600     # количество свечей для анализа (до�
 
 # --- RSI ---
 RSI_WINDOW = 14
-RSI_NEUTRAL_LOW = 45
-RSI_NEUTRAL_HIGH = 55
+RSI_NEUTRAL_LOW = 40
+RSI_NEUTRAL_HIGH = 60
 
 # --- ATR ---
 ATR_WINDOW = 20
 TRAIL_ATR_MULT = 2.5   # множитель для trailing-стопа
 
 # --- Объём ---
-MIN_VOLUME_USDT = 5_000_000  # минимальный объём торгов за 24ч (USDT)
+MIN_VOLUME_USDT = 2_000_000  # минимальный объём торгов за 24ч (USDT)
 
 # --- Signal Cooldown ---
-SIGNAL_COOLDOWN_MINUTES = 15
+SIGNAL_COOLDOWN_MINUTES = 10
 
 # --- Telegram ---
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
