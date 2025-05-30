@@ -1,8 +1,7 @@
 {
-  "BTC/USDT": [
+  "BTC/USDT:USDT": [
     {"action": "BUY", "price": 65000, "time": "2025-06-01 10:00"},
     {"action": "SELL", "price": 65001, "time": "2025-06-01 12:00"}
-
   ],
   "open_trades": {}
-} 
+}
