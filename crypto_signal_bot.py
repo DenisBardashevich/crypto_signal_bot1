@@ -121,16 +121,32 @@ def calculate_profit():
         win_count = 0
         loss_count = 0
         last_buy = None
+        last_side = None
         for trade in trades:
             if trade['action'] == 'BUY':
                 last_buy = float(trade['price'])
+                last_side = 'BUY'
             elif trade['action'] == 'SELL' and last_buy is not None:
-                p = float(trade['price']) - last_buy
-                if p > 0:
+                exit_price = float(trade['price'])
+                entry_price = last_buy
+                side = last_side
+                sign = 1 if side == 'BUY' else -1
+                # Получаем размер позиции (условно 1 для виртуального портфеля)
+                size = 1
+                # Получаем комиссию и funding
+                try:
+                    ticker = EXCHANGE.fetch_ticker(symbol)
+                    funding = ticker.get('fundingRate', 0) * size
+                except Exception:
+                    funding = 0
+                fee = (entry_price + exit_price) * size * FEE_RATE
+                pnl = (exit_price - entry_price) * size * sign - fee - funding
+                if pnl > 0:
                     win_count += 1
                 else:
                     loss_count += 1
                 last_buy = None
+                last_side = None
         if win_count > 0 or loss_count > 0:
             report.append(f"{symbol}: прибыльных {win_count}, убыточных {loss_count}")
         win += win_count
@@ -140,10 +156,18 @@ def calculate_profit():
 # ========== ФУНКЦИИ АНАЛИЗА ==========
 def get_ohlcv(symbol):
     """Получить исторические данные по монете."""
-    ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=LIMIT)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
-    return df
+    try:
+        ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=LIMIT)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
+        return df
+    except ccxt.RateLimitExceeded as e:
+        logging.warning(f"Rate limit exceeded for {symbol}, жду {getattr(e, 'retry_after', 1)} сек.")
+        time.sleep(getattr(e, 'retry_after', 1))
+        return pd.DataFrame()
+    except Exception as e:
+        print(f"Ошибка получения OHLCV по {symbol}: {e}")
+        return pd.DataFrame()
 
 def analyze(df):
     """Анализ по индикаторам: EMA, MACD, ATR (5m), RSI."""
@@ -153,6 +177,7 @@ def analyze(df):
     df['macd'] = macd
     df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)
     df['atr5m'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
+    df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], 14)
     # Убираем строки с NaN, чтобы не ловить фантомные кресты
     df = df.dropna().reset_index(drop=True)
     return df
@@ -252,9 +277,12 @@ def recommend_leverage(strength_score, history_percent):
 def get_24h_volume(symbol):
     try:
         ticker = EXCHANGE.fetch_ticker(symbol)
-        # Bybit возвращает объём в baseVolume (количество монет) и quoteVolume (в валюте котировки)
         volume = ticker.get('quoteVolume', 0)
         return volume
+    except ccxt.RateLimitExceeded as e:
+        logging.warning(f"Rate limit exceeded for {symbol}, жду {getattr(e, 'retry_after', 1)} сек.")
+        time.sleep(getattr(e, 'retry_after', 1))
+        return 0
     except Exception as e:
         print(f"Ошибка получения объёма по {symbol}: {e}")
         return 0
@@ -266,6 +294,10 @@ def check_signals(df, symbol):
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
+    # ADX фильтр
+    if last['adx'] < 20:
+        logging.info(f"{symbol}: ADX {last['adx']:.2f} < 20, сигнал не формируется")
+        return []
     # Получаем объём торгов за 24ч
     volume = get_24h_volume(symbol)
     volume_mln = volume / 1_000_000
@@ -389,6 +421,40 @@ async def main():
 
     # Запускаем Telegram-бота как асинхронную задачу
     asyncio.create_task(telegram_bot())
+
+    MAX_DD_PCT = 0.03  # 3% дневной просадки
+    trading_enabled = True
+    last_dd_check = None
+
+    def get_daily_drawdown():
+        # Считаем просадку за последние сутки
+        now = datetime.now(timezone.utc)
+        day_ago = now - timedelta(days=1)
+        profit = 0
+        for symbol, trades in virtual_portfolio.items():
+            if symbol == 'open_trades':
+                continue
+            last_buy = None
+            for trade in trades:
+                t = datetime.strptime(trade['time'], '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+                if t < day_ago:
+                    continue
+                if trade['action'] == 'BUY':
+                    last_buy = float(trade['price'])
+                elif trade['action'] == 'SELL' and last_buy is not None:
+                    profit += float(trade['price']) - last_buy
+                    last_buy = None
+        return profit
+
+    MAX_LOSSES = 4
+    consecutive_losses = 0
+
+    def update_consecutive_losses(pnl):
+        global consecutive_losses
+        if pnl < 0:
+            consecutive_losses += 1
+        else:
+            consecutive_losses = 0
 
     while True:
         # Проверка наличия монет
@@ -536,6 +602,16 @@ def get_score_winrate(score, action):
     percent = (success / total * 100) if total > 0 else None
     score_history_stats[key] = percent
     return percent
+
+logging.basicConfig(level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ])
+error_handler = logging.FileHandler('bot_error.log', encoding='utf-8')
+error_handler.setLevel(logging.ERROR)
+logging.getLogger().addHandler(error_handler)
 
 if __name__ == '__main__':
     asyncio.run(main()) 

@@ -38,4 +38,7 @@ TP_ATR_MULT = 3.0
 # --- Stop Loss ---
 SL_MIN = 0.007   # минимум 0.7%
 SL_MAX = 0.15    # максимум 15%
-SL_ATR_MULT = 2.0 
+SL_ATR_MULT = 2.0
+
+# --- Fee Rate ---
+FEE_RATE = 0.0006  # комиссия биржи (0.06%) 
