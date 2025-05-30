@@ -11,19 +11,30 @@ import math
 from telegram.ext import Application, CommandHandler, ContextTypes
 import threading
 import logging
+from collections import defaultdict
+from config import *
 
 # ========== НАСТРОЙКИ ==========
-TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'  # Токен Telegram-бота
-TELEGRAM_CHAT_ID = 931346988  # chat_id пользователя
+# Удаляю старые параметры, заменяю на импорт из config.py
+# Было:
+# TIMEFRAME = '5m'
+# LIMIT = 400
+# TAKE_PROFIT = 0.02
+# STOP_LOSS = -0.02
+# TELEGRAM_TOKEN = ...
+# TELEGRAM_CHAT_ID = ...
+# ...
+# Теперь всё берётся из config.py
+# ... existing code ...
 
 EXCHANGE = ccxt.bybit({
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'spot'  # Используем спотовый рынок
+        'defaultType': 'swap'  # Используем фьючерсный рынок (USDT perpetual)
     }
 })
 
-# Белый список топ-50 популярных монет + перспективные альткойны и волатильные монеты
+# Белый список топ-50 популярных монет + перспективные альткойны и волатильные монеты (фьючерсы)
 TOP_SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
     'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'LINK/USDT', 'MATIC/USDT',
@@ -41,13 +52,9 @@ TOP_SYMBOLS = [
     '1000PEPE/USDT', 'FLOKI/USDT', 'BONK/USDT', 'SHIB/USDT'
 ]
 markets = EXCHANGE.load_markets()
-SYMBOLS = [symbol for symbol in TOP_SYMBOLS if symbol in markets and markets[symbol]['active']]
-print(f"SYMBOLS: {SYMBOLS}")  # Для отладки
-TIMEFRAME = '5m'  # Интервал свечей теперь 5 минут
-LIMIT = 400  # Количество свечей для анализа (с запасом для всех индикаторов)
-
-TAKE_PROFIT = 0.02  # +2%
-STOP_LOSS = -0.02   # -2%
+# Фильтруем только те пары, которые есть на фьючерсах (swap) и активны
+SYMBOLS = [symbol for symbol in TOP_SYMBOLS if symbol in markets and markets[symbol]['active'] and markets[symbol]['type'] == 'swap']
+print(f"FUTURES SYMBOLS: {SYMBOLS}")  # Для отладки
 
 # ========== ВИРТУАЛЬНЫЙ ПОРТФЕЛЬ ========== 
 PORTFOLIO_FILE = 'virtual_portfolio.json'
@@ -84,8 +91,14 @@ def record_trade(symbol, action, price, time):
     save_portfolio()
 
 # Открытие сделки
-def open_trade(symbol, price, time):
-    open_trades[symbol] = {'buy_price': price, 'time': time.strftime('%Y-%m-%d %H:%M')}
+def open_trade(symbol, price, time, atr=None):
+    open_trades[symbol] = {
+        'buy_price': price,
+        'time': time.strftime('%Y-%m-%d %H:%M'),
+        'atr': atr if atr is not None else 0,
+        'trail_pct': TRAIL_ATR_MULT,
+        'last_peak': price
+    }
     save_portfolio()
 
 # Закрытие сделки
@@ -130,13 +143,15 @@ def get_ohlcv(symbol):
     return df
 
 def analyze(df):
-    """Анализ по индикаторам: SMA, MACD, ATR (5m), RSI (SMA50 и SMA100)."""
-    df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
-    df['sma100'] = ta.trend.sma_indicator(df['close'], window=100)
+    """Анализ по индикаторам: EMA, MACD, ATR (5m), RSI."""
+    df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=MA_FAST)
+    df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=MA_SLOW)
     macd = ta.trend.macd_diff(df['close'])
     df['macd'] = macd
-    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-    df['atr5m'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=20)
+    df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)
+    df['atr5m'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
+    # Убираем строки с NaN, чтобы не ловить фантомные кресты
+    df = df.dropna().reset_index(drop=True)
     return df
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
@@ -146,7 +161,7 @@ def evaluate_signal_strength(df):
     prev = df.iloc[-2]
     score = 0
     # SMA пересечение
-    if (prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100']) or (prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100']):
+    if (prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']) or (prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']):
         score += 1
     # MACD
     if (last['macd'] > 0 and prev['macd'] <= 0) or (last['macd'] < 0 and prev['macd'] >= 0):
@@ -212,52 +227,66 @@ def get_24h_volume(symbol):
         print(f"Ошибка получения объёма по {symbol}: {e}")
         return 0
 
+last_signal_time = defaultdict(lambda: datetime.min)
+
 def check_signals(df, symbol):
-    """Golden/Death Cross по SMA50/100 + MACD + фильтр RSI + фильтр по тренду + фильтр по объёму."""
+    """Golden/Death Cross по EMA + MACD + фильтр RSI + фильтр по тренду + фильтр по объёму + глобальный тренд."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
     # Получаем объём торгов за 24ч
     volume = get_24h_volume(symbol)
     volume_mln = volume / 1_000_000
-    min_volume = 5_000_000  # Усиленный фильтр по объёму
+    min_volume = MIN_VOLUME_USDT
     if volume < min_volume:
-        logging.info(f"{symbol}: объём {volume_mln:.2f} млн < 10 млн, сигнал не формируется")
+        logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {min_volume/1_000_000:.0f} млн, сигнал не формируется")
         return []
     # Фильтр по тренду
-    if last['close'] < last['sma100']:
-        logging.info(f"{symbol}: цена ниже SMA100, сигнал на покупку не формируется")
+    if last['close'] < last['ema_slow']:
+        logging.info(f"{symbol}: цена ниже EMA_slow, сигнал на покупку не формируется")
         return []
     # Фильтр по RSI (нейтральная зона)
-    if 45 <= last['rsi'] <= 55:
+    if RSI_NEUTRAL_LOW <= last['rsi'] <= RSI_NEUTRAL_HIGH:
         logging.info(f"{symbol}: RSI {last['rsi']:.2f} в нейтральной зоне, сигнал не формируется")
         return []
-    # Golden Cross (SMA50 пересёк SMA100 вверх) + MACD бычий + RSI < 70
-    if prev['sma50'] < prev['sma100'] and last['sma50'] > last['sma100'] and last['macd'] > 0 and last['rsi'] < 70:
+    # Фильтр по глобальному тренду (только для BUY)
+    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+        if not is_global_uptrend(symbol):
+            logging.info(f"{symbol}: глобальный тренд вниз — BUY пропущен")
+            return []
+    # Golden Cross (EMA50 пересёк EMA100 вверх) + MACD бычий + RSI < 70
+    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow'] and last['macd'] > 0 and last['rsi'] < 70:
         action = 'BUY'
         score = evaluate_signal_strength(df)
         label, strength_chance = signal_strength_label(score)
         history_percent, total = get_signal_stats(symbol, action)
         avg_chance = int((strength_chance * 100 + history_percent) / 2)
         leverage = recommend_leverage(score, history_percent)
-        signals.append(f'Сигнал: КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
-        logging.info(f"{symbol}: BUY сигнал сформирован")
-    # Death Cross (SMA50 пересёк SMA100 вниз) + MACD медвежий + RSI > 30
-    if prev['sma50'] > prev['sma100'] and last['sma50'] < last['sma100'] and last['macd'] < 0 and last['rsi'] > 30:
+        signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
+        logging.info(f"{symbol}: BUY сигнал сформирован (фьючерсы)")
+    # Death Cross (EMA50 пересёк EMA100 вниз) + MACD медвежий + RSI > 30
+    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0 and last['rsi'] > 30:
         action = 'SELL'
         score = evaluate_signal_strength(df)
         label, strength_chance = signal_strength_label(score)
         history_percent, total = get_signal_stats(symbol, action)
         avg_chance = int((strength_chance * 100 + history_percent) / 2)
         leverage = recommend_leverage(score, history_percent)
-        signals.append(f'Сигнал: ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nПричина: SMA50 пересёк SMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
-        logging.info(f"{symbol}: SELL сигнал сформирован")
+        signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
+        logging.info(f"{symbol}: SELL сигнал сформирован (фьючерсы)")
+    # Cooldown между сигналами
+    now = datetime.now(timezone.utc)
+    if now - last_signal_time[symbol] < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES):
+        return []
+    # Если сигнал сформирован:
+    if signals:
+        last_signal_time[symbol] = now
     return signals
 
 def analyze_long(df):
-    """Долгосрочный анализ: SMA50/200, MACD, RSI на дневках."""
-    df['sma50'] = ta.trend.sma_indicator(df['close'], window=50)
-    df['sma200'] = ta.trend.sma_indicator(df['close'], window=200)
+    """Долгосрочный анализ: EMA50/200, MACD, RSI на дневках."""
+    df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=50)
+    df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=200)
     df['macd'] = ta.trend.macd_diff(df['close'])
     df['rsi'] = ta.momentum.rsi(df['close'], window=14)
     return df
@@ -267,18 +296,24 @@ def check_signals_long(df):
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
-    # Golden Cross (SMA50 пересёк SMA200 вверх) + MACD бычий + RSI < 65
-    if prev['sma50'] < prev['sma200'] and last['sma50'] > last['sma200'] and last['macd'] > 0 and last['rsi'] < 65:
-        signals.append('Сигнал: КУПИТЬ НА ДОЛГОСРОК!\nПричина: SMA50 пересёк SMA200 вверх (Golden Cross), MACD бычий, RSI < 65.')
-    # Death Cross (SMA50 пересёк SMA200 вниз) + MACD медвежий + RSI > 35
-    if prev['sma50'] > prev['sma200'] and last['sma50'] < last['sma200'] and last['macd'] < 0 and last['rsi'] > 35:
-        signals.append('Сигнал: ПРОДАТЬ НА ДОЛГОСРОК!\nПричина: SMA50 пересёк SMA200 вниз (Death Cross), MACD медвежий, RSI > 35.')
+    # Golden Cross (EMA50 пересёк EMA200 вверх) + MACD бычий + RSI < 65
+    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow'] and last['macd'] > 0 and last['rsi'] < 65:
+        signals.append('Сигнал: КУПИТЬ НА ДОЛГОСРОК!\nПричина: EMA50 пересёк EMA200 вверх (Golden Cross), MACD бычий, RSI < 65.')
+    # Death Cross (EMA50 пересёк EMA200 вниз) + MACD медвежий + RSI > 35
+    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0 and last['rsi'] > 35:
+        signals.append('Сигнал: ПРОДАТЬ НА ДОЛГОСРОК!\nПричина: EMA50 пересёк EMA200 вниз (Death Cross), MACD медвежий, RSI > 35.')
     return signals
 
 # ========== ОТПРАВКА В TELEGRAM ==========
 async def send_telegram_message(text):
     bot = Bot(token=TELEGRAM_TOKEN)
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
+    for attempt in range(3):
+        try:
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
+            break
+        except Exception as e:
+            logging.error(f"Ошибка отправки сообщения в Telegram: {e}")
+            await asyncio.sleep(2)
 
 # ========== ОТПРАВКА ОТЧЁТА ==========
 async def send_daily_report():
@@ -309,7 +344,7 @@ async def telegram_bot():
     app.add_handler(CommandHandler("stats", stats_command))
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
+    await app.updater.start_polling(drop_pending_updates=True)
     await asyncio.Event().wait()  # чтобы задача не завершалась
 
 async def main():
@@ -353,27 +388,22 @@ async def main():
                 # Проверка на открытые сделки
                 if symbol in open_trades:
                     buy_price = open_trades[symbol]['buy_price']
-                    change = (price - buy_price) / buy_price
-                    tp = adaptive_targets[symbol]['tp']
-                    sl = adaptive_targets[symbol]['sl']
-                    tp_price = round(buy_price * (1 + tp), 6)
-                    sl_price = round(buy_price * (1 - sl), 6)
-                    # Тейк-профит
-                    if change >= tp:
-                        msg = f"🎯 {symbol} достиг цели +{tp*100:.2f}% ({tp_price}) (адаптивный тейк-профит)\nРекомендуется ПРОДАТЬ для фиксации прибыли.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
+                    atr = open_trades[symbol].get('atr', atr5m)
+                    trail_pct = open_trades[symbol].get('trail_pct', TRAIL_ATR_MULT)
+                    last_peak = open_trades[symbol].get('last_peak', buy_price)
+                    # Trailing-ATR: обновляем last_peak если цена выросла
+                    if price > last_peak:
+                        open_trades[symbol]['last_peak'] = price
+                        last_peak = price
+                        save_portfolio()
+                    dynamic_sl = last_peak - atr * trail_pct
+                    # Trailing-ATR стоп
+                    if price <= dynamic_sl:
+                        msg = f"⚠️ {symbol} сработал trailing-ATR стоп (динамический SL):\nТочка входа: {buy_price}, текущая цена: {price:.4f}, SL: {dynamic_sl:.4f}\nРекомендуется ПРОДАТЬ для ограничения убытков или фиксации прибыли."
                         await send_telegram_message(msg)
                         record_trade(symbol, 'SELL', price, time)
                         close_trade(symbol)
-                        logging.info(f"{symbol}: сделка закрыта по TP, прибыль {change*100:.2f}%")
-                        signals_sent = True
-                        continue
-                    # Стоп-лосс
-                    if change <= -sl:
-                        msg = f"⚠️ {symbol} снизился на -{sl*100:.2f}% ({sl_price}) (адаптивный стоп-лосс)\nРекомендуется ПРОДАТЬ для ограничения убытков.\nТочка входа: {buy_price}, текущая цена: {price:.4f}"
-                        await send_telegram_message(msg)
-                        record_trade(symbol, 'SELL', price, time)
-                        close_trade(symbol)
-                        logging.info(f"{symbol}: сделка закрыта по SL, убыток {change*100:.2f}%")
+                        logging.info(f"{symbol}: сделка закрыта по trailing-ATR SL")
                         signals_sent = True
                         continue
                 # Сигналы на вход/выход
@@ -390,7 +420,7 @@ async def main():
                     for s in signals:
                         if 'КУПИТЬ' in s and symbol not in open_trades:
                             record_trade(symbol, 'BUY', price, time)
-                            open_trade(symbol, price, time)
+                            open_trade(symbol, price, time, atr=atr5m)
                             logging.info(f"{symbol}: сделка открыта по цене {price}")
                         if 'ПРОДАТЬ' in s and symbol in open_trades:
                             record_trade(symbol, 'SELL', price, time)
@@ -437,6 +467,13 @@ async def main():
         if current_hour not in report_hours:
             last_report_hours = set()  # Обнуляем, чтобы в следующий раз снова отправить
         await asyncio.sleep(60 * 3)  # Проверять каждые 3 минуты
+
+def is_global_uptrend(symbol: str) -> bool:
+    ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=BACKUP_TIMEFRAME, limit=MA_SLOW*3)
+    tmp = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+    tmp['ema_f'] = ta.trend.ema_indicator(tmp['c'], window=MA_FAST)
+    tmp['ema_s'] = ta.trend.ema_indicator(tmp['c'], window=MA_SLOW)
+    return bool(tmp['ema_f'].iloc[-1] > tmp['ema_s'].iloc[-1])
 
 if __name__ == '__main__':
     asyncio.run(main()) 
