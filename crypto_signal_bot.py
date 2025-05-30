@@ -610,7 +610,7 @@ def get_score_winrate(score, action):
     score_history_stats[key] = percent
     return percent
 
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.ERROR,
     format='%(asctime)s %(levelname)s %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
