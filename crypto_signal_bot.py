@@ -139,7 +139,7 @@ def get_ohlcv(symbol):
     """Получить исторические данные по монете."""
     ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=LIMIT)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
     return df
 
 def analyze(df):
@@ -289,6 +289,7 @@ def analyze_long(df):
     df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=200)
     df['macd'] = ta.trend.macd_diff(df['close'])
     df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
     return df
 
 def check_signals_long(df):
@@ -373,7 +374,7 @@ async def main():
                 df = analyze(df)
                 signals = check_signals(df, symbol)
                 price = df['close'].iloc[-1]
-                time = df['timestamp'].iloc[-1] + timedelta(hours=TIME_SHIFT_HOURS)
+                time = df['timestamp'].iloc[-1]
                 processed_symbols.append(symbol)
                 # Расчёт адаптивных целей по ATR 5m
                 atr5m = df['atr5m'].iloc[-1]
@@ -440,7 +441,7 @@ async def main():
                 try:
                     ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe='1d', limit=400)
                     df_long = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                    df_long['timestamp'] = pd.to_datetime(df_long['timestamp'], unit='ms')
+                    df_long['timestamp'] = pd.to_datetime(df_long['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
                     df_long = analyze_long(df_long)
                     signals_long = check_signals_long(df_long)
                     if signals_long:
