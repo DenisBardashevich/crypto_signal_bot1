@@ -80,14 +80,17 @@ def save_portfolio():
         json.dump(virtual_portfolio, f)
 
 # Фиксация сделки
-def record_trade(symbol, action, price, time):
+def record_trade(symbol, action, price, time, score=None):
     if symbol not in virtual_portfolio:
         virtual_portfolio[symbol] = []
-    virtual_portfolio[symbol].append({
+    trade = {
         'action': action,
         'price': price,
         'time': time.strftime('%Y-%m-%d %H:%M')
-    })
+    }
+    if score is not None:
+        trade['score'] = score
+    virtual_portfolio[symbol].append(trade)
     save_portfolio()
 
 # Открытие сделки
@@ -155,12 +158,20 @@ def analyze(df):
     return df
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
-def evaluate_signal_strength(df):
-    """Оценка силы сигнала по индикаторам (0-3 балла)."""
+def evaluate_signal_strength(df, symbol):
+    """
+    Оценка силы сигнала по индикаторам (от -1 до 5 баллов):
+    +1 за пересечение EMA_fast/EMA_slow
+    +1 за смену MACD
+    +1 за RSI в (30, 70)
+    +1 за совпадение тренда на 1h (EMA_fast > EMA_slow для BUY)
+    +1 за объём выше среднего (выше медианы по рынку)
+    -1 если RSI > 75 или < 25 (экстремум)
+    """
     last = df.iloc[-1]
     prev = df.iloc[-2]
     score = 0
-    # SMA пересечение
+    # EMA пересечение
     if (prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']) or (prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']):
         score += 1
     # MACD
@@ -169,13 +180,34 @@ def evaluate_signal_strength(df):
     # RSI
     if 30 < last['rsi'] < 70:
         score += 1
+    # Тренд на 1h
+    try:
+        if is_global_uptrend(symbol):
+            score += 1
+    except Exception:
+        pass
+    # Объём выше медианы по рынку
+    try:
+        all_volumes = [get_24h_volume(s) for s in SYMBOLS]
+        median_vol = sorted(all_volumes)[len(all_volumes)//2]
+        if get_24h_volume(symbol) > median_vol:
+            score += 1
+    except Exception:
+        pass
+    # Штраф за экстремальный RSI
+    if last['rsi'] > 75 or last['rsi'] < 25:
+        score -= 1
     return score
 
 def signal_strength_label(score):
-    if score == 3:
+    if score == 5:
         return 'Сильный', 0.85
-    elif score == 2:
+    elif score == 4:
         return 'Средний', 0.65
+    elif score == 3:
+        return 'Слабый', 0.45
+    elif score == 2:
+        return 'Очень слабый', 0.3
     elif score == 1:
         return 'Слабый', 0.45
     else:
@@ -257,22 +289,20 @@ def check_signals(df, symbol):
     # Golden Cross (EMA50 пересёк EMA100 вверх) + MACD бычий + RSI < 70
     if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow'] and last['macd'] > 0 and last['rsi'] < 70:
         action = 'BUY'
-        score = evaluate_signal_strength(df)
+        score = evaluate_signal_strength(df, symbol)
         label, strength_chance = signal_strength_label(score)
         history_percent, total = get_signal_stats(symbol, action)
-        avg_chance = int((strength_chance * 100 + history_percent) / 2)
-        leverage = recommend_leverage(score, history_percent)
-        signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вверх (Golden Cross), MACD бычий, RSI < 70.')
+        winrate = get_score_winrate(score, action)
+        signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вверх (Golden Cross), MACD бычий, RSI < 70.\nWinrate: {winrate if winrate is not None else "нет данных"}')
         logging.info(f"{symbol}: BUY сигнал сформирован (фьючерсы)")
     # Death Cross (EMA50 пересёк EMA100 вниз) + MACD медвежий + RSI > 30
     if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0 and last['rsi'] > 30:
         action = 'SELL'
-        score = evaluate_signal_strength(df)
+        score = evaluate_signal_strength(df, symbol)
         label, strength_chance = signal_strength_label(score)
         history_percent, total = get_signal_stats(symbol, action)
-        avg_chance = int((strength_chance * 100 + history_percent) / 2)
-        leverage = recommend_leverage(score, history_percent)
-        signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nИсторический шанс: {history_percent:.0f}% (по {total} сделкам)\nОценка по графику: {int(strength_chance*100)}%\nИтоговый шанс: {avg_chance}%\nРекомендуемое плечо: {leverage}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вниз (Death Cross), MACD медвежий, RSI > 30.')
+        winrate = get_score_winrate(score, action)
+        signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вниз (Death Cross), MACD медвежий, RSI > 30.\nWinrate: {winrate if winrate is not None else "нет данных"}')
         logging.info(f"{symbol}: SELL сигнал сформирован (фьючерсы)")
     # Защита от naive datetime
     if last_signal_time[symbol].tzinfo is None:
@@ -404,7 +434,7 @@ async def main():
                     if price <= dynamic_sl:
                         msg = f"⚠️ {symbol} сработал trailing-ATR стоп (динамический SL):\nТочка входа: {buy_price}, текущая цена: {price:.4f}, SL: {dynamic_sl:.4f}\nРекомендуется ПРОДАТЬ для ограничения убытков или фиксации прибыли."
                         await send_telegram_message(msg)
-                        record_trade(symbol, 'SELL', price, time)
+                        record_trade(symbol, 'SELL', price, time, score=score)
                         close_trade(symbol)
                         logging.info(f"{symbol}: сделка закрыта по trailing-ATR SL")
                         signals_sent = True
@@ -422,11 +452,11 @@ async def main():
                     signals_sent = True
                     for s in signals:
                         if 'КУПИТЬ' in s and symbol not in open_trades:
-                            record_trade(symbol, 'BUY', price, time)
+                            record_trade(symbol, 'BUY', price, time, score=score)
                             open_trade(symbol, price, time, atr=atr5m)
                             logging.info(f"{symbol}: сделка открыта по цене {price}")
                         if 'ПРОДАТЬ' in s and symbol in open_trades:
-                            record_trade(symbol, 'SELL', price, time)
+                            record_trade(symbol, 'SELL', price, time, score=score)
                             close_trade(symbol)
                             logging.info(f"{symbol}: сделка закрыта по сигналу ПРОДАТЬ")
             except Exception as e:
@@ -477,6 +507,35 @@ def is_global_uptrend(symbol: str) -> bool:
     tmp['ema_f'] = ta.trend.ema_indicator(tmp['c'], window=MA_FAST)
     tmp['ema_s'] = ta.trend.ema_indicator(tmp['c'], window=MA_SLOW)
     return bool(tmp['ema_f'].iloc[-1] > tmp['ema_s'].iloc[-1])
+
+# Функция для расчёта winrate по score на истории
+score_history_stats = {}
+def get_score_winrate(score, action):
+    key = f'{score}_{action}'
+    if key in score_history_stats:
+        return score_history_stats[key]
+    # Считаем по виртуальному портфелю
+    total, success = 0, 0
+    for symbol, trades in virtual_portfolio.items():
+        if symbol == 'open_trades':
+            continue
+        last_buy = None
+        last_score = None
+        for trade in trades:
+            if 'score' in trade:
+                last_score = trade['score']
+            if trade['action'] == 'BUY':
+                last_buy = float(trade['price'])
+                last_score = trade.get('score', None)
+            elif trade['action'] == 'SELL' and last_buy is not None and last_score == score:
+                total += 1
+                if (float(trade['price']) > last_buy and action == 'BUY') or (float(trade['price']) < last_buy and action == 'SELL'):
+                    success += 1
+                last_buy = None
+                last_score = None
+    percent = (success / total * 100) if total > 0 else None
+    score_history_stats[key] = percent
+    return percent
 
 if __name__ == '__main__':
     asyncio.run(main()) 
