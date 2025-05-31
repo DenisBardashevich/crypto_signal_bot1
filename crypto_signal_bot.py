@@ -82,11 +82,12 @@ def save_portfolio():
         json.dump(virtual_portfolio, f)
 
 # Фиксация сделки
-def record_trade(symbol, action, price, time, score=None):
+def record_trade(symbol, action, price, time, side, score=None):
     if symbol not in virtual_portfolio:
         virtual_portfolio[symbol] = []
     trade = {
-        'action': action,
+        'action': action,  # 'OPEN' или 'CLOSE'
+        'side': side,      # 'long' или 'short'
         'price': price,
         'time': time.strftime('%Y-%m-%d %H:%M')
     }
@@ -96,9 +97,10 @@ def record_trade(symbol, action, price, time, score=None):
     save_portfolio()
 
 # Открытие сделки
-def open_trade(symbol, price, time, atr=None, score=None):
+def open_trade(symbol, price, time, side, atr=None, score=None):
     open_trades[symbol] = {
-        'buy_price': price,
+        'side': side,  # 'long' или 'short'
+        'entry_price': price,
         'time': time.strftime('%Y-%m-%d %H:%M'),
         'atr': atr if atr is not None else 0,
         'trail_pct': TRAIL_ATR_MULT,
@@ -714,7 +716,7 @@ async def main():
                     adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 # Проверка на открытые сделки
                 if symbol in open_trades:
-                    if check_open_positions(symbol, price, time, df):
+                    if check_tp_sl(symbol, price, time, df):
                         signals_sent = True
                         continue
                 # Сигналы на вход/выход
@@ -729,16 +731,16 @@ async def main():
                     logging.info(f"{symbol}: сигнал отправлен в Telegram")
                     signals_sent = True
                     for s in signals:
-                        if 'КУПИТЬ' in s and symbol not in open_trades:
+                        if 'КУПИТЬ' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'long'):
                             score = evaluate_signal_strength(df, symbol, 'BUY')
-                            record_trade(symbol, 'BUY', price, time, score=score)
-                            open_trade(symbol, price, time, atr=atr15m, score=score)
-                            logging.info(f"{symbol}: сделка открыта по цене {price}")
-                        if 'ПРОДАТЬ' in s and symbol in open_trades:
+                            record_trade(symbol, 'OPEN', price, time, 'long', score=score)
+                            open_trade(symbol, price, time, 'long', atr=atr15m, score=score)
+                            logging.info(f"{symbol}: LONG открыт по цене {price}")
+                        if 'ПРОДАТЬ' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'short'):
                             score = evaluate_signal_strength(df, symbol, 'SELL')
-                            record_trade(symbol, 'SELL', price, time, score=score)
-                            close_trade(symbol)
-                            logging.info(f"{symbol}: сделка закрыта по сигналу ПРОДАТЬ")
+                            record_trade(symbol, 'OPEN', price, time, 'short', score=score)
+                            open_trade(symbol, price, time, 'short', atr=atr15m, score=score)
+                            logging.info(f"{symbol}: SHORT открыт по цене {price}")
             except Exception as e:
                 error_text = f"Ошибка по {symbol}: {e}"
                 print(error_text)
@@ -899,49 +901,37 @@ def calculate_tp_sl(df, price, atr15m):
     
     return tp, sl
 
-def check_open_positions(symbol, price, time, df):
-    """
-    Проверка и обновление открытых позиций
-    """
-    try:
-        if symbol not in open_trades:
-            return False
-            
-        trade = open_trades[symbol]
-        buy_price = trade['buy_price']
-        atr = trade.get('atr', df['atr5m'].iloc[-1])
-        trail_pct = trade.get('trail_pct', TRAIL_ATR_MULT)
-        last_peak = trade.get('last_peak', buy_price)
-        
-        # Trailing-ATR: обновляем last_peak если цена выросла
-        if price > last_peak:
-            open_trades[symbol]['last_peak'] = price
-            last_peak = price
-            save_portfolio()
-            
-        # Расчёт динамического SL
-        dynamic_sl = last_peak - atr * trail_pct
-        
-        # Проверка на срабатывание trailing-ATR стопа
-        if price <= dynamic_sl:
-            msg = f"⚠️ {symbol} сработал trailing-ATR стоп (динамический SL):\n"
-            msg += f"Точка входа: {buy_price}\n"
-            msg += f"Текущая цена: {price:.4f}\n"
-            msg += f"SL: {dynamic_sl:.4f}\n"
-            msg += f"Прибыль/убыток: {((price - buy_price) / buy_price * 100):.2f}%\n"
-            msg += "Рекомендуется ПРОДАТЬ для ограничения убытков или фиксации прибыли."
-            
-            score = trade.get('score', None)
-            record_trade(symbol, 'SELL', price, time, score=score)
+def check_tp_sl(symbol, price, time, df):
+    if symbol not in open_trades:
+        return False
+    trade = open_trades[symbol]
+    side = trade['side']
+    entry = trade['entry_price']
+    tp = adaptive_targets[symbol]['tp'] if symbol in adaptive_targets else TP_MIN
+    sl = adaptive_targets[symbol]['sl'] if symbol in adaptive_targets else SL_MIN
+    # Для long
+    if side == 'long':
+        tp_price = entry * (1 + tp)
+        sl_price = entry * (1 - sl)
+        if price >= tp_price or price <= sl_price:
+            reason = 'TP' if price >= tp_price else 'SL'
+            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry}, выход {price}"
+            asyncio.create_task(send_telegram_message(msg))
+            record_trade(symbol, 'CLOSE', price, time, side)
             close_trade(symbol)
-            logging.info(f"{symbol}: сделка закрыта по trailing-ATR SL")
             return True
-            
-        return False
-        
-    except Exception as e:
-        logging.error(f"Ошибка при проверке открытых позиций для {symbol}: {e}")
-        return False
+    # Для short
+    if side == 'short':
+        tp_price = entry * (1 - tp)
+        sl_price = entry * (1 + sl)
+        if price <= tp_price or price >= sl_price:
+            reason = 'TP' if price <= tp_price else 'SL'
+            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry}, выход {price}"
+            asyncio.create_task(send_telegram_message(msg))
+            record_trade(symbol, 'CLOSE', price, time, side)
+            close_trade(symbol)
+            return True
+    return False
 
 logging.basicConfig(level=logging.ERROR,
     format='%(asctime)s %(levelname)s %(message)s',
