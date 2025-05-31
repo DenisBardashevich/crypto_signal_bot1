@@ -96,13 +96,14 @@ def record_trade(symbol, action, price, time, score=None):
     save_portfolio()
 
 # Открытие сделки
-def open_trade(symbol, price, time, atr=None):
+def open_trade(symbol, price, time, atr=None, score=None):
     open_trades[symbol] = {
         'buy_price': price,
         'time': time.strftime('%Y-%m-%d %H:%M'),
         'atr': atr if atr is not None else 0,
         'trail_pct': TRAIL_ATR_MULT,
-        'last_peak': price
+        'last_peak': price,
+        'score': score
     }
     save_portfolio()
 
@@ -185,35 +186,27 @@ def analyze(df):
     return df
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
-def evaluate_signal_strength(df, symbol):
+def evaluate_signal_strength(df, symbol, action):
     """
-    Оценка силы сигнала по индикаторам (от -1 до 5 баллов):
-    +1 за пересечение EMA_fast/EMA_slow
-    +1 за смену MACD
-    +1 за RSI в (30, 70)
-    +1 за совпадение тренда на 1h (EMA_fast > EMA_slow для BUY)
-    +1 за объём выше среднего (выше медианы по рынку)
-    -1 если RSI > 75 или < 25 (экстремум)
+    Оценка силы сигнала по экспертным признакам (0-5):
+    +1 за тренд на 1h (EMA_fast > EMA_slow для BUY, < для SELL)
+    +1 за объём выше медианы по рынку
+    +1 за RSI в "силовой" зоне (40-60)
+    +1 за отсутствие экстремума RSI (25<RSI<75)
+    +1 за совпадение EMA и MACD (т.е. оба бычьи или оба медвежьи)
+    -1 за экстремальный RSI (RSI>75 или <25)
     """
     last = df.iloc[-1]
     prev = df.iloc[-2]
     score = 0
-    # EMA пересечение
-    if (prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']) or (prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']):
-        score += 1
-    # MACD
-    if (last['macd'] > 0 and prev['macd'] <= 0) or (last['macd'] < 0 and prev['macd'] >= 0):
-        score += 1
-    # RSI
-    if 30 < last['rsi'] < 70:
-        score += 1
     # Тренд на 1h
     try:
-        if is_global_uptrend(symbol):
+        trend = is_global_uptrend(symbol)
+        if (action == 'BUY' and trend) or (action == 'SELL' and not trend):
             score += 1
     except Exception:
         pass
-    # Объём выше медианы по рынку
+    # Объём выше медианы
     try:
         all_volumes = [get_24h_volume(s) for s in SYMBOLS]
         median_vol = sorted(all_volumes)[len(all_volumes)//2]
@@ -221,6 +214,15 @@ def evaluate_signal_strength(df, symbol):
             score += 1
     except Exception:
         pass
+    # RSI в силовой зоне
+    if 40 < last['rsi'] < 60:
+        score += 1
+    # Отсутствие экстремума
+    if 25 < last['rsi'] < 75:
+        score += 1
+    # Совпадение EMA и MACD
+    if (last['ema_fast'] > last['ema_slow'] and last['macd'] > 0) or (last['ema_fast'] < last['ema_slow'] and last['macd'] < 0):
+        score += 1
     # Штраф за экстремальный RSI
     if last['rsi'] > 75 or last['rsi'] < 25:
         score -= 1
@@ -292,64 +294,46 @@ def get_24h_volume(symbol):
 last_signal_time = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
 
 def check_signals(df, symbol):
-    """Golden/Death Cross по EMA + MACD + фильтр RSI + фильтр по тренду + фильтр по объёму + глобальный тренд."""
+    """Golden/Death Cross по EMA + MACD + базовые фильтры. Надёжность и сила — через score."""
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
-    # ADX фильтр
+    # Базовые фильтры
     if last['adx'] < 15:
         logging.info(f"{symbol}: ADX {last['adx']:.2f} < 15, сигнал не формируется")
         return []
-    # Получаем объём торгов за 24ч
     volume = get_24h_volume(symbol)
     volume_mln = volume / 1_000_000
-    min_volume = MIN_VOLUME_USDT
-    if volume < min_volume:
-        logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {min_volume/1_000_000:.0f} млн, сигнал не формируется")
+    if volume < MIN_VOLUME_USDT:
+        logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {MIN_VOLUME_USDT/1_000_000:.0f} млн, сигнал не формируется")
         return []
-    # Фильтр по тренду
-    if last['close'] < last['ema_slow']:
-        logging.info(f"{symbol}: цена ниже EMA_slow, сигнал на покупку не формируется")
+    if last['rsi'] > 75 or last['rsi'] < 25:
+        logging.info(f"{symbol}: экстремальный RSI {last['rsi']:.2f}, сигнал не формируется")
         return []
-    # Фильтр по RSI (нейтральная зона)
-    if RSI_NEUTRAL_LOW <= last['rsi'] <= RSI_NEUTRAL_HIGH:
-        logging.info(f"{symbol}: RSI {last['rsi']:.2f} в нейтральной зоне, сигнал не формируется")
-        return []
-    # Фильтр по глобальному тренду (только для BUY)
-    global_trend = True
-    try:
-        global_trend = is_global_uptrend(symbol)
-    except Exception:
-        pass
-    # Golden Cross (EMA50 пересёк EMA100 вверх) + MACD бычий + RSI < 70
-    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow'] and last['macd'] > 0 and last['rsi'] < 70:
+    # BUY
+    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow'] and last['macd'] > 0:
         action = 'BUY'
-        score = evaluate_signal_strength(df, symbol)
-        if not global_trend:
-            score -= 1
+        score = evaluate_signal_strength(df, symbol, action)
         label, strength_chance = signal_strength_label(score)
         history_percent, total = get_signal_stats(symbol, action)
         winrate = get_score_winrate(score, action)
-        signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вверх (Golden Cross), MACD бычий, RSI < 70.\nWinrate: {winrate if winrate is not None else "нет данных"}')
+        signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вверх, MACD бычий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
         logging.info(f"{symbol}: BUY сигнал сформирован (фьючерсы)")
-    # Death Cross (EMA50 пересёк EMA100 вниз) + MACD медвежий + RSI > 30
-    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0 and 30 < last['rsi'] < 70:
+    # SELL
+    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0:
         action = 'SELL'
-        score = evaluate_signal_strength(df, symbol)
-        if not global_trend:
-            score -= 1
+        score = evaluate_signal_strength(df, symbol, action)
         label, strength_chance = signal_strength_label(score)
         history_percent, total = get_signal_stats(symbol, action)
         winrate = get_score_winrate(score, action)
-        signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA50 пересёк EMA100 вниз (Death Cross), MACD медвежий, RSI > 30.\nWinrate: {winrate if winrate is not None else "нет данных"}')
+        signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вниз, MACD медвежий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
         logging.info(f"{symbol}: SELL сигнал сформирован (фьючерсы)")
-    # Защита от naive datetime
+    # Кулдаун
     if last_signal_time[symbol].tzinfo is None:
         last_signal_time[symbol] = last_signal_time[symbol].replace(tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
     if now - last_signal_time[symbol] < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES):
         return []
-    # Если сигнал сформирован:
     if signals:
         last_signal_time[symbol] = now
     return signals
@@ -507,6 +491,7 @@ async def main():
                     if price <= dynamic_sl:
                         msg = f"⚠️ {symbol} сработал trailing-ATR стоп (динамический SL):\nТочка входа: {buy_price}, текущая цена: {price:.4f}, SL: {dynamic_sl:.4f}\nРекомендуется ПРОДАТЬ для ограничения убытков или фиксации прибыли."
                         await send_telegram_message(msg)
+                        score = open_trades[symbol].get('score', None)
                         record_trade(symbol, 'SELL', price, time, score=score)
                         close_trade(symbol)
                         logging.info(f"{symbol}: сделка закрыта по trailing-ATR SL")
@@ -526,7 +511,7 @@ async def main():
                     for s in signals:
                         if 'КУПИТЬ' in s and symbol not in open_trades:
                             record_trade(symbol, 'BUY', price, time, score=score)
-                            open_trade(symbol, price, time, atr=atr5m)
+                            open_trade(symbol, price, time, atr=atr5m, score=score)
                             logging.info(f"{symbol}: сделка открыта по цене {price}")
                         if 'ПРОДАТЬ' in s and symbol in open_trades:
                             record_trade(symbol, 'SELL', price, time, score=score)
