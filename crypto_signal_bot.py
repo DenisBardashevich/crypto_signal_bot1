@@ -360,7 +360,7 @@ def evaluate_signal_strength(df, symbol, action):
     # === ОТРИЦАТЕЛЬНЫЕ ФАКТОРЫ ===
     
     # 1. Штраф за экстремальный RSI
-    if last['rsi'] > 75 or last['rsi'] < 25:
+    if last['rsi'] > 80 or last['rsi'] < 20:
         score -= 1
         logging.info(f"{symbol}: -1 балл за экстремальный RSI {last['rsi']:.2f}")
     
@@ -481,7 +481,7 @@ def check_signals(df, symbol):
             return []
         
         # 3. Проверка RSI на экстремальные значения
-        if last['rsi'] > 75 or last['rsi'] < 25:
+        if last['rsi'] > 80 or last['rsi'] < 20:
             logging.info(f"{symbol}: экстремальный RSI {last['rsi']:.2f}, сигнал не формируется")
             return []
         

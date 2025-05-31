@@ -24,7 +24,7 @@ TRAIL_ATR_MULT = 2.5   # множитель для trailing-стопа
 MIN_VOLUME_USDT = 1_000_000  # минимальный объём торгов за 24ч (USDT)
 
 # --- Signal Cooldown ---
-SIGNAL_COOLDOWN_MINUTES = 30  # увеличиваем кулдаун для 15м
+SIGNAL_COOLDOWN_MINUTES = 15  # уменьшаем кулдаун для 15м
 
 # --- Telegram ---
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
@@ -47,11 +47,11 @@ MIN_TP_SL_DISTANCE = 0.01  # минимум 1% между TP и SL
 FEE_RATE = 0.0006  # комиссия биржи (0.06%)
 
 # --- Фильтры сигналов ---
-MIN_ADX = 25  # увеличиваем минимальное значение ADX для более сильного тренда
-MAX_SPREAD_PCT = 0.003  # уменьшаем максимальный спред для более точных входов
+MIN_ADX = 20  # уменьшаем минимальное значение ADX для более мягкого фильтра
+MAX_SPREAD_PCT = 0.005  # увеличиваем максимальный спред для более частых входов
 VOLUME_SPIKE_MULT = 1.5  # множитель для объёма (1.5 = объём должен быть выше на 50% от среднего)
 MACD_SIGNAL_WINDOW = 9  # период для сигнальной линии MACD
 
 # --- Дополнительные индикаторы ---
-USE_VOLUME_FILTER = True  # использовать фильтр по объёму
-USE_VOLATILITY_FILTER = True  # использовать фильтр по волатильности 
+USE_VOLUME_FILTER = False  # отключаем фильтр по объёму
+USE_VOLATILITY_FILTER = False  # отключаем фильтр по волатильности 
