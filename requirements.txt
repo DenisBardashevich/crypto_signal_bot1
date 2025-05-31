@@ -1,4 +1,6 @@
 ccxt
 python-telegram-bot
 pandas
-ta 
+ta
+numpy
+matplotlib

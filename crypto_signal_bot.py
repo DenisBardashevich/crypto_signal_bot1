@@ -115,46 +115,107 @@ def close_trade(symbol):
 
 # Подсчёт прибыли
 def calculate_profit():
+    """
+    Подсчёт прибыли по виртуальному портфелю с учётом:
+    1. Комиссий биржи (FEE_RATE)
+    2. Финансирования (funding)
+    3. Рекомендованного плеча
+    
+    Возвращает:
+    - отчёт о прибыли/убытках в строковом виде
+    - количество прибыльных сделок
+    - количество убыточных сделок
+    - общую расчетную P&L в USDT
+    """
     report = []
     total_profit = 0
     win, loss = 0, 0
+    total_pnl_usdt = 0
+    
     for symbol, trades in virtual_portfolio.items():
         if symbol == 'open_trades':
             continue
-        win_count = 0
-        loss_count = 0
+            
+        symbol_win = 0
+        symbol_loss = 0
+        symbol_pnl = 0
         last_buy = None
         last_side = None
+        last_score = None
+        
         for trade in trades:
+            if 'score' in trade:
+                last_score = trade['score']
+                
             if trade['action'] == 'BUY':
                 last_buy = float(trade['price'])
                 last_side = 'BUY'
+                
             elif trade['action'] == 'SELL' and last_buy is not None:
                 exit_price = float(trade['price'])
                 entry_price = last_buy
                 side = last_side
                 sign = 1 if side == 'BUY' else -1
-                # Получаем размер позиции (условно 1 для виртуального портфеля)
+                
+                # Базовый размер позиции (условно 1 для виртуального портфеля)
                 size = 1
-                # Получаем комиссию и funding
+                
+                # Рекомендуемое плечо на основе силы сигнала
+                leverage = 1
+                if last_score is not None:
+                    label, strength = signal_strength_label(last_score)
+                    if strength >= 0.85:  # Сильный или очень сильный
+                        leverage = 10
+                    elif strength >= 0.7:  # Средний
+                        leverage = 5
+                    elif strength >= 0.5:  # Умеренный
+                        leverage = 3
+                    else:  # Слабый или ниже
+                        leverage = 2
+                
+                # Комиссия за открытие и закрытие позиции
+                fee = (entry_price + exit_price) * size * FEE_RATE
+                
+                # Получаем funding rate (если доступно)
                 try:
                     ticker = EXCHANGE.fetch_ticker(symbol)
-                    funding = ticker.get('fundingRate', 0) * size
+                    funding = ticker.get('fundingRate', 0) * size * entry_price
                 except Exception:
                     funding = 0
-                fee = (entry_price + exit_price) * size * FEE_RATE
-                pnl = (exit_price - entry_price) * size * sign - fee - funding
-                if pnl > 0:
-                    win_count += 1
+                
+                # Расчет P&L с учетом плеча, комиссий и funding
+                pnl_pct = (exit_price - entry_price) / entry_price * sign - (fee / (entry_price * size)) - (funding / (entry_price * size))
+                pnl_leverage = pnl_pct * leverage
+                pnl_usdt = pnl_leverage * entry_price * size
+                
+                symbol_pnl += pnl_usdt
+                total_pnl_usdt += pnl_usdt
+                
+                if pnl_usdt > 0:
+                    symbol_win += 1
+                    win += 1
                 else:
-                    loss_count += 1
+                    symbol_loss += 1
+                    loss += 1
+                
                 last_buy = None
                 last_side = None
-        if win_count > 0 or loss_count > 0:
-            report.append(f"{symbol}: прибыльных {win_count}, убыточных {loss_count}")
-        win += win_count
-        loss += loss_count
-    return report, win, loss
+                last_score = None
+        
+        if symbol_win > 0 or symbol_loss > 0:
+            winrate = (symbol_win / (symbol_win + symbol_loss)) * 100 if (symbol_win + symbol_loss) > 0 else 0
+            report.append(f"{symbol}: прибыльных {symbol_win}, убыточных {symbol_loss}, WR {winrate:.1f}%, P&L {symbol_pnl:.2f} USDT")
+    
+    # Сортируем отчет по общей прибыли
+    report.sort(key=lambda x: float(x.split("P&L ")[-1].split(" USDT")[0]), reverse=True)
+    
+    # Добавляем общую статистику
+    total_trades = win + loss
+    if total_trades > 0:
+        total_winrate = (win / total_trades) * 100
+        report.append(f"\nИтого: {total_trades} сделок, WR {total_winrate:.1f}%, P&L {total_pnl_usdt:.2f} USDT")
+    
+    return report, win, loss, total_pnl_usdt
 
 # ========== ФУНКЦИИ АНАЛИЗА ==========
 def get_ohlcv(symbol):
@@ -173,14 +234,39 @@ def get_ohlcv(symbol):
         return pd.DataFrame()
 
 def analyze(df):
-    """Анализ по индикаторам: EMA, MACD, ATR (5m), RSI."""
+    """Анализ по индикаторам: EMA, MACD, ATR (5m), RSI, ADX, Bollinger Bands."""
+    # Базовые индикаторы
     df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=MA_FAST)
     df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=MA_SLOW)
-    macd = ta.trend.macd_diff(df['close'])
-    df['macd'] = macd
+    
+    # MACD с сигнальной линией
+    df['macd'] = ta.trend.macd_diff(df['close'])
+    df['macd_line'] = ta.trend.macd(df['close'])
+    df['macd_signal'] = ta.trend.macd_signal(df['close'])
+    
+    # RSI и его EMA для фильтрации ложных сигналов
     df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)
+    df['rsi_ema'] = ta.trend.ema_indicator(df['rsi'], window=5)
+    
+    # Индикаторы волатильности
     df['atr5m'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
-    df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], 14)
+    df['bollinger_mid'] = ta.volatility.bollinger_mavg(df['close'], window=20)
+    df['bollinger_high'] = ta.volatility.bollinger_hband(df['close'], window=20)
+    df['bollinger_low'] = ta.volatility.bollinger_lband(df['close'], window=20)
+    
+    # Индикаторы тренда
+    df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
+    df['pdi'] = ta.trend.adx_pos(df['high'], df['low'], df['close'], window=14)
+    df['mdi'] = ta.trend.adx_neg(df['high'], df['low'], df['close'], window=14)
+    
+    # Объём
+    if USE_VOLUME_FILTER:
+        df['volume_ema'] = ta.trend.ema_indicator(df['volume'], window=20)
+        df['volume_ratio'] = df['volume'] / df['volume_ema']
+    
+    # Вычисление спреда для каждой свечи
+    df['spread_pct'] = (df['high'] - df['low']) / df['low']
+    
     # Убираем строки с NaN, чтобы не ловить фантомные кресты
     df = df.dropna().reset_index(drop=True)
     return df
@@ -188,59 +274,109 @@ def analyze(df):
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
     """
-    Оценка силы сигнала по экспертным признакам (0-5):
+    Расширенная оценка силы сигнала по экспертным признакам (0-7):
     +1 за тренд на 1h (EMA_fast > EMA_slow для BUY, < для SELL)
     +1 за объём выше медианы по рынку
     +1 за RSI в "силовой" зоне (40-60)
     +1 за отсутствие экстремума RSI (25<RSI<75)
     +1 за совпадение EMA и MACD (т.е. оба бычьи или оба медвежьи)
+    +1 за положение цены относительно Bollinger Bands
+    +1 за ADX > 25 (сильный тренд)
     -1 за экстремальный RSI (RSI>75 или <25)
+    -1 за дивергенцию MACD и цены
     """
     last = df.iloc[-1]
     prev = df.iloc[-2]
     score = 0
-    # Тренд на 1h
+    
+    # === ПОЛОЖИТЕЛЬНЫЕ ФАКТОРЫ ===
+    
+    # 1. Тренд на 1h
     try:
         trend = is_global_uptrend(symbol)
         if (action == 'BUY' and trend) or (action == 'SELL' and not trend):
             score += 1
-    except Exception:
-        pass
-    # Объём выше медианы
+            logging.info(f"{symbol}: +1 балл за совпадение с глобальным трендом")
+    except Exception as e:
+        logging.warning(f"{symbol}: ошибка проверки глобального тренда: {e}")
+    
+    # 2. Объём выше медианы
     try:
         all_volumes = [get_24h_volume(s) for s in SYMBOLS]
         median_vol = sorted(all_volumes)[len(all_volumes)//2]
         if get_24h_volume(symbol) > median_vol:
             score += 1
-    except Exception:
-        pass
-    # RSI в силовой зоне
-    if 40 < last['rsi'] < 60:
+            logging.info(f"{symbol}: +1 балл за объём выше медианы")
+    except Exception as e:
+        logging.warning(f"{symbol}: ошибка проверки объёма: {e}")
+    
+    # 3. RSI в силовой зоне
+    if RSI_NEUTRAL_LOW < last['rsi'] < RSI_NEUTRAL_HIGH:
         score += 1
-    # Отсутствие экстремума
+        logging.info(f"{symbol}: +1 балл за RSI в силовой зоне {last['rsi']:.2f}")
+    
+    # 4. Отсутствие экстремума
     if 25 < last['rsi'] < 75:
         score += 1
-    # Совпадение EMA и MACD
+        logging.info(f"{symbol}: +1 балл за отсутствие экстремума RSI")
+    
+    # 5. Совпадение EMA и MACD
     if (last['ema_fast'] > last['ema_slow'] and last['macd'] > 0) or (last['ema_fast'] < last['ema_slow'] and last['macd'] < 0):
         score += 1
-    # Штраф за экстремальный RSI
+        logging.info(f"{symbol}: +1 балл за совпадение EMA и MACD")
+    
+    # 6. Положение цены относительно Bollinger Bands
+    if 'bollinger_mid' in df.columns and 'bollinger_high' in df.columns and 'bollinger_low' in df.columns:
+        if (action == 'BUY' and last['close'] > last['bollinger_mid']) or (action == 'SELL' and last['close'] < last['bollinger_mid']):
+            score += 1
+            logging.info(f"{symbol}: +1 балл за положение цены относительно BB")
+    
+    # 7. ADX > 25 (сильный тренд)
+    if last['adx'] > 25:
+        score += 1
+        logging.info(f"{symbol}: +1 балл за сильный тренд (ADX > 25)")
+    
+    # === ОТРИЦАТЕЛЬНЫЕ ФАКТОРЫ ===
+    
+    # 1. Штраф за экстремальный RSI
     if last['rsi'] > 75 or last['rsi'] < 25:
         score -= 1
+        logging.info(f"{symbol}: -1 балл за экстремальный RSI {last['rsi']:.2f}")
+    
+    # 2. Штраф за дивергенцию MACD и цены
+    if len(df) >= 3:
+        if (action == 'BUY' and last['macd'] < df.iloc[-3]['macd'] and last['close'] > df.iloc[-3]['close']) or \
+           (action == 'SELL' and last['macd'] > df.iloc[-3]['macd'] and last['close'] < df.iloc[-3]['close']):
+            score -= 1
+            logging.info(f"{symbol}: -1 балл за дивергенцию MACD и цены")
+    
+    # Обеспечиваем минимум 0 баллов
+    score = max(0, score)
+    
+    logging.info(f"{symbol}: Итоговая оценка силы сигнала: {score}")
     return score
 
 def signal_strength_label(score):
-    if score == 5:
+    """
+    Преобразует числовую оценку силы сигнала (0-7) в текстовую метку
+    и процентную вероятность успеха.
+    
+    Возвращает кортеж (метка, вероятность)
+    """
+    if score >= 6:
+        return 'Очень сильный', 0.95
+    elif score == 5:
         return 'Сильный', 0.85
     elif score == 4:
-        return 'Средний', 0.65
+        return 'Средний', 0.70
     elif score == 3:
-        return 'Слабый', 0.45
+        return 'Умеренный', 0.55
     elif score == 2:
-        return 'Очень слабый', 0.3
+        return 'Слабый', 0.40
     elif score == 1:
-        return 'Слабый', 0.45
+        return 'Очень слабый', 0.30
     else:
-        return 'Очень слабый', 0.3
+        return 'Ненадёжный', 0.20
 
 # ========== СТАТИСТИКА ПО ИСТОРИИ ==========
 def get_signal_stats(symbol, action):
@@ -294,40 +430,104 @@ def get_24h_volume(symbol):
 last_signal_time = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
 
 def check_signals(df, symbol):
-    """Golden/Death Cross по EMA + MACD + базовые фильтры. Надёжность и сила — через score."""
+    """
+    Golden/Death Cross по EMA + MACD + расширенные фильтры:
+    1. Проверка ADX для подтверждения силы тренда
+    2. Фильтр по объёму (выше среднего)
+    3. Проверка RSI на экстремальные значения
+    4. Проверка спреда для избегания высоковолатильных свечей
+    5. Проверка подтверждения сигнала по MACD и RSI
+    """
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
-    # Базовые фильтры
-    if last['adx'] < 15:
-        logging.info(f"{symbol}: ADX {last['adx']:.2f} < 15, сигнал не формируется")
+    
+    # === БАЗОВЫЕ ФИЛЬТРЫ ===
+    # 1. Проверка ADX (сила тренда)
+    if last['adx'] < MIN_ADX:
+        logging.info(f"{symbol}: ADX {last['adx']:.2f} < {MIN_ADX}, сигнал не формируется (слабый тренд)")
         return []
+        
+    # 2. Проверка объёма
     volume = get_24h_volume(symbol)
     volume_mln = volume / 1_000_000
     if volume < MIN_VOLUME_USDT:
         logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {MIN_VOLUME_USDT/1_000_000:.0f} млн, сигнал не формируется")
         return []
+    
+    # 3. Проверка RSI на экстремальные значения
     if last['rsi'] > 75 or last['rsi'] < 25:
         logging.info(f"{symbol}: экстремальный RSI {last['rsi']:.2f}, сигнал не формируется")
         return []
-    # BUY
-    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow'] and last['macd'] > 0:
-        action = 'BUY'
-        score = evaluate_signal_strength(df, symbol, action)
-        label, strength_chance = signal_strength_label(score)
-        history_percent, total = get_signal_stats(symbol, action)
-        winrate = get_score_winrate(score, action)
-        signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вверх, MACD бычий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
-        logging.info(f"{symbol}: BUY сигнал сформирован (фьючерсы)")
-    # SELL
-    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < 0:
-        action = 'SELL'
-        score = evaluate_signal_strength(df, symbol, action)
-        label, strength_chance = signal_strength_label(score)
-        history_percent, total = get_signal_stats(symbol, action)
-        winrate = get_score_winrate(score, action)
-        signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вниз, MACD медвежий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
-        logging.info(f"{symbol}: SELL сигнал сформирован (фьючерсы)")
+    
+    # 4. Проверка спреда
+    if last['spread_pct'] > MAX_SPREAD_PCT:
+        logging.info(f"{symbol}: большой спред {last['spread_pct']*100:.2f}% > {MAX_SPREAD_PCT*100:.2f}%, сигнал не формируется")
+        return []
+    
+    # 5. Проверка объёма (если включен фильтр)
+    if USE_VOLUME_FILTER and last['volume_ratio'] < VOLUME_SPIKE_MULT:
+        logging.info(f"{symbol}: низкий относительный объём {last['volume_ratio']:.2f} < {VOLUME_SPIKE_MULT}, сигнал не формируется")
+        return []
+    
+    # === СИГНАЛЫ НА ПОКУПКУ ===
+    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+        # Дополнительные подтверждающие условия для BUY
+        if last['macd'] > 0 and last['macd'] > last['macd_signal']:
+            # Проверка по положению цены относительно полос Боллинджера
+            if USE_VOLATILITY_FILTER and last['close'] < last['bollinger_mid']:
+                logging.info(f"{symbol}: цена ниже средней полосы Боллинджера, сигнал не формируется")
+                return []
+                
+            # Проверка направления RSI 
+            if last['rsi'] < prev['rsi']:
+                logging.info(f"{symbol}: RSI снижается, сигнал не формируется")
+                return []
+                
+            # Проверка дивергенции MACD и цены
+            if last['macd'] < df.iloc[-3]['macd'] and last['close'] > df.iloc[-3]['close']:
+                logging.info(f"{symbol}: негативная дивергенция MACD, сигнал не формируется")
+                return []
+                
+            action = 'BUY'
+            score = evaluate_signal_strength(df, symbol, action)
+            label, strength_chance = signal_strength_label(score)
+            history_percent, total = get_signal_stats(symbol, action)
+            winrate = get_score_winrate(score, action)
+            
+            # Формирование сообщения с сигналом
+            signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nADX: {last["adx"]:.1f} (сила тренда)\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вверх, MACD бычий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
+            logging.info(f"{symbol}: BUY сигнал сформирован (фьючерсы)")
+            
+    # === СИГНАЛЫ НА ПРОДАЖУ ===
+    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+        # Дополнительные подтверждающие условия для SELL
+        if last['macd'] < 0 and last['macd'] < last['macd_signal']:
+            # Проверка по положению цены относительно полос Боллинджера
+            if USE_VOLATILITY_FILTER and last['close'] > last['bollinger_mid']:
+                logging.info(f"{symbol}: цена выше средней полосы Боллинджера, сигнал не формируется")
+                return []
+                
+            # Проверка направления RSI
+            if last['rsi'] > prev['rsi']:
+                logging.info(f"{symbol}: RSI повышается, сигнал не формируется")
+                return []
+                
+            # Проверка дивергенции MACD и цены
+            if last['macd'] > df.iloc[-3]['macd'] and last['close'] < df.iloc[-3]['close']:
+                logging.info(f"{symbol}: позитивная дивергенция MACD, сигнал не формируется")
+                return []
+                
+            action = 'SELL'
+            score = evaluate_signal_strength(df, symbol, action)
+            label, strength_chance = signal_strength_label(score)
+            history_percent, total = get_signal_stats(symbol, action)
+            winrate = get_score_winrate(score, action)
+            
+            # Формирование сообщения с сигналом
+            signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nADX: {last["adx"]:.1f} (сила тренда)\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вниз, MACD медвежий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
+            logging.info(f"{symbol}: SELL сигнал сформирован (фьючерсы)")
+            
     # Кулдаун
     if last_signal_time[symbol].tzinfo is None:
         last_signal_time[symbol] = last_signal_time[symbol].replace(tzinfo=timezone.utc)
@@ -373,24 +573,24 @@ async def send_telegram_message(text):
 
 # ========== ОТПРАВКА ОТЧЁТА ==========
 async def send_daily_report():
-    report, win, loss = calculate_profit()
+    report, win, loss, total_pnl_usdt = calculate_profit()
     text = '📊 Отчёт по виртуальным сделкам за сутки:\n'
     if report:
         text += '\n'.join(report)
     else:
         text += 'Нет завершённых сделок.'
-    text += f"\n\nВсего прибыльных сделок: {win}\nВсего убыточных сделок: {loss}"
+    text += f"\n\nВсего прибыльных сделок: {win}\nВсего убыточных сделок: {loss}\nОбщая P&L: {total_pnl_usdt:.2f} USDT"
     await send_telegram_message(text)
 
 # ========== ОБРАБОТЧИК КОМАНДЫ /stats ==========
 async def stats_command(update, context):
-    report, win, loss = calculate_profit()
+    report, win, loss, total_pnl_usdt = calculate_profit()
     text = '📊 Статистика по виртуальным сделкам:\n'
     if report:
         text += '\n'.join(report)
     else:
         text += 'Нет завершённых сделок.'
-    text += f"\n\nВсего прибыльных сделок: {win}\nВсего убыточных сделок: {loss}"
+    text += f"\n\nВсего прибыльных сделок: {win}\nВсего убыточных сделок: {loss}\nОбщая P&L: {total_pnl_usdt:.2f} USDT"
     await update.message.reply_text(text)
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
@@ -562,11 +762,59 @@ async def main():
         await asyncio.sleep(60 * 3)  # Проверять каждые 3 минуты
 
 def is_global_uptrend(symbol: str) -> bool:
-    ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=BACKUP_TIMEFRAME, limit=MA_SLOW*3)
-    tmp = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-    tmp['ema_f'] = ta.trend.ema_indicator(tmp['c'], window=MA_FAST)
-    tmp['ema_s'] = ta.trend.ema_indicator(tmp['c'], window=MA_SLOW)
-    return bool(tmp['ema_f'].iloc[-1] > tmp['ema_s'].iloc[-1])
+    """
+    Определяет глобальный тренд на старшем таймфрейме с использованием нескольких индикаторов:
+    1. EMA (быстрая > медленная)
+    2. Цена выше EMA 200
+    3. MACD > 0
+    4. ADX > 20 (сильный тренд)
+    
+    Возвращает True для восходящего тренда, False для нисходящего
+    """
+    try:
+        ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=BACKUP_TIMEFRAME, limit=MA_SLOW*3)
+        df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        
+        # EMA
+        df['ema_f'] = ta.trend.ema_indicator(df['c'], window=MA_FAST)
+        df['ema_s'] = ta.trend.ema_indicator(df['c'], window=MA_SLOW)
+        df['ema_200'] = ta.trend.ema_indicator(df['c'], window=200)
+        
+        # MACD
+        df['macd'] = ta.trend.macd_diff(df['c'])
+        
+        # ADX
+        df['adx'] = ta.trend.adx(df['h'], df['l'], df['c'], window=14)
+        
+        # Получаем последнюю строку
+        last = df.iloc[-1]
+        
+        # Считаем "очки" тренда
+        trend_points = 0
+        
+        # EMA Fast > EMA Slow (+1)
+        if last['ema_f'] > last['ema_s']:
+            trend_points += 1
+            
+        # Цена выше EMA 200 (+1)
+        if last['c'] > last['ema_200']:
+            trend_points += 1
+            
+        # MACD > 0 (+1)
+        if last['macd'] > 0:
+            trend_points += 1
+            
+        # ADX > 20 (сильный тренд) (+1)
+        if last['adx'] > 20:
+            trend_points += 1
+            
+        # Для подтверждения тренда нужно минимум 3 из 4 условий
+        return trend_points >= 3
+        
+    except Exception as e:
+        logging.error(f"Ошибка при определении глобального тренда для {symbol}: {e}")
+        # В случае ошибки возвращаем нейтральный результат
+        return False
 
 # Функция для расчёта winrate по score на истории
 score_history_stats = {}
