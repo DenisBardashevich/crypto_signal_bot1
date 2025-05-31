@@ -459,15 +459,15 @@ def check_signals(df, symbol):
     3. Проверка RSI на экстремальные значения
     4. Проверка спреда для избегания высоковолатильных свечей
     5. Проверка подтверждения сигнала по MACD и RSI
+    6. Мягкие фильтры по объёму и типу свечи (штраф к score)
     """
     try:
         if df.empty or len(df) < 2:
             return []
-            
         last = df.iloc[-1]
         prev = df.iloc[-2]
         signals = []
-        
+        score_penalty = 0
         # === БАЗОВЫЕ ФИЛЬТРЫ ===
         # 1. Проверка ADX (сила тренда)
         if last['adx'] < MIN_ADX:
@@ -498,7 +498,6 @@ def check_signals(df, symbol):
         
         # === СИГНАЛЫ НА ПОКУПКУ ===
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-            # Дополнительные подтверждающие условия для BUY
             if last['macd'] > 0 and last['macd'] > last['macd_signal']:
                 # Проверка по положению цены относительно полос Боллинджера
                 if USE_VOLATILITY_FILTER and last['close'] < last['bollinger_mid']:
@@ -521,7 +520,15 @@ def check_signals(df, symbol):
                     return []
                     
                 action = 'BUY'
-                score = evaluate_signal_strength(df, symbol, action)
+                # Мягкий фильтр: объём должен расти в последних 3 свечах
+                if df['volume'].iloc[-1] < df['volume'].iloc[-2] or df['volume'].iloc[-2] < df['volume'].iloc[-3]:
+                    score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за отсутствие роста объёма для BUY")
+                # Мягкий фильтр: свеча должна быть бычьей
+                if df['close'].iloc[-1] < df['open'].iloc[-1]:
+                    score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за небычью свечу для BUY")
+                score = evaluate_signal_strength(df, symbol, action) + score_penalty
                 label, strength_chance = signal_strength_label(score)
                 history_percent, total = get_signal_stats(symbol, action)
                 winrate = get_score_winrate(score, action)
@@ -532,30 +539,17 @@ def check_signals(df, symbol):
                 
         # === СИГНАЛЫ НА ПРОДАЖУ ===
         if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-            # Дополнительные подтверждающие условия для SELL
             if last['macd'] < 0 and last['macd'] < last['macd_signal']:
-                # Проверка по положению цены относительно полос Боллинджера
-                if USE_VOLATILITY_FILTER and last['close'] > last['bollinger_mid']:
-                    logging.info(f"{symbol}: цена выше средней полосы Боллинджера, сигнал не формируется")
-                    return []
-                    
-                # Проверка направления RSI
-                if last['rsi'] > prev['rsi']:
-                    logging.info(f"{symbol}: RSI повышается, сигнал не формируется")
-                    return []
-                    
-                # Проверка дивергенции MACD и цены
-                if len(df) >= 3 and last['macd'] > df.iloc[-3]['macd'] and last['close'] < df.iloc[-3]['close']:
-                    logging.info(f"{symbol}: позитивная дивергенция MACD, сигнал не формируется")
-                    return []
-                    
-                # Проверка глобального тренда
-                if is_global_uptrend(symbol):
-                    logging.info(f"{symbol}: нет подтверждения глобального тренда, сигнал не формируется")
-                    return []
-                    
                 action = 'SELL'
-                score = evaluate_signal_strength(df, symbol, action)
+                # Мягкий фильтр: объём должен расти в последних 3 свечах (для SELL — падать)
+                if df['volume'].iloc[-1] > df['volume'].iloc[-2] or df['volume'].iloc[-2] > df['volume'].iloc[-3]:
+                    score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за отсутствие падения объёма для SELL")
+                # Мягкий фильтр: свеча должна быть медвежьей
+                if df['close'].iloc[-1] > df['open'].iloc[-1]:
+                    score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за не медвежью свечу для SELL")
+                score = evaluate_signal_strength(df, symbol, action) + score_penalty
                 label, strength_chance = signal_strength_label(score)
                 history_percent, total = get_signal_stats(symbol, action)
                 winrate = get_score_winrate(score, action)
@@ -642,6 +636,7 @@ async def telegram_bot():
     await asyncio.Event().wait()  # чтобы задача не завершалась
 
 async def main():
+    global adaptive_targets
     tz_msk = timezone(timedelta(hours=3))
     last_alive = datetime.now(tz_msk) - timedelta(hours=6)  # timezone-aware
     last_report_hours = set()  # Часы, когда уже был отправлен отчёт (например, {9, 22})
@@ -910,6 +905,7 @@ def calculate_tp_sl(df, price, atr):
     return tp, sl, risk_params['position_size']
 
 def check_tp_sl(symbol, price, time, df):
+    global adaptive_targets
     if symbol not in open_trades:
         return False
     trade = open_trades[symbol]
