@@ -97,7 +97,7 @@ def record_trade(symbol, action, price, time, side, score=None):
     save_portfolio()
 
 # Открытие сделки
-def open_trade(symbol, price, time, side, atr=None, score=None):
+def open_trade(symbol, price, time, side, atr=None, score=None, position_size=0.03):
     open_trades[symbol] = {
         'side': side,  # 'long' или 'short'
         'entry_price': price,
@@ -105,7 +105,8 @@ def open_trade(symbol, price, time, side, atr=None, score=None):
         'atr': atr if atr is not None else 0,
         'trail_pct': TRAIL_ATR_MULT,
         'last_peak': price,
-        'score': score
+        'score': score,
+        'position_size': position_size
     }
     save_portfolio()
 
@@ -263,7 +264,7 @@ def analyze(df):
         df['rsi_ema'] = ta.trend.ema_indicator(df['rsi'], window=5)
         
         # Индикаторы волатильности
-        df['atr5m'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
+        df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
         df['bollinger_mid'] = ta.volatility.bollinger_mavg(df['close'], window=20)
         df['bollinger_high'] = ta.volatility.bollinger_hband(df['close'], window=20)
         df['bollinger_low'] = ta.volatility.bollinger_lband(df['close'], window=20)
@@ -703,15 +704,15 @@ async def main():
                 time = df['timestamp'].iloc[-1]
                 processed_symbols.append(symbol)
                 # Расчёт адаптивных целей по ATR 15m и волатильности
-                atr15m = df['atr5m'].iloc[-1]  # используем ATR с 15м
+                atr = df['atr'].iloc[-1]  # используем ATR с 15м
                 volatility = df['spread_pct'].rolling(window=20).mean().iloc[-1]  # средний спред за 20 свечей
                 
-                if not pd.isna(atr15m) and price > 0:
-                    tp, sl = calculate_tp_sl(df, price, atr15m)
-                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
+                if not pd.isna(atr) and price > 0:
+                    tp, sl, position_size = calculate_tp_sl(df, price, atr)
+                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl, 'position_size': position_size}
                 else:
-                    tp, sl = TP_MIN, SL_MIN
-                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
+                    tp, sl, position_size = TP_MIN, SL_MIN, 0.03
+                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl, 'position_size': position_size}
                 # Проверка на открытые сделки
                 if symbol in open_trades:
                     if check_tp_sl(symbol, price, time, df):
@@ -732,12 +733,12 @@ async def main():
                         if 'КУПИТЬ' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'long'):
                             score = evaluate_signal_strength(df, symbol, 'BUY')
                             record_trade(symbol, 'OPEN', price, time, 'long', score=score)
-                            open_trade(symbol, price, time, 'long', atr=atr15m, score=score)
+                            open_trade(symbol, price, time, 'long', atr=atr, score=score, position_size=adaptive_targets[symbol]['position_size'])
                             logging.info(f"{symbol}: LONG открыт по цене {price}")
                         if 'ПРОДАТЬ' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'short'):
                             score = evaluate_signal_strength(df, symbol, 'SELL')
                             record_trade(symbol, 'OPEN', price, time, 'short', score=score)
-                            open_trade(symbol, price, time, 'short', atr=atr15m, score=score)
+                            open_trade(symbol, price, time, 'short', atr=atr, score=score, position_size=adaptive_targets[symbol]['position_size'])
                             logging.info(f"{symbol}: SHORT открыт по цене {price}")
             except Exception as e:
                 error_text = f"Ошибка по {symbol}: {e}"
@@ -783,57 +784,38 @@ async def main():
 
 def is_global_uptrend(symbol: str) -> bool:
     """
-    Определяет глобальный тренд на старшем таймфрейме с использованием нескольких индикаторов:
-    1. EMA (быстрая > медленная)
-    2. Цена выше EMA 200
-    3. MACD > 0
-    4. ADX > 20 (сильный тренд)
-    
-    Возвращает True для восходящего тренда, False для нисходящего
+    Профессиональный мультифреймовый фильтр тренда:
+    1. EMA21 > EMA50 на дневке (1d)
+    2. Цена выше EMA21 на дневке (1d)
+    3. RSI(14) > 50 на 4h
+    4. Цена на 4h выше своей SMA20
+    Для подтверждения тренда нужно минимум 3 из 4 условий.
     """
     try:
-        ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=BACKUP_TIMEFRAME, limit=MA_SLOW*3)
-        df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        # 1. Проверка EMA на дневном ТФ
+        ohlcv_daily = EXCHANGE.fetch_ohlcv(symbol, '1d', limit=50)
+        df_daily = pd.DataFrame(ohlcv_daily, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        df_daily['ema21'] = ta.trend.ema_indicator(df_daily['c'], 21)
+        df_daily['ema50'] = ta.trend.ema_indicator(df_daily['c'], 50)
+        last_daily = df_daily.iloc[-1]
         
-        # EMA
-        df['ema_f'] = ta.trend.ema_indicator(df['c'], window=MA_FAST)
-        df['ema_s'] = ta.trend.ema_indicator(df['c'], window=MA_SLOW)
-        df['ema_200'] = ta.trend.ema_indicator(df['c'], window=200)
+        # 2. Проверка RSI и SMA на 4H
+        ohlcv_4h = EXCHANGE.fetch_ohlcv(symbol, '4h', limit=100)
+        df_4h = pd.DataFrame(ohlcv_4h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        df_4h['rsi'] = ta.momentum.rsi(df_4h['c'], 14)
+        df_4h['sma20'] = df_4h['c'].rolling(20).mean()
+        last_4h = df_4h.iloc[-1]
         
-        # MACD
-        df['macd'] = ta.trend.macd_diff(df['c'])
-        
-        # ADX
-        df['adx'] = ta.trend.adx(df['h'], df['l'], df['c'], window=14)
-        
-        # Получаем последнюю строку
-        last = df.iloc[-1]
-        
-        # Считаем "очки" тренда
-        trend_points = 0
-        
-        # EMA Fast > EMA Slow (+1)
-        if last['ema_f'] > last['ema_s']:
-            trend_points += 1
-            
-        # Цена выше EMA 200 (+1)
-        if last['c'] > last['ema_200']:
-            trend_points += 1
-            
-        # MACD > 0 (+1)
-        if last['macd'] > 0:
-            trend_points += 1
-            
-        # ADX > 20 (сильный тренд) (+1)
-        if last['adx'] > 20:
-            trend_points += 1
-            
-        # Для подтверждения тренда нужно минимум 3 из 4 условий
-        return trend_points >= 3
-        
+        # Критерии тренда
+        conditions = [
+            last_daily['c'] > last_daily['ema21'],
+            last_daily['ema21'] > last_daily['ema50'],
+            last_4h['rsi'] > 50,
+            last_4h['c'] > last_4h['sma20']
+        ]
+        return sum(conditions) >= 3
     except Exception as e:
         logging.error(f"Ошибка при определении глобального тренда для {symbol}: {e}")
-        # В случае ошибки возвращаем нейтральный результат
         return False
 
 # Функция для расчёта winrate по score на истории
@@ -865,39 +847,67 @@ def get_score_winrate(score, action):
     score_history_stats[key] = percent
     return percent
 
-def calculate_tp_sl(df, price, atr15m):
+def calculate_risk_params():
+    """Анализ общей волатильности рынка (BTC/USDT) и динамическая настройка TP/SL и размера позиции"""
+    try:
+        btc_ohlcv = EXCHANGE.fetch_ohlcv('BTC/USDT:USDT', TIMEFRAME, limit=100)
+        btc_df = pd.DataFrame(btc_ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        btc_df['returns'] = btc_df['c'].pct_change()
+        market_volatility = btc_df['returns'].std() * math.sqrt(365)
+        if market_volatility > 0.8:  # Высокая волатильность
+            return {
+                'tp_mult': 1.8,
+                'sl_mult': 1.2,
+                'position_size': 0.02  # 2% депозита
+            }
+        elif market_volatility < 0.4:  # Низкая волатильность
+            return {
+                'tp_mult': 3.0,
+                'sl_mult': 2.0,
+                'position_size': 0.05  # 5% депозита
+            }
+        else:  # Средняя волатильность
+            return {
+                'tp_mult': 2.5,
+                'sl_mult': 1.8,
+                'position_size': 0.03  # 3% депозита
+            }
+    except Exception as e:
+        logging.error(f"Ошибка при расчёте рыночной волатильности: {e}")
+        return {
+            'tp_mult': 2.5,
+            'sl_mult': 1.8,
+            'position_size': 0.03
+        }
+
+def calculate_tp_sl(df, price, atr):
     """
-    Расчёт TP/SL на основе ATR, волатильности и ADX
+    Расчёт TP/SL на основе ATR, волатильности инструмента, ADX и общей рыночной волатильности
     """
     last = df.iloc[-1]
     volatility = df['spread_pct'].rolling(window=20).mean().iloc[-1]
-    
-    # Базовые множители
-    tp_mult = TP_ATR_MULT
-    sl_mult = SL_ATR_MULT
-    
-    # Корректируем множители на основе волатильности
+    # Получаем параметры риска
+    risk_params = calculate_risk_params()
+    tp_mult = risk_params['tp_mult']
+    sl_mult = risk_params['sl_mult']
+    # Корректируем множители на основе волатильности инструмента
     if volatility > 0.005:  # высокая волатильность
         tp_mult *= 1.5
         sl_mult *= 1.2
     elif volatility < 0.002:  # низкая волатильность
         tp_mult *= 0.8
         sl_mult *= 0.8
-    
     # Корректируем на основе ADX
     if last['adx'] > 30:  # сильный тренд
         tp_mult *= 1.3
         sl_mult *= 1.1
-    
     # Расчёт TP/SL
-    tp = min(max(round((atr15m * tp_mult) / price, 4), TP_MIN), TP_MAX)
-    sl = min(max(round((atr15m * sl_mult) / price, 4), SL_MIN), SL_MAX)
-    
+    tp = min(max(round((atr * tp_mult) / price, 4), TP_MIN), TP_MAX)
+    sl = min(max(round((atr * sl_mult) / price, 4), SL_MIN), SL_MAX)
     # Проверяем минимальное расстояние между TP и SL
     if tp - sl < MIN_TP_SL_DISTANCE:
         tp = sl + MIN_TP_SL_DISTANCE
-    
-    return tp, sl
+    return tp, sl, risk_params['position_size']
 
 def check_tp_sl(symbol, price, time, df):
     if symbol not in open_trades:
