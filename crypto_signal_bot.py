@@ -510,10 +510,12 @@ async def main():
                     signals_sent = True
                     for s in signals:
                         if 'КУПИТЬ' in s and symbol not in open_trades:
+                            score = evaluate_signal_strength(df, symbol, 'BUY')
                             record_trade(symbol, 'BUY', price, time, score=score)
                             open_trade(symbol, price, time, atr=atr5m, score=score)
                             logging.info(f"{symbol}: сделка открыта по цене {price}")
                         if 'ПРОДАТЬ' in s and symbol in open_trades:
+                            score = evaluate_signal_strength(df, symbol, 'SELL')
                             record_trade(symbol, 'SELL', price, time, score=score)
                             close_trade(symbol)
                             logging.info(f"{symbol}: сделка закрыта по сигналу ПРОДАТЬ")
