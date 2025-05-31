@@ -612,24 +612,22 @@ async def send_telegram_message(text):
 
 # ========== ОТПРАВКА ОТЧЁТА ==========
 async def send_daily_report():
-    report, win, loss, total_pnl_usdt = calculate_profit()
+    report, win, loss = simple_stats()
     text = '📊 Отчёт по виртуальным сделкам за сутки:\n'
     if report:
         text += '\n'.join(report)
     else:
         text += 'Нет завершённых сделок.'
-    text += f"\n\nВсего прибыльных сделок: {win}\nВсего убыточных сделок: {loss}\nОбщая P&L: {total_pnl_usdt:.2f} USDT"
     await send_telegram_message(text)
 
 # ========== ОБРАБОТЧИК КОМАНДЫ /stats ==========
 async def stats_command(update, context):
-    report, win, loss, total_pnl_usdt = calculate_profit()
+    report, win, loss = simple_stats()
     text = '📊 Статистика по виртуальным сделкам:\n'
     if report:
         text += '\n'.join(report)
     else:
         text += 'Нет завершённых сделок.'
-    text += f"\n\nВсего прибыльных сделок: {win}\nВсего убыточных сделок: {loss}\nОбщая P&L: {total_pnl_usdt:.2f} USDT"
     await update.message.reply_text(text)
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
@@ -932,6 +930,37 @@ def check_tp_sl(symbol, price, time, df):
             close_trade(symbol)
             return True
     return False
+
+def simple_stats():
+    """
+    Формирует простую статистику: для каждой монеты — список завершённых сделок с результатом (УДАЧНО/НЕУДАЧНО),
+    внизу — общий итог по удачным и неудачным сделкам.
+    """
+    report = []
+    total_win = 0
+    total_loss = 0
+    for symbol, trades in virtual_portfolio.items():
+        if symbol == 'open_trades':
+            continue
+        # Собираем пары (открытие, закрытие)
+        open_trade = None
+        for trade in trades:
+            if trade['action'] == 'OPEN':
+                open_trade = trade
+            elif trade['action'] == 'CLOSE' and open_trade is not None:
+                entry = float(open_trade['price'])
+                exit = float(trade['price'])
+                side = open_trade['side'].upper()
+                result = 'УДАЧНО' if (side == 'LONG' and exit > entry) or (side == 'SHORT' and exit < entry) else 'НЕУДАЧНО'
+                if result == 'УДАЧНО':
+                    total_win += 1
+                else:
+                    total_loss += 1
+                report.append(f"{symbol}: {side}, вход {entry}, выход {exit}, результат: {result}")
+                open_trade = None
+    report.append(f"\nВсего удачных: {total_win}")
+    report.append(f"Всего неудачных: {total_loss}")
+    return report, total_win, total_loss
 
 logging.basicConfig(level=logging.ERROR,
     format='%(asctime)s %(levelname)s %(message)s',
