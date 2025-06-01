@@ -13,6 +13,7 @@ import threading
 import logging
 from collections import defaultdict
 from config import *
+import numpy as np
 
 # ========== НАСТРОЙКИ ==========
 # Удаляю старые параметры, заменяю на импорт из config.py
@@ -451,6 +452,44 @@ def get_24h_volume(symbol):
 
 last_signal_time = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
 
+def is_bullish_pinbar(row):
+    body = abs(row['close'] - row['open'])
+    candle_range = row['high'] - row['low']
+    lower_shadow = min(row['open'], row['close']) - row['low']
+    upper_shadow = row['high'] - max(row['open'], row['close'])
+    return (
+        body < candle_range * 0.3 and
+        lower_shadow > body * 2 and
+        upper_shadow < body
+    )
+
+def is_bearish_pinbar(row):
+    body = abs(row['close'] - row['open'])
+    candle_range = row['high'] - row['low']
+    lower_shadow = min(row['open'], row['close']) - row['low']
+    upper_shadow = row['high'] - max(row['open'], row['close'])
+    return (
+        body < candle_range * 0.3 and
+        upper_shadow > body * 2 and
+        lower_shadow < body
+    )
+
+def is_bullish_engulfing(prev, last):
+    return (
+        prev['close'] < prev['open'] and
+        last['close'] > last['open'] and
+        last['close'] > prev['open'] and
+        last['open'] < prev['close']
+    )
+
+def is_bearish_engulfing(prev, last):
+    return (
+        prev['close'] > prev['open'] and
+        last['close'] < last['open'] and
+        last['open'] > prev['close'] and
+        last['close'] < prev['open']
+    )
+
 def check_signals(df, symbol):
     """
     Golden/Death Cross по EMA + MACD + расширенные фильтры:
@@ -499,6 +538,14 @@ def check_signals(df, symbol):
         # === СИГНАЛЫ НА ПОКУПКУ ===
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             if last['macd'] > 0 and last['macd'] > last['macd_signal']:
+                # Price Action: подтверждение бычьим пин-баром или поглощением
+                if not (is_bullish_pinbar(last) or is_bullish_engulfing(prev, last)):
+                    logging.info(f"{symbol}: нет подтверждения price action для BUY")
+                    return []
+                # Мультифреймовый фильтр: тренд на старших ТФ должен быть ВОСХОДЯЩИМ
+                if not is_global_uptrend(symbol):
+                    logging.info(f"{symbol}: нет подтверждения восходящего тренда на старших ТФ для BUY")
+                    return []
                 # Проверка по положению цены относительно полос Боллинджера
                 if USE_VOLATILITY_FILTER and last['close'] < last['bollinger_mid']:
                     logging.info(f"{symbol}: цена ниже средней полосы Боллинджера, сигнал не формируется")
@@ -540,6 +587,14 @@ def check_signals(df, symbol):
         # === СИГНАЛЫ НА ПРОДАЖУ ===
         if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
             if last['macd'] < 0 and last['macd'] < last['macd_signal']:
+                # Price Action: подтверждение медвежьим пин-баром или поглощением
+                if not (is_bearish_pinbar(last) or is_bearish_engulfing(prev, last)):
+                    logging.info(f"{symbol}: нет подтверждения price action для SELL")
+                    return []
+                # Мультифреймовый фильтр: тренд на старших ТФ должен быть НИСХОДЯЩИМ
+                if is_global_uptrend(symbol):
+                    logging.info(f"{symbol}: нет подтверждения нисходящего тренда на старших ТФ для SELL")
+                    return []
                 action = 'SELL'
                 # Мягкий фильтр: объём должен расти в последних 3 свечах (для SELL — падать)
                 if df['volume'].iloc[-1] > df['volume'].iloc[-2] or df['volume'].iloc[-2] > df['volume'].iloc[-3]:
@@ -875,9 +930,28 @@ def calculate_risk_params():
             'position_size': 0.03
         }
 
+def find_support_resistance(df, window=20):
+    """
+    Находит ближайшие уровни поддержки и сопротивления по локальным экстремумам за window свечей.
+    Возвращает (support, resistance)
+    """
+    closes = df['close']
+    lows = df['low']
+    highs = df['high']
+    last_close = closes.iloc[-1]
+    # Поддержка — ближайший минимум ниже текущей цены
+    support = lows.iloc[-window:].min()
+    if support >= last_close:
+        support = lows.iloc[:-1][lows.iloc[:-1] < last_close].max() if (lows.iloc[:-1] < last_close).any() else None
+    # Сопротивление — ближайший максимум выше текущей цены
+    resistance = highs.iloc[-window:].max()
+    if resistance <= last_close:
+        resistance = highs.iloc[:-1][highs.iloc[:-1] > last_close].min() if (highs.iloc[:-1] > last_close).any() else None
+    return support, resistance
+
 def calculate_tp_sl(df, price, atr):
     """
-    Расчёт TP/SL на основе ATR, волатильности инструмента, ADX и общей рыночной волатильности
+    Расчёт TP/SL на основе ATR, волатильности инструмента, ADX и ближайших уровней поддержки/сопротивления
     """
     last = df.iloc[-1]
     volatility = df['spread_pct'].rolling(window=20).mean().iloc[-1]
@@ -896,9 +970,23 @@ def calculate_tp_sl(df, price, atr):
     if last['adx'] > 30:  # сильный тренд
         tp_mult *= 1.3
         sl_mult *= 1.1
-    # Расчёт TP/SL
-    tp = min(max(round((atr * tp_mult) / price, 4), TP_MIN), TP_MAX)
-    sl = min(max(round((atr * sl_mult) / price, 4), SL_MIN), SL_MAX)
+    # ATR-TP/SL
+    atr_tp = min(max(round((atr * tp_mult) / price, 4), TP_MIN), TP_MAX)
+    atr_sl = min(max(round((atr * sl_mult) / price, 4), SL_MIN), SL_MAX)
+    # Уровни поддержки/сопротивления
+    support, resistance = find_support_resistance(df, window=20)
+    # Для long: TP — ближайшее сопротивление, SL — ближайшая поддержка
+    # Для short: TP — ближайшая поддержка, SL — ближайшее сопротивление
+    tp, sl = atr_tp, atr_sl
+    if support and resistance:
+        if price > support and price < resistance:
+            # long
+            tp_level = (resistance - price) / price
+            sl_level = (price - support) / price
+            if tp_level > TP_MIN and tp_level < TP_MAX:
+                tp = min(tp, tp_level)
+            if sl_level > SL_MIN and sl_level < SL_MAX:
+                sl = min(sl, sl_level)
     # Проверяем минимальное расстояние между TP и SL
     if tp - sl < MIN_TP_SL_DISTANCE:
         tp = sl + MIN_TP_SL_DISTANCE
