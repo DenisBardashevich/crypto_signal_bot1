@@ -12,12 +12,12 @@ MA_SLOW = 21    # медленная EMA
 LIMIT = 400     # количество свечей для анализа (должно быть > MA_SLOW*6)
 
 # --- RSI ---
-RSI_WINDOW = 14
+RSI_WINDOW = 9
 RSI_NEUTRAL_LOW = 40
 RSI_NEUTRAL_HIGH = 60
 
 # --- ATR ---
-ATR_WINDOW = 20
+ATR_WINDOW = 7
 TRAIL_ATR_MULT = 2.5   # множитель для trailing-стопа
 
 # --- Объём ---

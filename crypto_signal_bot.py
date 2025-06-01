@@ -490,16 +490,17 @@ def is_bearish_engulfing(prev, last):
         last['close'] < prev['open']
     )
 
+def get_btc_adx():
+    try:
+        ohlcv = EXCHANGE.fetch_ohlcv('BTC/USDT:USDT', timeframe=TIMEFRAME, limit=50)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
+        return df['adx'].iloc[-1]
+    except Exception as e:
+        logging.error(f"Ошибка получения ADX BTC: {e}")
+        return 99
+
 def check_signals(df, symbol):
-    """
-    Golden/Death Cross по EMA + MACD + расширенные фильтры:
-    1. Проверка ADX для подтверждения силы тренда
-    2. Фильтр по объёму (выше среднего)
-    3. Проверка RSI на экстремальные значения
-    4. Проверка спреда для избегания высоковолатильных свечей
-    5. Проверка подтверждения сигнала по MACD и RSI
-    6. Мягкие фильтры по объёму и типу свечи (штраф к score)
-    """
     try:
         if df.empty or len(df) < 2:
             return []
@@ -507,24 +508,27 @@ def check_signals(df, symbol):
         prev = df.iloc[-2]
         signals = []
         score_penalty = 0
+        # === Фильтр по BTC ADX для альтов ===
+        if symbol != 'BTC/USDT:USDT':
+            btc_adx = get_btc_adx()
+            if btc_adx < 20:
+                logging.info(f"BTC ADX {btc_adx:.2f} < 20, сигналы по альтам не формируются")
+                return []
         # === БАЗОВЫЕ ФИЛЬТРЫ ===
         # 1. Проверка ADX (сила тренда)
         if last['adx'] < MIN_ADX:
             logging.info(f"{symbol}: ADX {last['adx']:.2f} < {MIN_ADX}, сигнал не формируется (слабый тренд)")
             return []
-            
-        # 2. Проверка объёма
+        # 2. Фиксированный фильтр по объёму
         volume = get_24h_volume(symbol)
         volume_mln = volume / 1_000_000
         if volume < MIN_VOLUME_USDT:
             logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {MIN_VOLUME_USDT/1_000_000:.0f} млн, сигнал не формируется")
             return []
-        
-        # 3. Проверка RSI на экстремальные значения
+        # 3. Проверка RSI на экстремальные значения — только штраф score, не блокировка
         if last['rsi'] > 80 or last['rsi'] < 20:
-            logging.info(f"{symbol}: экстремальный RSI {last['rsi']:.2f}, сигнал не формируется")
-            return []
-        
+            score_penalty -= 1
+            logging.info(f"{symbol}: штраф -1 к score за экстремальный RSI {last['rsi']:.2f}")
         # 4. Проверка спреда
         if last['spread_pct'] > MAX_SPREAD_PCT:
             logging.info(f"{symbol}: большой спред {last['spread_pct']*100:.2f}% > {MAX_SPREAD_PCT*100:.2f}%, сигнал не формируется")
