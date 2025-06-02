@@ -500,6 +500,36 @@ def get_btc_adx():
         logging.error(f"Ошибка получения ADX BTC: {e}")
         return 99
 
+def is_global_uptrend(symbol: str) -> int:
+    """
+    Возвращает количество совпавших условий мультифреймового тренда (0-4):
+    1. EMA21 > EMA50 на дневке (1d)
+    2. Цена выше EMA21 на дневке (1d)
+    3. RSI(14) > 50 на 4h
+    4. Цена на 4h выше своей SMA20
+    """
+    try:
+        ohlcv_daily = EXCHANGE.fetch_ohlcv(symbol, '1d', limit=50)
+        df_daily = pd.DataFrame(ohlcv_daily, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        df_daily['ema21'] = ta.trend.ema_indicator(df_daily['c'], 21)
+        df_daily['ema50'] = ta.trend.ema_indicator(df_daily['c'], 50)
+        last_daily = df_daily.iloc[-1]
+        ohlcv_4h = EXCHANGE.fetch_ohlcv(symbol, '4h', limit=100)
+        df_4h = pd.DataFrame(ohlcv_4h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        df_4h['rsi'] = ta.momentum.rsi(df_4h['c'], 14)
+        df_4h['sma20'] = df_4h['c'].rolling(20).mean()
+        last_4h = df_4h.iloc[-1]
+        conditions = [
+            last_daily['c'] > last_daily['ema21'],
+            last_daily['ema21'] > last_daily['ema50'],
+            last_4h['rsi'] > 50,
+            last_4h['c'] > last_4h['sma20']
+        ]
+        return sum(conditions)
+    except Exception as e:
+        logging.error(f"Ошибка при определении глобального тренда для {symbol}: {e}")
+        return 0
+
 def check_signals(df, symbol):
     try:
         if df.empty or len(df) < 2:
@@ -515,67 +545,49 @@ def check_signals(df, symbol):
                 logging.info(f"BTC ADX {btc_adx:.2f} < 20, сигналы по альтам не формируются")
                 return []
         # === БАЗОВЫЕ ФИЛЬТРЫ ===
-        # 1. Проверка ADX (сила тренда)
         if last['adx'] < MIN_ADX:
             logging.info(f"{symbol}: ADX {last['adx']:.2f} < {MIN_ADX}, сигнал не формируется (слабый тренд)")
             return []
-        # 2. Фиксированный фильтр по объёму
         volume = get_24h_volume(symbol)
         volume_mln = volume / 1_000_000
         if volume < MIN_VOLUME_USDT:
             logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {MIN_VOLUME_USDT/1_000_000:.0f} млн, сигнал не формируется")
             return []
-        # 3. Проверка RSI на экстремальные значения — только штраф score, не блокировка
         if last['rsi'] > 80 or last['rsi'] < 20:
             score_penalty -= 1
             logging.info(f"{symbol}: штраф -1 к score за экстремальный RSI {last['rsi']:.2f}")
-        # 4. Проверка спреда
         if last['spread_pct'] > MAX_SPREAD_PCT:
             logging.info(f"{symbol}: большой спред {last['spread_pct']*100:.2f}% > {MAX_SPREAD_PCT*100:.2f}%, сигнал не формируется")
             return []
-        
-        # 5. Проверка объёма (если включен фильтр)
         if USE_VOLUME_FILTER and last['volume_ratio'] < VOLUME_SPIKE_MULT:
             logging.info(f"{symbol}: низкий относительный объём {last['volume_ratio']:.2f} < {VOLUME_SPIKE_MULT}, сигнал не формируется")
             return []
-        
         # === СИГНАЛЫ НА ПОКУПКУ ===
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             if last['macd'] > 0 and last['macd'] > last['macd_signal']:
-                # Price Action: подтверждение бычьим пин-баром или поглощением
+                # Price Action: подтверждение бычьим пин-баром или поглощением (мягко)
                 if not (is_bullish_pinbar(last) or is_bullish_engulfing(prev, last)):
-                    logging.info(f"{symbol}: нет подтверждения price action для BUY")
-                    return []
-                # Мультифреймовый фильтр: тренд на старших ТФ должен быть ВОСХОДЯЩИМ
-                if not is_global_uptrend(symbol):
-                    logging.info(f"{symbol}: нет подтверждения восходящего тренда на старших ТФ для BUY")
-                    return []
-                # Проверка по положению цены относительно полос Боллинджера
+                    score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за отсутствие price action для BUY")
+                # Мультифреймовый фильтр: тренд на старших ТФ (мягко)
+                trend_score = is_global_uptrend(symbol)
+                if trend_score < 2:
+                    score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за отсутствие подтверждения тренда (совпало {trend_score} из 4)")
+                # Проверка по полосам Боллинджера
                 if USE_VOLATILITY_FILTER and last['close'] < last['bollinger_mid']:
                     logging.info(f"{symbol}: цена ниже средней полосы Боллинджера, сигнал не формируется")
                     return []
-                    
-                # Проверка направления RSI 
                 if last['rsi'] < prev['rsi']:
                     logging.info(f"{symbol}: RSI снижается, сигнал не формируется")
                     return []
-                    
-                # Проверка дивергенции MACD и цены
                 if len(df) >= 3 and last['macd'] < df.iloc[-3]['macd'] and last['close'] > df.iloc[-3]['close']:
                     logging.info(f"{symbol}: негативная дивергенция MACD, сигнал не формируется")
                     return []
-                    
-                # Проверка глобального тренда
-                if not is_global_uptrend(symbol):
-                    logging.info(f"{symbol}: нет подтверждения глобального тренда, сигнал не формируется")
-                    return []
-                    
                 action = 'BUY'
-                # Мягкий фильтр: объём должен расти в последних 3 свечах
                 if df['volume'].iloc[-1] < df['volume'].iloc[-2] or df['volume'].iloc[-2] < df['volume'].iloc[-3]:
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за отсутствие роста объёма для BUY")
-                # Мягкий фильтр: свеча должна быть бычьей
                 if df['close'].iloc[-1] < df['open'].iloc[-1]:
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за небычью свечу для BUY")
@@ -583,28 +595,24 @@ def check_signals(df, symbol):
                 label, strength_chance = signal_strength_label(score)
                 history_percent, total = get_signal_stats(symbol, action)
                 winrate = get_score_winrate(score, action)
-                
-                # Формирование сообщения с сигналом
                 signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nADX: {last["adx"]:.1f} (сила тренда)\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вверх, MACD бычий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
                 logging.info(f"{symbol}: BUY сигнал сформирован (фьючерсы)")
-                
         # === СИГНАЛЫ НА ПРОДАЖУ ===
         if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
             if last['macd'] < 0 and last['macd'] < last['macd_signal']:
-                # Price Action: подтверждение медвежьим пин-баром или поглощением
+                # Price Action: подтверждение медвежьим пин-баром или поглощением (мягко)
                 if not (is_bearish_pinbar(last) or is_bearish_engulfing(prev, last)):
-                    logging.info(f"{symbol}: нет подтверждения price action для SELL")
-                    return []
-                # Мультифреймовый фильтр: тренд на старших ТФ должен быть НИСХОДЯЩИМ
-                if is_global_uptrend(symbol):
-                    logging.info(f"{symbol}: нет подтверждения нисходящего тренда на старших ТФ для SELL")
-                    return []
+                    score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за отсутствие price action для SELL")
+                # Мультифреймовый фильтр: тренд на старших ТФ (мягко)
+                trend_score = is_global_uptrend(symbol)
+                if trend_score > 2:
+                    score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за отсутствие подтверждения нисходящего тренда (совпало {trend_score} из 4)")
                 action = 'SELL'
-                # Мягкий фильтр: объём должен расти в последних 3 свечах (для SELL — падать)
                 if df['volume'].iloc[-1] > df['volume'].iloc[-2] or df['volume'].iloc[-2] > df['volume'].iloc[-3]:
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за отсутствие падения объёма для SELL")
-                # Мягкий фильтр: свеча должна быть медвежьей
                 if df['close'].iloc[-1] > df['open'].iloc[-1]:
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за не медвежью свечу для SELL")
@@ -612,12 +620,8 @@ def check_signals(df, symbol):
                 label, strength_chance = signal_strength_label(score)
                 history_percent, total = get_signal_stats(symbol, action)
                 winrate = get_score_winrate(score, action)
-                
-                # Формирование сообщения с сигналом
                 signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nADX: {last["adx"]:.1f} (сила тренда)\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вниз, MACD медвежий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
                 logging.info(f"{symbol}: SELL сигнал сформирован (фьючерсы)")
-                
-        # Кулдаун
         if last_signal_time[symbol].tzinfo is None:
             last_signal_time[symbol] = last_signal_time[symbol].replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
@@ -626,7 +630,6 @@ def check_signals(df, symbol):
         if signals:
             last_signal_time[symbol] = now
         return signals
-        
     except Exception as e:
         logging.error(f"Ошибка при проверке сигналов для {symbol}: {e}")
         return []
@@ -835,42 +838,6 @@ async def main():
         if current_hour not in report_hours:
             last_report_hours = set()  # Обнуляем, чтобы в следующий раз снова отправить
         await asyncio.sleep(60 * 5)  # Проверять каждые 5 минут
-
-def is_global_uptrend(symbol: str) -> bool:
-    """
-    Профессиональный мультифреймовый фильтр тренда:
-    1. EMA21 > EMA50 на дневке (1d)
-    2. Цена выше EMA21 на дневке (1d)
-    3. RSI(14) > 50 на 4h
-    4. Цена на 4h выше своей SMA20
-    Для подтверждения тренда нужно минимум 3 из 4 условий.
-    """
-    try:
-        # 1. Проверка EMA на дневном ТФ
-        ohlcv_daily = EXCHANGE.fetch_ohlcv(symbol, '1d', limit=50)
-        df_daily = pd.DataFrame(ohlcv_daily, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-        df_daily['ema21'] = ta.trend.ema_indicator(df_daily['c'], 21)
-        df_daily['ema50'] = ta.trend.ema_indicator(df_daily['c'], 50)
-        last_daily = df_daily.iloc[-1]
-        
-        # 2. Проверка RSI и SMA на 4H
-        ohlcv_4h = EXCHANGE.fetch_ohlcv(symbol, '4h', limit=100)
-        df_4h = pd.DataFrame(ohlcv_4h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-        df_4h['rsi'] = ta.momentum.rsi(df_4h['c'], 14)
-        df_4h['sma20'] = df_4h['c'].rolling(20).mean()
-        last_4h = df_4h.iloc[-1]
-        
-        # Критерии тренда
-        conditions = [
-            last_daily['c'] > last_daily['ema21'],
-            last_daily['ema21'] > last_daily['ema50'],
-            last_4h['rsi'] > 50,
-            last_4h['c'] > last_4h['sma20']
-        ]
-        return sum(conditions) >= 3
-    except Exception as e:
-        logging.error(f"Ошибка при определении глобального тренда для {symbol}: {e}")
-        return False
 
 # Функция для расчёта winrate по score на истории
 score_history_stats = {}
