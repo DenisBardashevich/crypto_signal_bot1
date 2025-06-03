@@ -1079,87 +1079,90 @@ def find_support_resistance(df, window=20):
 
 def calculate_tp_sl(df, price, atr, score=None):
     """
-    Расчёт TP/SL на основе ATR, волатильности инструмента, ADX, 
-    ближайших уровней поддержки/сопротивления и силы сигнала
+    Профессиональный расчёт TP/SL:
+    - TP и SL по экстремумам последних 20 свечей (ключевые уровни)
+    - Fallback на ATR, если уровни слишком близко/далеко
+    - Ограничения по минимальному и максимальному расстоянию
+    - Корректировка по силе сигнала, волатильности и ADX
     """
     last = df.iloc[-1]
     volatility = df['spread_pct'].rolling(window=20).mean().iloc[-1]
-    
-    # Получаем параметры риска
     risk_params = calculate_risk_params()
     tp_mult = risk_params['tp_mult']
     sl_mult = risk_params['sl_mult']
-    
-    # Корректируем множители на основе силы сигнала
-    if score is not None:
-        if score >= 7:  # Очень сильный сигнал
-            tp_mult *= 1.3
-            sl_mult *= 0.8
-        elif score >= 5:  # Сильный или средний сигнал
-            tp_mult *= 1.1
-            sl_mult *= 0.9
-    
-    # Корректируем множители на основе волатильности инструмента
-    if volatility > 0.005:  # высокая волатильность
-        tp_mult *= 1.3
-        sl_mult *= 0.9
-    elif volatility < 0.002:  # низкая волатильность
-        tp_mult *= 0.9
-        sl_mult *= 1.0
-    
-    # Корректируем на основе ADX
-    if last['adx'] > 30:  # сильный тренд
-        tp_mult *= 1.2
-        sl_mult *= 0.9
-    elif last['adx'] < 20:  # слабый тренд
-        tp_mult *= 0.9
-        sl_mult *= 1.1
-    
-    # ATR-TP/SL
     atr_tp = min(max(round((atr * tp_mult) / price, 4), TP_MIN), TP_MAX)
     atr_sl = min(max(round((atr * sl_mult) / price, 4), SL_MIN), SL_MAX)
     
-    # Уровни поддержки/сопротивления
-    support, resistance = find_support_resistance(df, window=20)
+    # Корректировка по score
+    if score is not None:
+        if score >= 7:
+            tp_mult *= 1.3
+            sl_mult *= 0.8
+        elif score >= 5:
+            tp_mult *= 1.1
+            sl_mult *= 0.9
+    # Корректировка по волатильности
+    if volatility > 0.005:
+        tp_mult *= 1.3
+        sl_mult *= 0.9
+    elif volatility < 0.002:
+        tp_mult *= 0.9
+        sl_mult *= 1.0
+    # Корректировка по ADX
+    if last['adx'] > 30:
+        tp_mult *= 1.2
+        sl_mult *= 0.9
+    elif last['adx'] < 20:
+        tp_mult *= 0.9
+        sl_mult *= 1.1
     
-    # Определяем направление (long/short) на основе последних свечей
+    # --- Новый профессиональный расчёт по экстремумам ---
+    lows = df['low'].iloc[-EXTREMUM_WINDOW:]
+    highs = df['high'].iloc[-EXTREMUM_WINDOW:]
+    last_close = price
     is_long = df['ema_fast'].iloc[-1] > df['ema_slow'].iloc[-1]
-    
-    tp, sl = atr_tp, atr_sl
-    
-    if support is not None and resistance is not None:
-        # Цена между уровнями поддержки и сопротивления
-        if price > support and price < resistance:
-            if is_long:  # long position
-                # TP до ближайшего сопротивления
-                tp_level = (resistance - price) / price
-                # SL на уровне поддержки или чуть ниже
-                sl_level = (price - support * 0.998) / price
-                
-                if tp_level > TP_MIN and tp_level < TP_MAX:
-                    tp = min(tp, tp_level)
-                if sl_level > SL_MIN and sl_level < SL_MAX:
-                    sl = min(sl, sl_level)
-            else:  # short position
-                # TP до ближайшей поддержки
-                tp_level = (price - support) / price
-                # SL на уровне сопротивления или чуть выше
-                sl_level = (resistance * 1.002 - price) / price
-                
-                if tp_level > TP_MIN and tp_level < TP_MAX:
-                    tp = min(tp, tp_level)
-                if sl_level > SL_MIN and sl_level < SL_MAX:
-                    sl = min(sl, sl_level)
-    
+    tp, sl = None, None
+    min_dist = 0.005  # 0.5% минимум
+    max_dist = 0.05   # 5% максимум
+    if is_long:
+        # SL — ближайший минимум ниже цены
+        lows_below = lows[lows < last_close]
+        nearest_min = lows_below.min() if not lows_below.empty else None
+        # TP — ближайший максимум выше цены
+        highs_above = highs[highs > last_close]
+        nearest_max = highs_above.max() if not highs_above.empty else None
+        if nearest_min:
+            sl = (last_close - nearest_min) / last_close
+        if nearest_max:
+            tp = (nearest_max - last_close) / last_close
+    else:
+        # SL — ближайший максимум выше цены
+        highs_above = highs[highs > last_close]
+        nearest_max = highs_above.max() if not highs_above.empty else None
+        # TP — ближайший минимум ниже цены
+        lows_below = lows[lows < last_close]
+        nearest_min = lows_below.min() if not lows_below.empty else None
+        if nearest_max:
+            sl = (nearest_max - last_close) / last_close
+        if nearest_min:
+            tp = (last_close - nearest_min) / last_close
+    # Проверка на минимальное/максимальное расстояние
+    if tp is not None and (tp < min_dist or tp > max_dist):
+        tp = None
+    if sl is not None and (sl < min_dist or sl > max_dist):
+        sl = None
+    # Fallback на ATR если уровни не найдены или неадекватны
+    if tp is None:
+        tp = atr_tp
+    if sl is None:
+        sl = atr_sl
     # Проверяем минимальное расстояние между TP и SL
     if tp - sl < MIN_TP_SL_DISTANCE:
         tp = sl + MIN_TP_SL_DISTANCE
-    
     # Обеспечиваем, чтобы соотношение риск/прибыль было >= 1.5
     if tp / sl < 1.5:
         tp = sl * 1.5
-        tp = min(tp, TP_MAX)  # Не превышаем максимальный TP
-    
+        tp = min(tp, TP_MAX)
     return tp, sl, risk_params['position_size']
 
 def check_tp_sl(symbol, price, time, df):
