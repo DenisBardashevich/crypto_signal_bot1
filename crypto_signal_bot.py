@@ -87,8 +87,8 @@ def record_trade(symbol, action, price, time, side, score=None):
     if symbol not in virtual_portfolio:
         virtual_portfolio[symbol] = []
     trade = {
-        'action': action,  # 'OPEN' или 'CLOSE'
-        'side': side,      # 'long' или 'short'
+        'action': 'BUY' if action == 'OPEN' and side == 'long' else 'SELL' if action == 'OPEN' and side == 'short' else 'SELL' if action == 'CLOSE' and side == 'long' else 'BUY',
+        'side': side,
         'price': price,
         'time': time.strftime('%Y-%m-%d %H:%M')
     }
@@ -153,34 +153,37 @@ def calculate_profit():
                 
             if trade['action'] == 'BUY':
                 last_buy = float(trade['price'])
-                last_side = 'BUY'
+                last_side = trade['side']
                 
             elif trade['action'] == 'SELL' and last_buy is not None:
                 exit_price = float(trade['price'])
                 entry_price = last_buy
                 side = last_side
-                sign = 1 if side == 'BUY' else -1
                 
-                # Базовый размер позиции (условно 1 для виртуального портфеля)
+                # Для LONG позиций: (exit - entry) / entry
+                # Для SHORT позиций: (entry - exit) / entry
+                pnl_pct = (exit_price - entry_price) / entry_price if side == 'long' else (entry_price - exit_price) / entry_price
+                
+                # Базовый размер позиции
                 size = 1
                 
                 # Рекомендуемое плечо на основе силы сигнала
                 leverage = 1
                 if last_score is not None:
                     label, strength = signal_strength_label(last_score)
-                    if strength >= 0.85:  # Сильный или очень сильный
+                    if strength >= 0.85:
                         leverage = 10
-                    elif strength >= 0.7:  # Средний
+                    elif strength >= 0.7:
                         leverage = 5
-                    elif strength >= 0.5:  # Умеренный
+                    elif strength >= 0.5:
                         leverage = 3
-                    else:  # Слабый или ниже
+                    else:
                         leverage = 2
                 
                 # Комиссия за открытие и закрытие позиции
                 fee = (entry_price + exit_price) * size * FEE_RATE
                 
-                # Получаем funding rate (если доступно)
+                # Получаем funding rate
                 try:
                     ticker = EXCHANGE.fetch_ticker(symbol)
                     funding = ticker.get('fundingRate', 0) * size * entry_price
@@ -188,7 +191,7 @@ def calculate_profit():
                     funding = 0
                 
                 # Расчет P&L с учетом плеча, комиссий и funding
-                pnl_pct = (exit_price - entry_price) / entry_price * sign - (fee / (entry_price * size)) - (funding / (entry_price * size))
+                pnl_pct = pnl_pct - (fee / (entry_price * size)) - (funding / (entry_price * size))
                 pnl_leverage = pnl_pct * leverage
                 pnl_usdt = pnl_leverage * entry_price * size
                 
@@ -1167,7 +1170,7 @@ def check_tp_sl(symbol, price, time, df):
     trade = open_trades[symbol]
     side = trade['side']
     entry = trade['entry_price']
-    score = trade.get('score', None)  # Получаем score из данных сделки
+    score = trade.get('score', None)
     
     # Получаем или рассчитываем TP/SL
     if symbol in adaptive_targets:
@@ -1200,9 +1203,9 @@ def check_tp_sl(symbol, price, time, df):
             return True
     
     # Для short
-    if side == 'short':
-        tp_price = entry * (1 - tp)
-        sl_price = entry * (1 + sl)
+    elif side == 'short':
+        tp_price = entry * (1 - tp)  # Для SHORT TP ниже входа
+        sl_price = entry * (1 + sl)  # Для SHORT SL выше входа
         
         # Проверка достижения TP или SL
         if price <= tp_price or price >= sl_price:
