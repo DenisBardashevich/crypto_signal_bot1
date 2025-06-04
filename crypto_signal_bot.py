@@ -84,18 +84,43 @@ def save_portfolio():
 
 # Фиксация сделки
 def record_trade(symbol, action, price, time, side, score=None):
+    """
+    Записывает сделку в виртуальный портфель
+    
+    action: 'OPEN' или 'CLOSE'
+    side: 'long' или 'short'
+    """
     if symbol not in virtual_portfolio:
         virtual_portfolio[symbol] = []
+    
+    # Определяем действие для записи (BUY/SELL)
+    trade_action = None
+    if action == 'OPEN':
+        trade_action = 'BUY' if side == 'long' else 'SELL'
+    elif action == 'CLOSE':
+        trade_action = 'SELL' if side == 'long' else 'BUY'
+    
+    # Создаем запись о сделке
     trade = {
-        'action': 'BUY' if action == 'OPEN' and side == 'long' else 'SELL' if action == 'OPEN' and side == 'short' else 'SELL' if action == 'CLOSE' and side == 'long' else 'BUY',
+        'action': trade_action,
         'side': side,
         'price': price,
         'time': time.strftime('%Y-%m-%d %H:%M')
     }
+    
+    # Добавляем оценку силы сигнала, если есть
     if score is not None:
         trade['score'] = score
+    
+    # Добавляем информацию о типе операции (открытие/закрытие)
+    trade['operation'] = action
+    
+    # Добавляем сделку в портфель
     virtual_portfolio[symbol].append(trade)
     save_portfolio()
+    
+    # Логируем информацию о сделке
+    logging.info(f"Записана сделка: {symbol} {action} {side} по цене {price} в {time}")
 
 # Открытие сделки
 def open_trade(symbol, price, time, side, atr=None, score=None, position_size=0.03):
@@ -303,13 +328,13 @@ def evaluate_signal_strength(df, symbol, action):
     Расширенная оценка силы сигнала по экспертным признакам (0-9):
     +1 за тренд на 1h (EMA_fast > EMA_slow для BUY, < для SELL)
     +1 за объём выше медианы по рынку
-    +1 за RSI в "силовой" зоне (35-65)
     +1 за отсутствие экстремума RSI (25<RSI<75)
     +1 за совпадение EMA и MACD (т.е. оба бычьи или оба медвежьи)
     +1 за положение цены относительно Bollinger Bands
     +1 за ADX > 25 (сильный тренд)
     +1 за согласованный тренд на 15m и 1h
     +1 за положение цены относительно уровней поддержки/сопротивления
+    +1 за объем выше среднего за последние 5 свечей (новый фактор)
     -1 за экстремальный RSI (RSI>80 или <20)
     -1 за дивергенцию MACD и цены
     -1 за противоречивые сигналы объёма
@@ -339,33 +364,28 @@ def evaluate_signal_strength(df, symbol, action):
     except Exception as e:
         logging.warning(f"{symbol}: ошибка проверки объёма: {e}")
     
-    # 3. RSI в силовой зоне
-    if RSI_NEUTRAL_LOW < last['rsi'] < RSI_NEUTRAL_HIGH:
-        score += 1
-        logging.info(f"{symbol}: +1 балл за RSI в силовой зоне {last['rsi']:.2f}")
-    
-    # 4. Отсутствие экстремума
+    # 3. Отсутствие экстремума RSI (было #4, станет #3 в логике)
     if 25 < last['rsi'] < 75:
         score += 1
-        logging.info(f"{symbol}: +1 балл за отсутствие экстремума RSI")
+        logging.info(f"{symbol}: +1 балл за отсутствие экстремума RSI {last['rsi']:.2f}")
     
-    # 5. Совпадение EMA и MACD
+    # 4. Совпадение EMA и MACD (было #5, станет #4)
     if (last['ema_fast'] > last['ema_slow'] and last['macd'] > 0) or (last['ema_fast'] < last['ema_slow'] and last['macd'] < 0):
         score += 1
         logging.info(f"{symbol}: +1 балл за совпадение EMA и MACD")
     
-    # 6. Положение цены относительно Bollinger Bands
+    # 5. Положение цены относительно Bollinger Bands
     if 'bollinger_mid' in df.columns and 'bollinger_high' in df.columns and 'bollinger_low' in df.columns:
         if (action == 'BUY' and last['close'] > last['bollinger_mid']) or (action == 'SELL' and last['close'] < last['bollinger_mid']):
             score += 1
             logging.info(f"{symbol}: +1 балл за положение цены относительно BB")
     
-    # 7. ADX > 25 (сильный тренд)
-    if last['adx'] > 25:
+    # 6. ADX > 25 (сильный тренд) - смягчаем требование для большего числа сигналов
+    if last['adx'] > 20:  # Было > 25
         score += 1
-        logging.info(f"{symbol}: +1 балл за сильный тренд (ADX > 25)")
+        logging.info(f"{symbol}: +1 балл за сильный тренд (ADX > 20)")
         
-    # 8. Согласованный тренд на 15m и 1h
+    # 7. Согласованный тренд на 15m и 1h
     try:
         ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=5)
         df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
@@ -378,41 +398,47 @@ def evaluate_signal_strength(df, symbol, action):
     except Exception as e:
         logging.warning(f"{symbol}: ошибка проверки тренда на 1h: {e}")
     
-    # 9. Положение цены относительно уровней поддержки/сопротивления
+    # 8. Положение цены относительно уровней поддержки/сопротивления - смягчаем требования
     try:
         support, resistance = find_support_resistance(df, window=20)
         if support is not None and resistance is not None:
             price = last['close']
             # Для покупки: цена близка к поддержке
-            if action == 'BUY' and price < (support * 1.01):
+            if action == 'BUY' and price < (support * 1.02):  # Было 1.01
                 score += 1
                 logging.info(f"{symbol}: +1 балл за цену у поддержки {support:.4f} для BUY")
             # Для продажи: цена близка к сопротивлению
-            elif action == 'SELL' and price > (resistance * 0.99):
+            elif action == 'SELL' and price > (resistance * 0.98):  # Было 0.99
                 score += 1
                 logging.info(f"{symbol}: +1 балл за цену у сопротивления {resistance:.4f} для SELL")
     except Exception as e:
         logging.warning(f"{symbol}: ошибка проверки S/R уровней: {e}")
     
+    # 9. Объем выше среднего за последние 5 свечей (новый фактор)
+    vol_avg_5 = df['volume'].iloc[-5:].mean()
+    if last['volume'] > vol_avg_5 * 1.1:
+        score += 1
+        logging.info(f"{symbol}: +1 балл за объем выше среднего за 5 свечей")
+    
     # === ОТРИЦАТЕЛЬНЫЕ ФАКТОРЫ ===
     
-    # 1. Штраф за экстремальный RSI
-    if last['rsi'] > 80 or last['rsi'] < 20:
+    # 1. Штраф за экстремальный RSI - смягчаем
+    if last['rsi'] > 85 or last['rsi'] < 15:  # Было 80/20
         score -= 1
         logging.info(f"{symbol}: -1 балл за экстремальный RSI {last['rsi']:.2f}")
     
-    # 2. Штраф за дивергенцию MACD и цены
+    # 2. Штраф за дивергенцию MACD и цены - смягчаем
     if len(df) >= 3:
-        if (action == 'BUY' and last['macd'] < df.iloc[-3]['macd'] and last['close'] > df.iloc[-3]['close']) or \
-           (action == 'SELL' and last['macd'] > df.iloc[-3]['macd'] and last['close'] < df.iloc[-3]['close']):
+        if (action == 'BUY' and last['macd'] < df.iloc[-3]['macd'] * 0.7 and last['close'] > df.iloc[-3]['close'] * 1.03) or \
+           (action == 'SELL' and last['macd'] > df.iloc[-3]['macd'] * 1.3 and last['close'] < df.iloc[-3]['close'] * 0.97):
             score -= 1
             logging.info(f"{symbol}: -1 балл за дивергенцию MACD и цены")
     
-    # 3. Штраф за противоречивые сигналы объёма
+    # 3. Штраф за противоречивые сигналы объёма - смягчаем
     vol_avg_5 = df['volume'].iloc[-5:].mean()
-    if (action == 'BUY' and last['volume'] < vol_avg_5 * 0.8) or (action == 'SELL' and last['volume'] < vol_avg_5 * 0.8):
+    if (action == 'BUY' and last['volume'] < vol_avg_5 * 0.6) or (action == 'SELL' and last['volume'] < vol_avg_5 * 0.6):
         score -= 1
-        logging.info(f"{symbol}: -1 балл за низкий объём относительно среднего за 5 свечей")
+        logging.info(f"{symbol}: -1 балл за значительно низкий объём относительно среднего за 5 свечей")
     
     # Обеспечиваем минимум 0 баллов
     score = max(0, score)
@@ -438,9 +464,11 @@ def signal_strength_label(score):
     elif score == 3:
         return 'Слабый', 0.55
     elif score == 2:
-        return 'Очень слабый', 0.40
+        return 'Очень слабый', 0.45  # Увеличил с 0.40 до 0.45
+    elif score == 1:
+        return 'Ненадёжный', 0.35  # Увеличил с 0.30 до 0.35
     else:
-        return 'Ненадёжный', 0.30
+        return 'Крайне ненадёжный', 0.25  # Добавил новую категорию
 
 # ========== СТАТИСТИКА ПО ИСТОРИИ ==========
 def get_signal_stats(symbol, action):
@@ -548,24 +576,50 @@ def is_global_uptrend(symbol: str) -> int:
     2. Цена выше EMA21 на дневке (1d)
     3. RSI(14) > 50 на 4h
     4. Цена на 4h выше своей SMA20
+    
+    Оптимизированная версия с более гибкими условиями для большего числа сигналов.
     """
     try:
+        # Получаем данные дневного таймфрейма
         ohlcv_daily = EXCHANGE.fetch_ohlcv(symbol, '1d', limit=50)
         df_daily = pd.DataFrame(ohlcv_daily, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         df_daily['ema21'] = ta.trend.ema_indicator(df_daily['c'], 21)
         df_daily['ema50'] = ta.trend.ema_indicator(df_daily['c'], 50)
         last_daily = df_daily.iloc[-1]
+        
+        # Получаем данные 4-часового таймфрейма
         ohlcv_4h = EXCHANGE.fetch_ohlcv(symbol, '4h', limit=100)
         df_4h = pd.DataFrame(ohlcv_4h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         df_4h['rsi'] = ta.momentum.rsi(df_4h['c'], 14)
         df_4h['sma20'] = df_4h['c'].rolling(20).mean()
         last_4h = df_4h.iloc[-1]
+        
+        # Добавляем данные 1-часового таймфрейма для дополнительного анализа
+        ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=50)
+        df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        df_1h['ema9'] = ta.trend.ema_indicator(df_1h['c'], 9)
+        df_1h['ema21'] = ta.trend.ema_indicator(df_1h['c'], 21)
+        last_1h = df_1h.iloc[-1]
+        
+        # Основные условия (как раньше)
         conditions = [
-            last_daily['c'] > last_daily['ema21'],
-            last_daily['ema21'] > last_daily['ema50'],
-            last_4h['rsi'] > 50,
-            last_4h['c'] > last_4h['sma20']
+            last_daily['c'] > last_daily['ema21'],  # Цена выше EMA21 на дневке
+            last_daily['ema21'] > last_daily['ema50'],  # EMA21 > EMA50 на дневке
+            last_4h['rsi'] > 50,  # RSI > 50 на 4h
+            last_4h['c'] > last_4h['sma20']  # Цена выше SMA20 на 4h
         ]
+        
+        # Дополнительные условия для более точной оценки тренда
+        # Учитываем только если основные условия дают неоднозначный результат (2 из 4)
+        if sum(conditions) == 2:
+            # Проверяем тренд на 1h
+            if last_1h['ema9'] > last_1h['ema21']:
+                # Если на 1h есть восходящий тренд, добавляем 0.5 балла
+                return 2.5
+            else:
+                # Если на 1h нет восходящего тренда, вычитаем 0.5 балла
+                return 1.5
+        
         return sum(conditions)
     except Exception as e:
         logging.error(f"Ошибка при определении глобального тренда для {symbol}: {e}")
@@ -586,10 +640,11 @@ def check_signals(df, symbol):
         score_penalty = 0
         
         # === Фильтр по BTC ADX для альтов ===
+        # Смягчаем фильтр по BTC ADX для увеличения числа сигналов
         if symbol != 'BTC/USDT:USDT':
             btc_adx = get_btc_adx()
-            if btc_adx < 20:
-                logging.info(f"BTC ADX {btc_adx:.2f} < 20, сигналы по альтам не формируются")
+            if btc_adx < 12:  # Уменьшил с 20 до 12
+                logging.info(f"{symbol}: BTC ADX {btc_adx:.2f} < 12, сигналы по альтам не формируются")
                 return []
                 
         # === БАЗОВЫЕ ФИЛЬТРЫ ===
@@ -603,7 +658,8 @@ def check_signals(df, symbol):
             logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {MIN_VOLUME_USDT/1_000_000:.0f} млн, сигнал не формируется")
             return []
             
-        if last['rsi'] > 80 or last['rsi'] < 20:
+        # Смягчаем штраф за экстремальный RSI
+        if last['rsi'] > 85 or last['rsi'] < 15:  # Было 80/20
             score_penalty -= 1
             logging.info(f"{symbol}: штраф -1 к score за экстремальный RSI {last['rsi']:.2f}")
             
@@ -611,6 +667,7 @@ def check_signals(df, symbol):
             logging.info(f"{symbol}: большой спред {last['spread_pct']*100:.2f}% > {MAX_SPREAD_PCT*100:.2f}%, сигнал не формируется")
             return []
             
+        # Смягчаем фильтр по объему
         if USE_VOLUME_FILTER and last['volume_ratio'] < VOLUME_SPIKE_MULT:
             logging.info(f"{symbol}: низкий относительный объём {last['volume_ratio']:.2f} < {VOLUME_SPIKE_MULT}, сигнал не формируется")
             return []
@@ -620,13 +677,13 @@ def check_signals(df, symbol):
             
         # === СИГНАЛЫ НА ПОКУПКУ ===
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-            if last['macd'] > 0 and last['macd'] > last['macd_signal']:
-                # Добавляем проверку на динамику RSI - должен расти для покупки
-                if last['rsi'] <= prev['rsi']:
+            if last['macd'] > 0 or last['macd'] > last['macd_signal']:  # Изменил И на ИЛИ для большего числа сигналов
+                # Смягчаем проверку на динамику RSI
+                if last['rsi'] < prev['rsi'] - 5:  # Только если RSI значительно падает
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за отсутствие роста RSI для BUY")
+                    logging.info(f"{symbol}: штраф -1 к score за падение RSI для BUY")
                 
-                # Проверка тренда на 1h
+                # Проверка тренда на 1h - делаем опциональной
                 try:
                     ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=5)
                     df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
@@ -637,61 +694,56 @@ def check_signals(df, symbol):
                 except Exception as e:
                     logging.error(f"Ошибка при проверке 1h тренда: {e}")
                 
-                # Price Action: подтверждение бычьим пин-баром или поглощением
+                # Price Action: делаем опциональным
                 if not (is_bullish_pinbar(last) or is_bullish_engulfing(prev, last)):
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за отсутствие price action для BUY")
                 
-                # Мультифреймовый фильтр: тренд на старших ТФ
+                # Мультифреймовый фильтр: смягчаем
                 trend_score = is_global_uptrend(symbol)
-                if trend_score < 2:
+                if trend_score < 1:  # Было < 2
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за отсутствие подтверждения тренда (совпало {trend_score} из 4)")
                 
-                # Проверка по полосам Боллинджера
-                if USE_VOLATILITY_FILTER and last['close'] < last['bollinger_mid']:
-                    logging.info(f"{symbol}: цена ниже средней полосы Боллинджера, сигнал не формируется")
-                    return []
-                
-                # Проверка динамики MACD - должен расти для покупки
-                if len(df) >= 3 and last['macd'] < df.iloc[-2]['macd']:
-                    logging.info(f"{symbol}: MACD снижается, сигнал не формируется")
+                # Проверка динамики MACD - делаем опциональной
+                if len(df) >= 3 and last['macd'] < df.iloc[-2]['macd'] * 0.8:  # Только если MACD значительно снижается
                     score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за значительное снижение MACD")
                 
-                # Проверка объема - должен быть выше среднего для последних 5 свечей
+                # Проверка объема - делаем опциональной
                 vol_avg_5 = df['volume'].iloc[-5:].mean()
-                if last['volume'] < vol_avg_5:
+                if last['volume'] < vol_avg_5 * 0.7:  # Только если объем значительно ниже
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за объем ниже среднего за 5 свечей")
+                    logging.info(f"{symbol}: штраф -1 к score за объем значительно ниже среднего за 5 свечей")
                 
-                # Учет краткосрочного тренда
-                if price_trend < 0:
+                # Учет краткосрочного тренда - делаем опциональным
+                if price_trend < -2:  # Только если явно нисходящий тренд
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за нисходящий тренд по 5 свечам")
+                    logging.info(f"{symbol}: штраф -1 к score за явно нисходящий тренд по 5 свечам")
                 
-                # Проверка на возможность дивергенции
-                if len(df) >= 3 and last['macd'] < df.iloc[-3]['macd'] and last['close'] > df.iloc[-3]['close']:
-                    logging.info(f"{symbol}: негативная дивергенция MACD, сигнал не формируется")
-                    score_penalty -= 2
+                # Проверка на возможность дивергенции - смягчаем
+                if len(df) >= 3 and last['macd'] < df.iloc[-3]['macd'] * 0.7 and last['close'] > df.iloc[-3]['close'] * 1.03:
+                    score_penalty -= 1  # Было -2
+                    logging.info(f"{symbol}: штраф -1 к score за возможную дивергенцию MACD")
                 
                 action = 'BUY'
                 
-                # Проверка на рост объема
-                if df['volume'].iloc[-1] < df['volume'].iloc[-2] or df['volume'].iloc[-2] < df['volume'].iloc[-3]:
+                # Проверка на рост объема - делаем опциональной
+                if df['volume'].iloc[-1] < df['volume'].iloc[-2] * 0.6 and df['volume'].iloc[-2] < df['volume'].iloc[-3] * 0.6:
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за отсутствие роста объёма для BUY")
+                    logging.info(f"{symbol}: штраф -1 к score за значительное падение объёма для BUY")
                 
-                # Проверка на бычью свечу
-                if df['close'].iloc[-1] < df['open'].iloc[-1]:
+                # Проверка на бычью свечу - делаем опциональной
+                if df['close'].iloc[-1] < df['open'].iloc[-1] * 0.99:  # Только если явно медвежья
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за небычью свечу для BUY")
+                    logging.info(f"{symbol}: штраф -1 к score за явно медвежью свечу для BUY")
                 
                 # Рассчитываем финальный score
                 score = evaluate_signal_strength(df, symbol, action) + score_penalty
                 
-                # Если score меньше 3, сигнал не формируем
-                if score < 3:
-                    logging.info(f"{symbol}: score {score} < 3, сигнал не формируется")
+                # Повышаем минимальный порог для формирования сигнала до 4 (65% вероятность)
+                if score < 4:  # Было < 2
+                    logging.info(f"{symbol}: score {score} < 4, сигнал не формируется (требуется минимум 'Умеренный' сигнал)")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -703,13 +755,13 @@ def check_signals(df, symbol):
         
         # === СИГНАЛЫ НА ПРОДАЖУ ===
         if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-            if last['macd'] < 0 and last['macd'] < last['macd_signal']:
-                # Добавляем проверку на динамику RSI - должен падать для продажи
-                if last['rsi'] >= prev['rsi']:
+            if last['macd'] < 0 or last['macd'] < last['macd_signal']:  # Изменил И на ИЛИ для большего числа сигналов
+                # Смягчаем проверку на динамику RSI
+                if last['rsi'] > prev['rsi'] + 5:  # Только если RSI значительно растет
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за отсутствие падения RSI для SELL")
+                    logging.info(f"{symbol}: штраф -1 к score за рост RSI для SELL")
                 
-                # Проверка тренда на 1h
+                # Проверка тренда на 1h - делаем опциональной
                 try:
                     ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=5)
                     df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
@@ -720,56 +772,51 @@ def check_signals(df, symbol):
                 except Exception as e:
                     logging.error(f"Ошибка при проверке 1h тренда: {e}")
                 
-                # Price Action: подтверждение медвежьим пин-баром или поглощением
+                # Price Action: делаем опциональным
                 if not (is_bearish_pinbar(last) or is_bearish_engulfing(prev, last)):
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за отсутствие price action для SELL")
                 
-                # Мультифреймовый фильтр: тренд на старших ТФ
+                # Мультифреймовый фильтр: смягчаем
                 trend_score = is_global_uptrend(symbol)
-                if trend_score > 2:
+                if trend_score > 3:  # Было > 2
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за отсутствие подтверждения нисходящего тренда (совпало {trend_score} из 4)")
                 
-                # Проверка динамики MACD - должен падать для продажи
-                if len(df) >= 3 and last['macd'] > df.iloc[-2]['macd']:
-                    logging.info(f"{symbol}: MACD растет, сигнал не формируется")
+                # Проверка динамики MACD - делаем опциональной
+                if len(df) >= 3 and last['macd'] > df.iloc[-2]['macd'] * 0.8:  # Только если MACD значительно растет
                     score_penalty -= 1
+                    logging.info(f"{symbol}: штраф -1 к score за значительный рост MACD для SELL")
                 
-                # Проверка объема - должен быть выше среднего для последних 5 свечей
+                # Проверка объема - делаем опциональной
                 vol_avg_5 = df['volume'].iloc[-5:].mean()
-                if last['volume'] < vol_avg_5:
+                if last['volume'] < vol_avg_5 * 0.7:  # Только если объем значительно ниже
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за объем ниже среднего за 5 свечей")
+                    logging.info(f"{symbol}: штраф -1 к score за объем значительно ниже среднего за 5 свечей")
                 
-                # Учет краткосрочного тренда
-                if price_trend > 0:
+                # Учет краткосрочного тренда - делаем опциональным
+                if price_trend > 2:  # Только если явно восходящий тренд
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за восходящий тренд по 5 свечам")
+                    logging.info(f"{symbol}: штраф -1 к score за явно восходящий тренд по 5 свечам")
                 
-                # Проверка на возможность дивергенции
-                if len(df) >= 3 and last['macd'] > df.iloc[-3]['macd'] and last['close'] < df.iloc[-3]['close']:
-                    logging.info(f"{symbol}: позитивная дивергенция MACD, сигнал не формируется")
-                    score_penalty -= 2
+                # Проверка на возможность дивергенции - смягчаем
+                if len(df) >= 3 and last['macd'] > df.iloc[-3]['macd'] * 0.7 and last['close'] < df.iloc[-3]['close'] * 0.97:
+                    score_penalty -= 1  # Было -2
+                    logging.info(f"{symbol}: штраф -1 к score за возможную дивергенцию MACD")
                 
                 action = 'SELL'
                 
-                # Проверка на падение объема
-                if df['volume'].iloc[-1] > df['volume'].iloc[-2] or df['volume'].iloc[-2] > df['volume'].iloc[-3]:
+                # Проверка на медвежью свечу - делаем опциональной
+                if df['close'].iloc[-1] > df['open'].iloc[-1] * 1.01:  # Только если явно бычья
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за отсутствие падения объёма для SELL")
-                
-                # Проверка на медвежью свечу
-                if df['close'].iloc[-1] > df['open'].iloc[-1]:
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за не медвежью свечу для SELL")
+                    logging.info(f"{symbol}: штраф -1 к score за явно бычью свечу для SELL")
                 
                 # Рассчитываем финальный score
                 score = evaluate_signal_strength(df, symbol, action) + score_penalty
                 
-                # Если score меньше 3, сигнал не формируем
-                if score < 3:
-                    logging.info(f"{symbol}: score {score} < 3, сигнал не формируется")
+                # Повышаем минимальный порог для формирования сигнала до 4 (65% вероятность)
+                if score < 4:  # Было < 2
+                    logging.info(f"{symbol}: score {score} < 4, сигнал не формируется (требуется минимум 'Умеренный' сигнал)")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -1101,6 +1148,9 @@ def calculate_tp_sl(df, price, atr, score=None):
         elif score >= 5:
             tp_mult *= 1.1
             sl_mult *= 0.9
+        elif score <= 2:  # Добавляем корректировку для слабых сигналов
+            tp_mult *= 0.8
+            sl_mult *= 1.2
     # Корректировка по волатильности
     if volatility > 0.005:
         tp_mult *= 1.3
@@ -1122,8 +1172,8 @@ def calculate_tp_sl(df, price, atr, score=None):
     last_close = price
     is_long = df['ema_fast'].iloc[-1] > df['ema_slow'].iloc[-1]
     tp, sl = None, None
-    min_dist = 0.005  # 0.5% минимум
-    max_dist = 0.05   # 5% максимум
+    min_dist = 0.004  # Уменьшаем с 0.005 до 0.004 для большего числа сигналов
+    max_dist = 0.06   # Увеличиваем с 0.05 до 0.06 для большего числа сигналов
     if is_long:
         # SL — ближайший минимум ниже цены
         lows_below = lows[lows < last_close]
@@ -1199,8 +1249,12 @@ def check_tp_sl(symbol, price, time, df):
         if price >= tp_price or price <= sl_price:
             reason = 'TP' if price >= tp_price else 'SL'
             result = 'УДАЧНО' if reason == 'TP' else 'НЕУДАЧНО'
-            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry}, выход {price}, результат: {result}"
+            pnl_pct = ((price - entry) / entry) * 100
+            
+            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry}, выход {price}, P&L: {pnl_pct:.2f}%, результат: {result}"
             asyncio.create_task(send_telegram_message(msg))
+            
+            # Записываем результат в портфель
             record_trade(symbol, 'CLOSE', price, time, side, score)
             close_trade(symbol)
             return True
@@ -1214,8 +1268,12 @@ def check_tp_sl(symbol, price, time, df):
         if price <= tp_price or price >= sl_price:
             reason = 'TP' if price <= tp_price else 'SL'
             result = 'УДАЧНО' if reason == 'TP' else 'НЕУДАЧНО'
-            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry}, выход {price}, результат: {result}"
+            pnl_pct = ((entry - price) / entry) * 100
+            
+            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry}, выход {price}, P&L: {pnl_pct:.2f}%, результат: {result}"
             asyncio.create_task(send_telegram_message(msg))
+            
+            # Записываем результат в портфель
             record_trade(symbol, 'CLOSE', price, time, side, score)
             close_trade(symbol)
             return True
@@ -1230,27 +1288,72 @@ def simple_stats():
     report = []
     total_win = 0
     total_loss = 0
+    
     for symbol, trades in virtual_portfolio.items():
         if symbol == 'open_trades':
             continue
-        # Собираем пары (открытие, закрытие)
+            
+        # Группируем сделки по парам открытие-закрытие
+        symbol_trades = []
         open_trade = None
+        
         for trade in trades:
-            if trade['action'] == 'OPEN':
-                open_trade = trade
-            elif trade['action'] == 'CLOSE' and open_trade is not None:
-                entry = float(open_trade['price'])
-                exit = float(trade['price'])
-                side = open_trade['side'].upper()
-                result = 'УДАЧНО' if (side == 'LONG' and exit > entry) or (side == 'SHORT' and exit < entry) else 'НЕУДАЧНО'
-                if result == 'УДАЧНО':
-                    total_win += 1
-                else:
-                    total_loss += 1
-                report.append(f"{symbol}: {side}, вход {entry}, выход {exit}, результат: {result}")
-                open_trade = None
-    report.append(f"\nВсего удачных: {total_win}")
-    report.append(f"Всего неудачных: {total_loss}")
+            # Проверяем, есть ли информация о типе операции
+            operation = trade.get('operation', None)
+            
+            # Если нет явного указания операции, определяем по действию (старый формат)
+            if operation is None:
+                if trade['action'] == 'BUY' and (open_trade is None or open_trade['action'] == 'SELL'):
+                    open_trade = trade
+                elif trade['action'] == 'SELL' and open_trade is not None and open_trade['action'] == 'BUY':
+                    # Закрытие long позиции
+                    symbol_trades.append((open_trade, trade))
+                    open_trade = None
+                elif trade['action'] == 'SELL' and open_trade is None:
+                    open_trade = trade
+                elif trade['action'] == 'BUY' and open_trade is not None and open_trade['action'] == 'SELL':
+                    # Закрытие short позиции
+                    symbol_trades.append((open_trade, trade))
+                    open_trade = None
+            else:
+                # Новый формат с явным указанием операции
+                if operation == 'OPEN':
+                    open_trade = trade
+                elif operation == 'CLOSE' and open_trade is not None:
+                    symbol_trades.append((open_trade, trade))
+                    open_trade = None
+        
+        # Анализируем завершенные сделки
+        for open_trade, close_trade in symbol_trades:
+            entry = float(open_trade['price'])
+            exit = float(close_trade['price'])
+            side = open_trade['side'].upper()
+            
+            # Определяем результат сделки
+            if side == 'LONG':
+                pnl = (exit - entry) / entry
+                result = 'УДАЧНО' if exit > entry else 'НЕУДАЧНО'
+            else:  # SHORT
+                pnl = (entry - exit) / entry
+                result = 'УДАЧНО' if exit < entry else 'НЕУДАЧНО'
+            
+            if result == 'УДАЧНО':
+                total_win += 1
+            else:
+                total_loss += 1
+                
+            pnl_pct = pnl * 100
+            report.append(f"{symbol}: {side}, вход {entry}, выход {exit}, P&L: {pnl_pct:.2f}%, результат: {result}")
+    
+    # Добавляем общую статистику
+    if total_win + total_loss > 0:
+        winrate = (total_win / (total_win + total_loss)) * 100
+        report.append(f"\nВсего удачных: {total_win}")
+        report.append(f"Всего неудачных: {total_loss}")
+        report.append(f"Винрейт: {winrate:.1f}%")
+    else:
+        report.append("\nНет завершённых сделок.")
+    
     return report, total_win, total_loss
 
 logging.basicConfig(level=logging.ERROR,
