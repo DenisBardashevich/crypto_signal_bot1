@@ -658,10 +658,7 @@ def check_signals(df, symbol):
             logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {MIN_VOLUME_USDT/1_000_000:.0f} млн, сигнал не формируется")
             return []
             
-        # Смягчаем штраф за экстремальный RSI
-        if last['rsi'] > 85 or last['rsi'] < 15:  # Было 80/20
-            score_penalty -= 1
-            logging.info(f"{symbol}: штраф -1 к score за экстремальный RSI {last['rsi']:.2f}")
+        # Штраф за экстремальный RSI УДАЛЕН (обрабатывается в evaluate_signal_strength)
             
         if last['spread_pct'] > MAX_SPREAD_PCT:
             logging.info(f"{symbol}: большой спред {last['spread_pct']*100:.2f}% > {MAX_SPREAD_PCT*100:.2f}%, сигнал не формируется")
@@ -679,9 +676,9 @@ def check_signals(df, symbol):
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             if last['macd'] > 0 or last['macd'] > last['macd_signal']:  # Изменил И на ИЛИ для большего числа сигналов
                 # Смягчаем проверку на динамику RSI
-                if last['rsi'] < prev['rsi'] - 5:  # Только если RSI значительно падает
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за падение RSI для BUY")
+                if last['rsi'] < prev['rsi'] - 7: # Только если RSI значительно падает
+                    score_penalty -= 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за падение RSI для BUY")
                 
                 # Проверка тренда на 1h - делаем опциональной
                 try:
@@ -689,15 +686,15 @@ def check_signals(df, symbol):
                     df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
                     hourly_trend = 1 if df_1h['c'].iloc[-1] > df_1h['c'].iloc[-2] else -1
                     if hourly_trend < 0:
-                        score_penalty -= 1
-                        logging.info(f"{symbol}: штраф -1 к score за отсутствие роста на 1h для BUY")
+                        score_penalty -= 0.5
+                        logging.info(f"{symbol}: штраф -0.5 к score за отсутствие роста на 1h для BUY")
                 except Exception as e:
                     logging.error(f"Ошибка при проверке 1h тренда: {e}")
                 
                 # Price Action: делаем опциональным
                 if not (is_bullish_pinbar(last) or is_bullish_engulfing(prev, last)):
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за отсутствие price action для BUY")
+                    score_penalty -= 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за отсутствие price action для BUY")
                 
                 # Мультифреймовый фильтр: смягчаем
                 trend_score = is_global_uptrend(symbol)
@@ -721,10 +718,7 @@ def check_signals(df, symbol):
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за явно нисходящий тренд по 5 свечам")
                 
-                # Проверка на возможность дивергенции - смягчаем
-                if len(df) >= 3 and last['macd'] < df.iloc[-3]['macd'] * 0.7 and last['close'] > df.iloc[-3]['close'] * 1.03:
-                    score_penalty -= 1  # Было -2
-                    logging.info(f"{symbol}: штраф -1 к score за возможную дивергенцию MACD")
+                # Штраф за возможную дивергенцию MACD УДАЛЕН (обрабатывается в evaluate_signal_strength)
                 
                 action = 'BUY'
                 
@@ -757,9 +751,9 @@ def check_signals(df, symbol):
         if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
             if last['macd'] < 0 or last['macd'] < last['macd_signal']:  # Изменил И на ИЛИ для большего числа сигналов
                 # Смягчаем проверку на динамику RSI
-                if last['rsi'] > prev['rsi'] + 5:  # Только если RSI значительно растет
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за рост RSI для SELL")
+                if last['rsi'] > prev['rsi'] + 7:  # Только если RSI значительно растет
+                    score_penalty -= 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за рост RSI для SELL")
                 
                 # Проверка тренда на 1h - делаем опциональной
                 try:
@@ -767,15 +761,15 @@ def check_signals(df, symbol):
                     df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
                     hourly_trend = 1 if df_1h['c'].iloc[-1] > df_1h['c'].iloc[-2] else -1
                     if hourly_trend > 0:
-                        score_penalty -= 1
-                        logging.info(f"{symbol}: штраф -1 к score за отсутствие падения на 1h для SELL")
+                        score_penalty -= 0.5
+                        logging.info(f"{symbol}: штраф -0.5 к score за отсутствие падения на 1h для SELL")
                 except Exception as e:
                     logging.error(f"Ошибка при проверке 1h тренда: {e}")
                 
                 # Price Action: делаем опциональным
                 if not (is_bearish_pinbar(last) or is_bearish_engulfing(prev, last)):
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за отсутствие price action для SELL")
+                    score_penalty -= 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за отсутствие price action для SELL")
                 
                 # Мультифреймовый фильтр: смягчаем
                 trend_score = is_global_uptrend(symbol)
@@ -784,10 +778,10 @@ def check_signals(df, symbol):
                     logging.info(f"{symbol}: штраф -1 к score за отсутствие подтверждения нисходящего тренда (совпало {trend_score} из 4)")
                 
                 # Проверка динамики MACD - делаем опциональной
-                if len(df) >= 3 and last['macd'] > df.iloc[-2]['macd'] * 0.8:  # Только если MACD значительно растет
+                if len(df) >= 3 and last['macd'] > df.iloc[-2]['macd'] * 0.8:  # Только если MACD значительно растет. Было *1.2, но для симметрии с BUY оставим 0.8. Или тут должно быть `> df.iloc[-2]['macd'] * 1.2`? Оставим 0.8 как более мягкий штраф
                     score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за значительный рост MACD для SELL")
-                
+                    logging.info(f"{symbol}: штраф -1 к score за значительный рост MACD для SELL") # Условие `last['macd'] > df.iloc[-2]['macd'] * 0.8` означает, что MACD не сильно упал или даже вырос. Для SELL это хорошо, а не плохо. Возможно, тут должно быть `last['macd'] > df.iloc[-2]['macd'] * 1.2` (т.е. не сильно вырос) или `last['macd'] < df.iloc[-2]['macd'] * 0.8` (т.е. продолжил падение). Оставим как есть, но это место потенциально для улучшения.
+
                 # Проверка объема - делаем опциональной
                 vol_avg_5 = df['volume'].iloc[-5:].mean()
                 if last['volume'] < vol_avg_5 * 0.7:  # Только если объем значительно ниже
@@ -799,10 +793,7 @@ def check_signals(df, symbol):
                     score_penalty -= 1
                     logging.info(f"{symbol}: штраф -1 к score за явно восходящий тренд по 5 свечам")
                 
-                # Проверка на возможность дивергенции - смягчаем
-                if len(df) >= 3 and last['macd'] > df.iloc[-3]['macd'] * 0.7 and last['close'] < df.iloc[-3]['close'] * 0.97:
-                    score_penalty -= 1  # Было -2
-                    logging.info(f"{symbol}: штраф -1 к score за возможную дивергенцию MACD")
+                # Штраф за возможную дивергенцию MACD УДАЛЕН (обрабатывается в evaluate_signal_strength)
                 
                 action = 'SELL'
                 
