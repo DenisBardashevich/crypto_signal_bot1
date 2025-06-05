@@ -1296,13 +1296,13 @@ logging.getLogger().addHandler(error_handler)
 
 def is_good_signal(df):
     last = df.iloc[-1]
-    if last['adx'] < 22:
+    if last['adx'] < 18:
         return False
-    if last['volume'] < df['volume'].rolling(20).mean().iloc[-1]:
+    if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.8:
         return False
-    if last['rsi'] < 40 or last['rsi'] > 60:
+    if last['rsi'] < 35 or last['rsi'] > 65:
         return False
-    if last['spread_pct'] > 0.008:
+    if last['spread_pct'] > 0.012:
         return False
     return True
 
