@@ -629,6 +629,9 @@ def check_signals(df, symbol):
     try:
         if df.empty or len(df) < 2:
             return []
+        # Новый фильтр профессионального уровня
+        if not is_good_signal(df):
+            return []
         last = df.iloc[-1]
         prev = df.iloc[-2]
         
@@ -960,11 +963,11 @@ async def main():
                 volatility = df['spread_pct'].rolling(window=20).mean().iloc[-1]  # средний спред за 20 свечей
                 
                 if not pd.isna(atr) and price > 0:
-                    tp, sl, position_size = calculate_tp_sl(df, price, atr)
-                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl, 'position_size': position_size}
+                    tp, sl = calculate_tp_sl(df, price, atr)
+                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 else:
-                    tp, sl, position_size = TP_MIN, SL_MIN, 0.03
-                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl, 'position_size': position_size}
+                    tp, sl = TP_MIN, SL_MIN
+                    adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
                 # Проверка на открытые сделки
                 if symbol in open_trades:
                     if check_tp_sl(symbol, price, time, df):
@@ -985,12 +988,12 @@ async def main():
                         if 'КУПИТЬ' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'long'):
                             score = evaluate_signal_strength(df, symbol, 'BUY')
                             record_trade(symbol, 'OPEN', price, time, 'long', score=score)
-                            open_trade(symbol, price, time, 'long', atr=atr, score=score, position_size=adaptive_targets[symbol]['position_size'])
+                            open_trade(symbol, price, time, 'long', atr=atr, score=score)
                             logging.info(f"{symbol}: LONG открыт по цене {price}")
                         if 'ПРОДАТЬ' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'short'):
                             score = evaluate_signal_strength(df, symbol, 'SELL')
                             record_trade(symbol, 'OPEN', price, time, 'short', score=score)
-                            open_trade(symbol, price, time, 'short', atr=atr, score=score, position_size=adaptive_targets[symbol]['position_size'])
+                            open_trade(symbol, price, time, 'short', atr=atr, score=score)
                             logging.info(f"{symbol}: SHORT открыт по цене {price}")
             except Exception as e:
                 error_text = f"Ошибка по {symbol}: {e}"
@@ -1115,96 +1118,31 @@ def find_support_resistance(df, window=20):
         resistance = highs.iloc[:-1][highs.iloc[:-1] > last_close].min() if (highs.iloc[:-1] > last_close).any() else None
     return support, resistance
 
-def calculate_tp_sl(df, price, atr, score=None):
+def calculate_tp_sl(df, price, atr, position_size=0.02):
     """
-    Профессиональный расчёт TP/SL:
-    - TP и SL по экстремумам последних 20 свечей (ключевые уровни)
-    - Fallback на ATR, если уровни слишком близко/далеко
-    - Ограничения по минимальному и максимальному расстоянию
-    - Корректировка по силе сигнала, волатильности и ADX
+    Профессиональный расчет TP/SL только по ATR (без экстремумов):
+    - Множители зависят от ADX
+    - RR >= 1.5
+    - Минимальный SL 0.008, TP 0.01
+    - Размер позиции задается параметром
     """
     last = df.iloc[-1]
-    volatility = df['spread_pct'].rolling(window=20).mean().iloc[-1]
-    risk_params = calculate_risk_params()
-    tp_mult = risk_params['tp_mult']
-    sl_mult = risk_params['sl_mult']
-    atr_tp = min(max(round((atr * tp_mult) / price, 4), TP_MIN), TP_MAX)
-    atr_sl = min(max(round((atr * sl_mult) / price, 4), SL_MIN), SL_MAX)
-    
-    # Корректировка по score
-    if score is not None:
-        if score >= 7:
-            tp_mult *= 1.3
-            sl_mult *= 0.8
-        elif score >= 5:
-            tp_mult *= 1.1
-            sl_mult *= 0.9
-        elif score <= 2:  # Добавляем корректировку для слабых сигналов
-            tp_mult *= 0.8
-            sl_mult *= 1.2
-    # Корректировка по волатильности
-    if volatility > 0.005:
-        tp_mult *= 1.3
-        sl_mult *= 0.9
-    elif volatility < 0.002:
-        tp_mult *= 0.9
-        sl_mult *= 1.0
-    # Корректировка по ADX
-    if last['adx'] > 30:
-        tp_mult *= 1.2
-        sl_mult *= 0.9
-    elif last['adx'] < 20:
-        tp_mult *= 0.9
-        sl_mult *= 1.1
-    
-    # --- Новый профессиональный расчёт по экстремумам ---
-    lows = df['low'].iloc[-EXTREMUM_WINDOW:]
-    highs = df['high'].iloc[-EXTREMUM_WINDOW:]
-    last_close = price
-    is_long = df['ema_fast'].iloc[-1] > df['ema_slow'].iloc[-1]
-    tp, sl = None, None
-    min_dist = 0.004  # Уменьшаем с 0.005 до 0.004 для большего числа сигналов
-    max_dist = 0.06   # Увеличиваем с 0.05 до 0.06 для большего числа сигналов
-    if is_long:
-        # SL — ближайший минимум ниже цены
-        lows_below = lows[lows < last_close]
-        nearest_min = lows_below.min() if not lows_below.empty else None
-        # TP — ближайший максимум выше цены
-        highs_above = highs[highs > last_close]
-        nearest_max = highs_above.max() if not highs_above.empty else None
-        if nearest_min:
-            sl = (last_close - nearest_min) / last_close
-        if nearest_max:
-            tp = (nearest_max - last_close) / last_close
+    adx = last['adx']
+    if adx > 30:
+        tp_mult = 2.2
+        sl_mult = 1.1
+    elif adx > 22:
+        tp_mult = 1.8
+        sl_mult = 1.0
     else:
-        # SL — ближайший максимум выше цены
-        highs_above = highs[highs > last_close]
-        nearest_max = highs_above.max() if not highs_above.empty else None
-        # TP — ближайший минимум ниже цены
-        lows_below = lows[lows < last_close]
-        nearest_min = lows_below.min() if not lows_below.empty else None
-        if nearest_max:
-            sl = (nearest_max - last_close) / last_close
-        if nearest_min:
-            tp = (last_close - nearest_min) / last_close
-    # Проверка на минимальное/максимальное расстояние
-    if tp is not None and (tp < min_dist or tp > max_dist):
-        tp = None
-    if sl is not None and (sl < min_dist or sl > max_dist):
-        sl = None
-    # Fallback на ATR если уровни не найдены или неадекватны
-    if tp is None:
-        tp = atr_tp
-    if sl is None:
-        sl = atr_sl
-    # Проверяем минимальное расстояние между TP и SL
-    if tp - sl < MIN_TP_SL_DISTANCE:
-        tp = sl + MIN_TP_SL_DISTANCE
-    # Обеспечиваем, чтобы соотношение риск/прибыль было >= 1.5
+        tp_mult = 1.5
+        sl_mult = 1.0
+    tp = max(round((atr * tp_mult) / price, 4), 0.01)
+    sl = max(round((atr * sl_mult) / price, 4), 0.008)
+    # RR >= 1.5
     if tp / sl < 1.5:
         tp = sl * 1.5
-        tp = min(tp, TP_MAX)
-    return tp, sl, risk_params['position_size']
+    return tp, sl, position_size
 
 def check_tp_sl(symbol, price, time, df):
     global adaptive_targets
@@ -1228,7 +1166,7 @@ def check_tp_sl(symbol, price, time, df):
             atr = df['atr'].iloc[-1] if 'atr' in df.columns else price * 0.01
             
         # Рассчитываем TP/SL с учетом score
-        tp, sl, _ = calculate_tp_sl(df, price, atr, score)
+        tp, sl = calculate_tp_sl(df, price, atr)
         adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
     
     # Для long
@@ -1356,6 +1294,18 @@ logging.basicConfig(level=logging.ERROR,
 error_handler = logging.FileHandler('bot_error.log', encoding='utf-8')
 error_handler.setLevel(logging.ERROR)
 logging.getLogger().addHandler(error_handler)
+
+def is_good_signal(df):
+    last = df.iloc[-1]
+    if last['adx'] < 22:
+        return False
+    if last['volume'] < df['volume'].rolling(20).mean().iloc[-1]:
+        return False
+    if last['rsi'] < 40 or last['rsi'] > 60:
+        return False
+    if last['spread_pct'] > 0.008:
+        return False
+    return True
 
 if __name__ == '__main__':
     asyncio.run(main()) 
