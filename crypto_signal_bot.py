@@ -1118,13 +1118,12 @@ def find_support_resistance(df, window=20):
         resistance = highs.iloc[:-1][highs.iloc[:-1] > last_close].min() if (highs.iloc[:-1] > last_close).any() else None
     return support, resistance
 
-def calculate_tp_sl(df, price, atr, position_size=0.02):
+def calculate_tp_sl(df, price, atr):
     """
     Профессиональный расчет TP/SL только по ATR (без экстремумов):
     - Множители зависят от ADX
     - RR >= 1.5
     - Минимальный SL 0.008, TP 0.01
-    - Размер позиции задается параметром
     """
     last = df.iloc[-1]
     adx = last['adx']
@@ -1142,7 +1141,7 @@ def calculate_tp_sl(df, price, atr, position_size=0.02):
     # RR >= 1.5
     if tp / sl < 1.5:
         tp = sl * 1.5
-    return tp, sl, position_size
+    return tp, sl
 
 def check_tp_sl(symbol, price, time, df):
     global adaptive_targets
