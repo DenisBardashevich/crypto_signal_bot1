@@ -455,17 +455,17 @@ def signal_strength_label(score):
     """
     if score >= 7:
         return 'Очень сильный', 0.95
-    elif score == 6:
+    elif score >= 6:
         return 'Сильный', 0.85
-    elif score == 5:
+    elif score >= 5:
         return 'Средний', 0.75
-    elif score == 4:
+    elif score >= 4:
         return 'Умеренный', 0.65
-    elif score == 3:
+    elif score >= 3:
         return 'Слабый', 0.55
-    elif score == 2:
+    elif score >= 2:
         return 'Очень слабый', 0.45  # Увеличил с 0.40 до 0.45
-    elif score == 1:
+    elif score >= 1:
         return 'Ненадёжный', 0.35  # Увеличил с 0.30 до 0.35
     else:
         return 'Крайне ненадёжный', 0.25  # Добавил новую категорию
