@@ -694,10 +694,10 @@ def check_signals(df, symbol):
                 except Exception as e:
                     logging.error(f"Ошибка при проверке 1h тренда: {e}")
                 
-                # Price Action: делаем опциональным
-                if not (is_bullish_pinbar(last) or is_bullish_engulfing(prev, last)):
-                    score_penalty -= 0.5
-                    logging.info(f"{symbol}: штраф -0.5 к score за отсутствие price action для BUY")
+                # Price Action: делаем опциональным, т.к. слишком сильно фильтрует
+                # if not (is_bullish_pinbar(last) or is_bullish_engulfing(prev, last)):
+                #     score_penalty -= 0.5
+                #     logging.info(f"{symbol}: штраф -0.5 к score за отсутствие price action для BUY")
                 
                 # Мультифреймовый фильтр: смягчаем
                 trend_score = is_global_uptrend(symbol)
@@ -707,14 +707,14 @@ def check_signals(df, symbol):
                 
                 # Проверка динамики MACD - делаем опциональной
                 if len(df) >= 3 and last['macd'] < df.iloc[-2]['macd'] * 0.8:  # Только если MACD значительно снижается
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за значительное снижение MACD")
+                    score_penalty -= 0.5 # Было -1
+                    logging.info(f"{symbol}: штраф -0.5 к score за значительное снижение MACD")
                 
                 # Проверка объема - делаем опциональной
                 vol_avg_5 = df['volume'].iloc[-5:].mean()
                 if last['volume'] < vol_avg_5 * 0.7:  # Только если объем значительно ниже
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за объем значительно ниже среднего за 5 свечей")
+                    score_penalty -= 0.5 # Было -1
+                    logging.info(f"{symbol}: штраф -0.5 к score за объем значительно ниже среднего за 5 свечей")
                 
                 # Учет краткосрочного тренда - делаем опциональным
                 if price_trend < -2:  # Только если явно нисходящий тренд
@@ -725,15 +725,15 @@ def check_signals(df, symbol):
                 
                 action = 'BUY'
                 
-                # Проверка на рост объема - делаем опциональной
-                if df['volume'].iloc[-1] < df['volume'].iloc[-2] * 0.6 and df['volume'].iloc[-2] < df['volume'].iloc[-3] * 0.6:
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за значительное падение объёма для BUY")
+                # Проверка на рост объема - слишком специфичный фильтр, убираем
+                # if df['volume'].iloc[-1] < df['volume'].iloc[-2] * 0.6 and df['volume'].iloc[-2] < df['volume'].iloc[-3] * 0.6:
+                #     score_penalty -= 1
+                #     logging.info(f"{symbol}: штраф -1 к score за значительное падение объёма для BUY")
                 
                 # Проверка на бычью свечу - делаем опциональной
                 if df['close'].iloc[-1] < df['open'].iloc[-1] * 0.99:  # Только если явно медвежья
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за явно медвежью свечу для BUY")
+                    score_penalty -= 0.5 # Было -1
+                    logging.info(f"{symbol}: штраф -0.5 к score за явно медвежью свечу для BUY")
                 
                 # Рассчитываем финальный score
                 score = evaluate_signal_strength(df, symbol, action) + score_penalty
@@ -769,10 +769,10 @@ def check_signals(df, symbol):
                 except Exception as e:
                     logging.error(f"Ошибка при проверке 1h тренда: {e}")
                 
-                # Price Action: делаем опциональным
-                if not (is_bearish_pinbar(last) or is_bearish_engulfing(prev, last)):
-                    score_penalty -= 0.5
-                    logging.info(f"{symbol}: штраф -0.5 к score за отсутствие price action для SELL")
+                # Price Action: делаем опциональным, т.к. слишком сильно фильтрует
+                # if not (is_bearish_pinbar(last) or is_bearish_engulfing(prev, last)):
+                #     score_penalty -= 0.5
+                #     logging.info(f"{symbol}: штраф -0.5 к score за отсутствие price action для SELL")
                 
                 # Мультифреймовый фильтр: смягчаем
                 trend_score = is_global_uptrend(symbol)
@@ -782,14 +782,14 @@ def check_signals(df, symbol):
                 
                 # Проверка динамики MACD - делаем опциональной
                 if len(df) >= 3 and last['macd'] > df.iloc[-2]['macd'] * 0.8:  # Только если MACD значительно растет. Было *1.2, но для симметрии с BUY оставим 0.8. Или тут должно быть `> df.iloc[-2]['macd'] * 1.2`? Оставим 0.8 как более мягкий штраф
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за значительный рост MACD для SELL") # Условие `last['macd'] > df.iloc[-2]['macd'] * 0.8` означает, что MACD не сильно упал или даже вырос. Для SELL это хорошо, а не плохо. Возможно, тут должно быть `last['macd'] > df.iloc[-2]['macd'] * 1.2` (т.е. не сильно вырос) или `last['macd'] < df.iloc[-2]['macd'] * 0.8` (т.е. продолжил падение). Оставим как есть, но это место потенциально для улучшения.
+                    score_penalty -= 0.5 # Было -1
+                    logging.info(f"{symbol}: штраф -0.5 к score за значительный рост MACD для SELL") # Условие `last['macd'] > df.iloc[-2]['macd'] * 0.8` означает, что MACD не сильно упал или даже вырос. Для SELL это хорошо, а не плохо. Возможно, тут должно быть `last['macd'] > df.iloc[-2]['macd'] * 1.2` (т.е. не сильно вырос) или `last['macd'] < df.iloc[-2]['macd'] * 0.8` (т.е. продолжил падение). Оставим как есть, но это место потенциально для улучшения.
 
                 # Проверка объема - делаем опциональной
                 vol_avg_5 = df['volume'].iloc[-5:].mean()
                 if last['volume'] < vol_avg_5 * 0.7:  # Только если объем значительно ниже
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за объем значительно ниже среднего за 5 свечей")
+                    score_penalty -= 0.5 # Было -1
+                    logging.info(f"{symbol}: штраф -0.5 к score за объем значительно ниже среднего за 5 свечей")
                 
                 # Учет краткосрочного тренда - делаем опциональным
                 if price_trend > 2:  # Только если явно восходящий тренд
@@ -802,8 +802,8 @@ def check_signals(df, symbol):
                 
                 # Проверка на медвежью свечу - делаем опциональной
                 if df['close'].iloc[-1] > df['open'].iloc[-1] * 1.01:  # Только если явно бычья
-                    score_penalty -= 1
-                    logging.info(f"{symbol}: штраф -1 к score за явно бычью свечу для SELL")
+                    score_penalty -= 0.5 # Было -1
+                    logging.info(f"{symbol}: штраф -0.5 к score за явно бычью свечу для SELL")
                 
                 # Рассчитываем финальный score
                 score = evaluate_signal_strength(df, symbol, action) + score_penalty
