@@ -1364,7 +1364,7 @@ def check_signals(df, symbol):
 
         # --- Шаг 2: Применение жёстких профессиональных фильтров ---
         # 2.1. Общие фильтры (ADX, спред и т.д. из config)
-        if not is_good_signal(df, symbol):
+        if not is_good_signal(df):
             return [] # is_good_signal уже логирует причину
 
         # 2.2. Фильтр по тренду: сигнал должен быть СТРОГО по тренду
