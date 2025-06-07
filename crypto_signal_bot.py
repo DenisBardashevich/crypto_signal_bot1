@@ -739,8 +739,8 @@ def check_signals(df, symbol):
                 score = evaluate_signal_strength(df, symbol, action) + score_penalty
                 
                 # Повышаем минимальный порог для формирования сигнала до 4 (65% вероятность)
-                if score < 3:  # Было < 4
-                    logging.info(f"{symbol}: score {score} < 3, сигнал не формируется (требуется минимум 'Слабый' сигнал)")
+                if score < 4:  # Было < 3
+                    logging.info(f"{symbol}: score {score} < 4, сигнал не формируется (требуется минимум 'Умеренный' сигнал)")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -809,8 +809,8 @@ def check_signals(df, symbol):
                 score = evaluate_signal_strength(df, symbol, action) + score_penalty
                 
                 # Повышаем минимальный порог для формирования сигнала до 4 (65% вероятность)
-                if score < 3:  # Было < 4
-                    logging.info(f"{symbol}: score {score} < 3, сигнал не формируется (требуется минимум 'Слабый' сигнал)")
+                if score < 4:  # Было < 3
+                    logging.info(f"{symbol}: score {score} < 4, сигнал не формируется (требуется минимум 'Умеренный' сигнал)")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
