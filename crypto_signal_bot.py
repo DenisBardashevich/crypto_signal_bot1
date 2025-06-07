@@ -420,6 +420,14 @@ def evaluate_signal_strength(df, symbol, action):
         score += 1
         logging.info(f"{symbol}: +1 балл за объем выше среднего за 5 свечей")
     
+    # 10. Price Action (паттерны свечей)
+    if action == 'BUY' and (is_bullish_pinbar(last) or is_bullish_engulfing(prev, last)):
+        score += 1
+        logging.info(f"{symbol}: +1 балл за бычий price action (пин-бар или поглощение)")
+    if action == 'SELL' and (is_bearish_pinbar(last) or is_bearish_engulfing(prev, last)):
+        score += 1
+        logging.info(f"{symbol}: +1 балл за медвежий price action (пин-бар или поглощение)")
+    
     # === ОТРИЦАТЕЛЬНЫЕ ФАКТОРЫ ===
     
     # 1. Штраф за экстремальный RSI - смягчаем
@@ -444,7 +452,26 @@ def evaluate_signal_strength(df, symbol, action):
     score = max(0, score)
     
     logging.info(f"{symbol}: Итоговая оценка силы сигнала: {score}")
-    return score
+    
+    # === ПРОСТЫЕ ГРАФИЧЕСКИЕ ПАТТЕРНЫ ===
+    pattern_name = None
+    # 11. Графические паттерны
+    if detect_double_bottom(df):
+        if action == 'BUY':
+            score += 1
+            pattern_name = 'Двойное дно'
+            logging.info(f"{symbol}: +1 балл за паттерн 'двойное дно'")
+    if detect_double_top(df):
+        if action == 'SELL':
+            score += 1
+            pattern_name = 'Двойная вершина'
+            logging.info(f"{symbol}: +1 балл за паттерн 'двойная вершина'")
+    if detect_triangle(df):
+        score += 1
+        pattern_name = 'Треугольник'
+        logging.info(f"{symbol}: +1 балл за паттерн 'треугольник'")
+    
+    return score, pattern_name
 
 def signal_strength_label(score):
     """
@@ -736,7 +763,8 @@ def check_signals(df, symbol):
                     logging.info(f"{symbol}: штраф -0.5 к score за явно медвежью свечу для BUY")
                 
                 # Рассчитываем финальный score
-                score = evaluate_signal_strength(df, symbol, action) + score_penalty
+                score, pattern_name = evaluate_signal_strength(df, symbol, action)
+                score += score_penalty
                 
                 # Повышаем минимальный порог для формирования сигнала до 4 (65% вероятность)
                 if score < 4:  # Было < 3
@@ -747,7 +775,11 @@ def check_signals(df, symbol):
                 history_percent, total = get_signal_stats(symbol, action)
                 winrate = get_score_winrate(score, action)
                 
-                signals.append(f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nADX: {last["adx"]:.1f} (сила тренда)\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вверх, MACD бычий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
+                msg = f'\U0001F4C8 Сигнал (ФЬЮЧЕРСЫ BYBIT): КУПИТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nADX: {last["adx"]:.1f} (сила тренда)\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вверх, MACD бычий.'
+                if pattern_name:
+                    msg += f"\nОбнаружен паттерн: {pattern_name}"
+                msg += f"\nWinrate: {winrate if winrate is not None else 'нет данных'}"
+                signals.append(msg)
                 logging.info(f"{symbol}: BUY сигнал сформирован (фьючерсы)")
         
         # === СИГНАЛЫ НА ПРОДАЖУ ===
@@ -806,7 +838,8 @@ def check_signals(df, symbol):
                     logging.info(f"{symbol}: штраф -0.5 к score за явно бычью свечу для SELL")
                 
                 # Рассчитываем финальный score
-                score = evaluate_signal_strength(df, symbol, action) + score_penalty
+                score, pattern_name = evaluate_signal_strength(df, symbol, action)
+                score += score_penalty
                 
                 # Повышаем минимальный порог для формирования сигнала до 4 (65% вероятность)
                 if score < 4:  # Было < 3
@@ -817,7 +850,11 @@ def check_signals(df, symbol):
                 history_percent, total = get_signal_stats(symbol, action)
                 winrate = get_score_winrate(score, action)
                 
-                signals.append(f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nADX: {last["adx"]:.1f} (сила тренда)\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вниз, MACD медвежий.\nWinrate: {winrate if winrate is not None else "нет данных"}')
+                msg = f'\U0001F4C9 Сигнал (ФЬЮЧЕРСЫ BYBIT): ПРОДАТЬ!\nСила сигнала: {label}\nОценка по графику: {strength_chance*100:.2f}%\nРекомендуемое плечо: {recommend_leverage(score, history_percent)}\nОбъём торгов: {volume_mln:.2f} млн USDT/сутки\nADX: {last["adx"]:.1f} (сила тренда)\nTP/SL указываются ниже, выставлять их на бирже!\nПричина: EMA_fast пересёк EMA_slow вниз, MACD медвежий.'
+                if pattern_name:
+                    msg += f"\nОбнаружен паттерн: {pattern_name}"
+                msg += f"\nWinrate: {winrate if winrate is not None else 'нет данных'}"
+                signals.append(msg)
                 logging.info(f"{symbol}: SELL сигнал сформирован (фьючерсы)")
         
         if last_signal_time[symbol].tzinfo is None:
@@ -1305,6 +1342,54 @@ def is_good_signal(df):
     if last['spread_pct'] > 0.012:
         return False
     return True
+
+# === ПРОСТЫЕ ГРАФИЧЕСКИЕ ПАТТЕРНЫ ===
+def detect_double_bottom(df, window=20):
+    # Двойное дно: два минимума примерно на одном уровне, между ними локальный максимум
+    lows = df['low'].iloc[-window:]
+    idx_min1 = lows.idxmin()
+    min1 = lows.min()
+    # Ищем второй минимум после первого
+    lows2 = lows[idx_min1+1:] if idx_min1+1 < len(lows) else None
+    if lows2 is not None and not lows2.empty:
+        min2 = lows2.min()
+        idx_min2 = lows2.idxmin()
+        # Минимумы должны быть близки по значению
+        if abs(min1 - min2) / min1 < 0.01:
+            # Между минимумами должен быть локальный максимум
+            between = df['high'].iloc[idx_min1+1:idx_min2] if idx_min2 > idx_min1+1 else None
+            if between is not None and not between.empty:
+                if between.max() > min1 * 1.01:
+                    return True
+    return False
+
+def detect_double_top(df, window=20):
+    # Двойная вершина: два максимума примерно на одном уровне, между ними локальный минимум
+    highs = df['high'].iloc[-window:]
+    idx_max1 = highs.idxmax()
+    max1 = highs.max()
+    highs2 = highs[idx_max1+1:] if idx_max1+1 < len(highs) else None
+    if highs2 is not None and not highs2.empty:
+        max2 = highs2.max()
+        idx_max2 = highs2.idxmax()
+        if abs(max1 - max2) / max1 < 0.01:
+            between = df['low'].iloc[idx_max1+1:idx_max2] if idx_max2 > idx_max1+1 else None
+            if between is not None and not between.empty:
+                if between.min() < max1 * 0.99:
+                    return True
+    return False
+
+def detect_triangle(df, window=20):
+    # Простейшее определение: сужающийся диапазон high и low
+    highs = df['high'].iloc[-window:]
+    lows = df['low'].iloc[-window:]
+    if highs.max() > highs.min() * 1.01 and lows.max() > lows.min() * 1.01:
+        # Проверяем, что high понижаются, а low повышаются
+        highs_trend = highs.diff().mean() < 0
+        lows_trend = lows.diff().mean() > 0
+        if highs_trend and lows_trend:
+            return True
+    return False
 
 if __name__ == '__main__':
     asyncio.run(main()) 
