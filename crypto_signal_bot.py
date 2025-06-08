@@ -325,23 +325,23 @@ def analyze(df):
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
     """Оценивает силу сигнала в баллах (score), добавляя их к базовому значению."""
-    score = 0  # Начинаем с 0, базовый score уже учтён в check_signals
+    score = 0
     pattern_name = None
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
     # 1. Сила тренда по ADX
-    if last['ADX'] > 20:
+    if last['adx'] > 20:
         score += 1
-        logging.info(f"{symbol}: +1 балл за ADX > 20 (сила тренда)")
+        logging.info(f"{symbol}: +1 балл за adx > 20 (сила тренда)")
 
     # 2. Положение RSI
-    if action == 'BUY' and last['RSI'] < 70:
+    if action == 'BUY' and last['rsi'] < 70:
         score += 1
-        logging.info(f"{symbol}: +1 балл за RSI < 70 (не в зоне перекупленности)")
-    elif action == 'SELL' and last['RSI'] > 30:
+        logging.info(f"{symbol}: +1 балл за rsi < 70 (не в зоне перекупленности)")
+    elif action == 'SELL' and last['rsi'] > 30:
         score += 1
-        logging.info(f"{symbol}: +1 балл за RSI > 30 (не в зоне перепроданности)")
+        logging.info(f"{symbol}: +1 балл за rsi > 30 (не в зоне перепроданности)")
 
     # 3. Положение цены относительно Bollinger Bands
     if 'bollinger_mid' in df.columns:
@@ -566,9 +566,6 @@ def check_signals(df, symbol):
     try:
         if df.empty or len(df) < 2:
             return []
-        # Новый фильтр профессионального уровня
-        if not is_good_signal(df):
-            return []
         last = df.iloc[-1]
         prev = df.iloc[-2]
         
@@ -676,9 +673,9 @@ def check_signals(df, symbol):
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
                 score += score_penalty
                 
-                # Повышаем минимальный порог для формирования сигнала до 4 (65% вероятность)
-                if score < 4:  # Было < 3
-                    logging.info(f"{symbol}: score {score} < 4, сигнал не формируется (требуется минимум 'Умеренный' сигнал)")
+                # Снижаем минимальный порог для формирования сигнала до 3 (было 4)
+                if score < 3:
+                    logging.info(f"{symbol}: score {score} < 3, сигнал не формируется")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -751,9 +748,9 @@ def check_signals(df, symbol):
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
                 score += score_penalty
                 
-                # Повышаем минимальный порог для формирования сигнала до 4 (65% вероятность)
-                if score < 4:  # Было < 3
-                    logging.info(f"{symbol}: score {score} < 4, сигнал не формируется (требуется минимум 'Умеренный' сигнал)")
+                # Снижаем минимальный порог для формирования сигнала до 3 (было 4)
+                if score < 3:
+                    logging.info(f"{symbol}: score {score} < 3, сигнал не формируется")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -1241,97 +1238,17 @@ error_handler = logging.FileHandler('bot_error.log', encoding='utf-8')
 error_handler.setLevel(logging.ERROR)
 logging.getLogger().addHandler(error_handler)
 
-def is_good_signal(df):
-    last = df.iloc[-1]
-    if last['adx'] < 18:
-        return False
-    if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.8:
-        return False
-    if last['rsi'] < 35 or last['rsi'] > 65:
-        return False
-    if last['spread_pct'] > 0.012:
-        return False
-    return True
+def analyze_long(df):
+    """Долгосрочный анализ: EMA50/200, MACD, RSI на дневках."""
+    df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=50)
+    df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=200)
+    df['macd'] = ta.trend.macd_diff(df['close'])
+    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
+    return df
 
-# === ПРОСТЫЕ ГРАФИЧЕСКИЕ ПАТТЕРНЫ ===
-def detect_double_bottom(df, window=20):
-    # Двойное дно: два минимума примерно на одном уровне, между ними локальный максимум
-    lows = df['low'].iloc[-window:]
-    idx_min1 = lows.idxmin()
-    min1 = lows.min()
-    # Ищем второй минимум после первого
-    lows2 = lows[idx_min1+1:] if idx_min1+1 < len(lows) else None
-    if lows2 is not None and not lows2.empty:
-        min2 = lows2.min()
-        idx_min2 = lows2.idxmin()
-        # Минимумы должны быть близки по значению
-        if abs(min1 - min2) / min1 < 0.01:
-            # Между минимумами должен быть локальный максимум
-            between = df['high'].iloc[idx_min1+1:idx_min2] if idx_min2 > idx_min1+1 else None
-            if between is not None and not between.empty:
-                if between.max() > min1 * 1.01:
-                    return True
-    return False
-
-def detect_double_top(df, window=20):
-    # Двойная вершина: два максимума примерно на одном уровне, между ними локальный минимум
-    highs = df['high'].iloc[-window:]
-    idx_max1 = highs.idxmax()
-    max1 = highs.max()
-    highs2 = highs[idx_max1+1:] if idx_max1+1 < len(highs) else None
-    if highs2 is not None and not highs2.empty:
-        max2 = highs2.max()
-        idx_max2 = highs2.idxmax()
-        if abs(max1 - max2) / max1 < 0.01:
-            between = df['low'].iloc[idx_max1+1:idx_max2] if idx_max2 > idx_max1+1 else None
-            if between is not None and not between.empty:
-                if between.min() < max1 * 0.99:
-                    return True
-    return False
-
-def detect_triangle(df, window=20):
-    # Простейшее определение: сужающийся диапазон high и low
-    highs = df['high'].iloc[-window:]
-    lows = df['low'].iloc[-window:]
-    if highs.max() > highs.min() * 1.01 and lows.max() > lows.min() * 1.01:
-        # Проверяем, что high понижаются, а low повышаются
-        highs_trend = highs.diff().mean() < 0
-        lows_trend = lows.diff().mean() > 0
-        if highs_trend and lows_trend:
-            return True
-    return False
-
-# Новые вспомогательные функции
-def check_trend(df, window=20):
-    """Определяет основной тренд на основе EMA(50) и EMA(100)."""
-    ema_medium = ta.trend.ema_indicator(df['close'], window=50)
-    ema_long = ta.trend.ema_indicator(df['close'], window=100)
-    
-    if ema_medium is None or ema_long is None or len(ema_medium) < 2 or len(ema_long) < 2:
-        return False, "неопределён"
-        
-    last_medium = ema_medium.iloc[-1]
-    last_long = ema_long.iloc[-1]
-    
-    is_uptrend = last_medium > last_long
-    
-    # Сила тренда (просто для информации)
-    strength = abs(last_medium - last_long) / last_long * 100
-    
-    return is_uptrend, f"{'UP' if is_uptrend else 'DOWN'} ({strength:.2f}%)"
-
-# Глобальный словарь для отслеживания времени последнего сигнала
-last_signal_times = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
-SIGNAL_COOLDOWN_MINUTES = 15 # Кулдаун 15 минут
-
-def set_cooldown(key):
-    """Устанавливает время последнего сигнала для ключа."""
-    last_signal_times[key] = datetime.now(timezone.utc)
-
-def is_on_cooldown(key):
-    """Проверяет, не находится ли сигнал на кулдауне."""
-    last_time = last_signal_times[key]
-    return datetime.now(timezone.utc) - last_time < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES)
+if __name__ == '__main__':
+    asyncio.run(main()) 
 
 
 def check_signals(df, symbol):
@@ -1399,8 +1316,8 @@ def check_signals(df, symbol):
         logging.info(f"{symbol}: Итоговый score для {action} = {final_score} (база: {base_score}, доп: {additional_score}, штраф: {score_penalty})")
 
         # Финальная проверка по порогу score
-        if final_score < 4:
-            logging.info(f"{symbol}: Итоговый score {final_score} < 4, сигнал не формируется.")
+        if final_score < 3:
+            logging.info(f"{symbol}: Итоговый score {final_score} < 3, сигнал не формируется.")
             return []
 
         # --- Шаг 4: Формирование и отправка сигнала ---
