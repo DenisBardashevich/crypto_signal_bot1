@@ -322,6 +322,66 @@ def analyze(df):
         logging.error(f"Ошибка в анализе данных: {e}")
         return pd.DataFrame()
 
+# === ПРОСТЫЕ ГРАФИЧЕСКИЕ ПАТТЕРНЫ ===
+def detect_double_bottom(df, window=20):
+    # Двойное дно: два минимума примерно на одном уровне, между ними локальный максимум
+    lows = df['low'].iloc[-window:]
+    if len(lows) < window: return False
+    idx_min1 = lows.idxmin()
+    min1 = lows.min()
+    # Ищем второй минимум после первого
+    lows2 = lows.iloc[lows.index.get_loc(idx_min1)+1:] if idx_min1+1 < len(df.index) else None
+    if lows2 is not None and not lows2.empty:
+        min2 = lows2.min()
+        idx_min2 = lows2.idxmin()
+        # Минимумы должны быть близки по значению
+        if abs(min1 - min2) / min1 < 0.01:
+            # Между минимумами должен быть локальный максимум
+            between = df['high'].loc[idx_min1+1:idx_min2] if idx_min2 > idx_min1+1 else None
+            if between is not None and not between.empty:
+                if between.max() > min1 * 1.01:
+                    return True
+    return False
+
+def detect_double_top(df, window=20):
+    # Двойная вершина: два максимума примерно на одном уровне, между ними локальный минимум
+    highs = df['high'].iloc[-window:]
+    if len(highs) < window: return False
+    idx_max1 = highs.idxmax()
+    max1 = highs.max()
+    highs2 = highs.iloc[highs.index.get_loc(idx_max1)+1:] if idx_max1+1 < len(df.index) else None
+    if highs2 is not None and not highs2.empty:
+        max2 = highs2.max()
+        idx_max2 = highs2.idxmax()
+        if abs(max1 - max2) / max1 < 0.01:
+            between = df['low'].loc[idx_max1+1:idx_max2] if idx_max2 > idx_max1+1 else None
+            if between is not None and not between.empty:
+                if between.min() < max1 * 0.99:
+                    return True
+    return False
+
+def detect_triangle(df, window=20):
+    # Простейшее определение: сужающийся диапазон high и low
+    highs = df['high'].iloc[-window:]
+    lows = df['low'].iloc[-window:]
+    if len(highs) < window or len(lows) < window: return False
+    if highs.max() > highs.min() * 1.01 and lows.max() > lows.min() * 1.01:
+        # Проверяем, что high понижаются, а low повышаются
+        highs_trend = highs.diff().mean() < 0
+        lows_trend = lows.diff().mean() > 0
+        if highs_trend and lows_trend:
+            return True
+    return False
+
+def detect_chart_pattern(df):
+    if detect_double_bottom(df):
+        return "Двойное дно"
+    if detect_double_top(df):
+        return "Двойная вершина"
+    if detect_triangle(df):
+        return "Треугольник"
+    return None
+
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
     """Оценивает силу сигнала в баллах (score), добавляя их к базовому значению."""
@@ -1237,126 +1297,6 @@ logging.basicConfig(level=logging.ERROR,
 error_handler = logging.FileHandler('bot_error.log', encoding='utf-8')
 error_handler.setLevel(logging.ERROR)
 logging.getLogger().addHandler(error_handler)
-
-def analyze_long(df):
-    """Долгосрочный анализ: EMA50/200, MACD, RSI на дневках."""
-    df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=50)
-    df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=200)
-    df['macd'] = ta.trend.macd_diff(df['close'])
-    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
-    return df
-
-if __name__ == '__main__':
-    asyncio.run(main()) 
-
-
-def check_signals(df, symbol):
-    """
-    Основная функция проверки и формирования сигналов.
-    Работает в 4 этапа:
-    1. Определение базового сигнала (BUY/SELL).
-    2. Применение жёстких фильтров (тренд, объём, кулдаун и т.д.).
-    3. Оценка силы сигнала (score).
-    4. Формирование и отправка сообщения.
-    """
-    try:
-        signals = []
-        last = df.iloc[-1]
-        prev = df.iloc[-2]
-
-        # --- Шаг 1: Определение базового торгового сигнала ---
-        action = None
-        # Условие для покупки: пересечение EMA вверх + подтверждение MACD
-        if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow'] and last['macd'] > last['macd_signal']:
-            action = 'BUY'
-        # Условие для продажи: пересечение EMA вниз + подтверждение MACD
-        elif prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow'] and last['macd'] < last['macd_signal']:
-            action = 'SELL'
-
-        if not action:
-            return [] # Если нет базового пересечения EMA, выходим
-
-        logging.info(f"{symbol}: Обнаружен базовый сигнал {action} по пересечению EMA/MACD.")
-
-        # --- Шаг 2: Применение жёстких профессиональных фильтров ---
-        # 2.1. Общие фильтры (ADX, спред и т.д. из config)
-        if not is_good_signal(df):
-            return [] # is_good_signal уже логирует причину
-
-        # 2.2. Фильтр по тренду: сигнал должен быть СТРОГО по тренду
-        is_uptrend, trend_strength_info = check_trend(df)
-        if (action == 'BUY' and not is_uptrend) or (action == 'SELL' and is_uptrend):
-            logging.info(f"{symbol}: Сигнал {action} отменён, т.к. он против основного тренда (Тренд: {trend_strength_info}).")
-            return []
-        logging.info(f"{symbol}: ✓ Фильтр по тренду пройден.")
-
-        # 2.3. Фильтр по объёму: объём должен подтверждать движение
-        if last['volume'] < last['volume_MA']:
-            logging.info(f"{symbol}: Сигнал {action} отменён, т.к. объём ({last['volume']:.2f}) ниже среднего ({last['volume_MA']:.2f}).")
-            return []
-        logging.info(f"{symbol}: ✓ Фильтр по объёму пройден.")
-
-        # 2.4. Фильтр кулдауна: не спамим сигналами по одной монете
-        cooldown_key = f"{symbol}_{action}"
-        if is_on_cooldown(cooldown_key):
-            logging.info(f"Символ {symbol} находится на кулдауне для действия {action}")
-            return []
-        logging.info(f"{symbol}: ✓ Фильтр кулдауна пройден.")
-
-
-        # --- Шаг 3: Оценка силы сигнала и принятие решения ---
-        # Базовый score за выполнение основных условий (пересечение EMA/MACD + фильтры)
-        base_score = 2
-        additional_score, pattern_name = evaluate_signal_strength(df, symbol, action)
-        score_penalty = get_signal_penalty(symbol, action)
-
-        final_score = base_score + additional_score + score_penalty
-
-        logging.info(f"{symbol}: Итоговый score для {action} = {final_score} (база: {base_score}, доп: {additional_score}, штраф: {score_penalty})")
-
-        # Финальная проверка по порогу score
-        if final_score < 3:
-            logging.info(f"{symbol}: Итоговый score {final_score} < 3, сигнал не формируется.")
-            return []
-
-        # --- Шаг 4: Формирование и отправка сигнала ---
-        label, strength_chance = signal_strength_label(final_score)
-        history_percent, total = get_signal_stats(symbol, action)
-        winrate = get_score_winrate(final_score, action)
-        leverage = recommend_leverage(final_score, history_percent)
-        
-        volume_24h_usdt = last.get('quoteVolume', 0)
-        volume_mln = volume_24h_usdt / 1_000_000 if volume_24h_usdt else (last['volume'] * last['close'] / 1_000_000)
-
-        action_rus = "КУПИТЬ" if action == "BUY" else "ПРОДАТЬ"
-        emoji = "\U0001F4C8" if action == "BUY" else "\U0001F4C9"
-
-        msg = (
-            f'{emoji} Сигнал (ФЬЮЧЕРСЫ BYBIT): {action_rus}!\n'
-            f'Сила сигнала: {label}\n'
-            f'Оценка по графику: {strength_chance*100:.2f}%\n'
-            f'Рекомендуемое плечо: {leverage}\n'
-            f'Объём торгов: {volume_mln:.2f} млн USDT/сутки\n'
-            f'ADX: {last["adx"]:.1f} (сила тренда)\n'
-            'TP/SL указываются ниже, выставлять их на бирже!\n'
-            f'Причина: EMA_fast пересёк EMA_slow {"вверх" if action == "BUY" else "вниз"}, MACD {"бычий" if action == "BUY" else "медвежий"}.'
-        )
-        if pattern_name:
-            msg += f"\nОбнаружен паттерн: {pattern_name}"
-        msg += f"\nWinrate: {winrate if winrate is not None else 'нет данных'}"
-
-        signals.append(msg)
-        logging.info(f"{symbol}: {action} сигнал сформирован (фьючерсы)")
-
-        set_cooldown(cooldown_key)
-        return signals
-
-    except Exception as e:
-        logging.error(f"Ошибка при проверке сигналов для {symbol}: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
-        return []
 
 def analyze_long(df):
     """Долгосрочный анализ: EMA50/200, MACD, RSI на дневках."""
