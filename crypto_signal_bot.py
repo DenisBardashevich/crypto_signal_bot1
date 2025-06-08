@@ -733,8 +733,8 @@ def check_signals(df, symbol):
                 logging.info(f"{symbol}: низкий относительный объём {last['volume_ratio']:.2f} < {VOLUME_SPIKE_MULT}, сигнал не формируется")
                 return []
             
-            # Дополнительная проверка для 15м на основе z-score объема
-            if 'volume_z_score' in last and abs(last['volume_z_score']) < 0.8:
+            # Дополнительная проверка для 15м на основе z-score объема (смягчена)
+            if 'volume_z_score' in last and abs(last['volume_z_score']) < 0.5:  # Снижено с 0.8
                 logging.info(f"{symbol}: недостаточный z-score объема {last['volume_z_score']:.2f}, сигнал не формируется")
                 return []
         
