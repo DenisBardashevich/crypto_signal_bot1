@@ -845,21 +845,15 @@ def check_signals(df, symbol):
                 if 'vwap' in last:
                     # Для BUY
                     if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-                        if last['close'] < last['vwap'] * 0.995:
-                            logging.info(f"{symbol}: close < VWAP, сигнал не формируется (VWAP фильтр)")
-                            return []
-                        elif last['close'] < last['vwap'] * 1.002:
+                        if last['close'] < last['vwap'] * 1.002:
                             vwap_penalty -= 0.5
-                            logging.info(f"{symbol}: close чуть ниже VWAP, штраф -0.5 к score (VWAP фильтр)")
+                            logging.info(f"{symbol}: close ниже VWAP, штраф -0.5 к score (VWAP фильтр)")
                 
                 # === Гибкий фильтр по стохастику ===
                 if 'stoch_k' in last and 'stoch_d' in last:
                     # Для BUY
                     if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-                        if last['stoch_k'] > 80:
-                            logging.info(f"{symbol}: stoch_k > 80, сигнал не формируется (Stochastic фильтр)")
-                            return []
-                        elif last['stoch_k'] > 60:
+                        if last['stoch_k'] > 60:
                             stoch_penalty -= 0.5
                             logging.info(f"{symbol}: stoch_k > 60, штраф -0.5 к score (Stochastic фильтр)")
                 
@@ -867,9 +861,9 @@ def check_signals(df, symbol):
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
                 score += score_penalty + vwap_penalty + stoch_penalty
                 
-                # Снижаем минимальный порог для формирования сигнала до 3 (было 4)
-                if score < 3:
-                    logging.info(f"{symbol}: score {score} < 3, сигнал не формируется")
+                # Снижаем минимальный порог для формирования сигнала до 2.5 (было 3)
+                if score < 2.5:
+                    logging.info(f"{symbol}: score {score} < 2.5, сигнал не формируется")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -942,21 +936,15 @@ def check_signals(df, symbol):
                 if 'vwap' in last:
                     # Для SELL
                     if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-                        if last['close'] > last['vwap'] * 1.005:
-                            logging.info(f"{symbol}: close > VWAP, сигнал не формируется (VWAP фильтр)")
-                            return []
-                        elif last['close'] > last['vwap'] * 0.998:
+                        if last['close'] > last['vwap'] * 0.998:
                             vwap_penalty -= 0.5
-                            logging.info(f"{symbol}: close чуть выше VWAP, штраф -0.5 к score (VWAP фильтр)")
+                            logging.info(f"{symbol}: close выше VWAP, штраф -0.5 к score (VWAP фильтр)")
                 
                 # === Гибкий фильтр по стохастику ===
                 if 'stoch_k' in last and 'stoch_d' in last:
                     # Для SELL
                     if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-                        if last['stoch_k'] < 20:
-                            logging.info(f"{symbol}: stoch_k < 20, сигнал не формируется (Stochastic фильтр)")
-                            return []
-                        elif last['stoch_k'] < 40:
+                        if last['stoch_k'] < 40:
                             stoch_penalty -= 0.5
                             logging.info(f"{symbol}: stoch_k < 40, штраф -0.5 к score (Stochastic фильтр)")
                 
@@ -964,9 +952,9 @@ def check_signals(df, symbol):
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
                 score += score_penalty + vwap_penalty + stoch_penalty
                 
-                # Снижаем минимальный порог для формирования сигнала до 3 (было 4)
-                if score < 3:
-                    logging.info(f"{symbol}: score {score} < 3, сигнал не формируется")
+                # Снижаем минимальный порог для формирования сигнала до 2.5 (было 3)
+                if score < 2.5:
+                    logging.info(f"{symbol}: score {score} < 2.5, сигнал не формируется")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
