@@ -274,7 +274,7 @@ def get_ohlcv(symbol):
     return pd.DataFrame()  # Возвращаем пустой DataFrame после всех попыток
 
 def analyze(df):
-    """Анализ по индикаторам: EMA, MACD, ATR (15m), RSI, ADX, Bollinger Bands, Volume."""
+    """Анализ по индикаторам: EMA, MACD, ATR (15m), RSI, ADX, Bollinger Bands, Volume, VWAP, Stochastic."""
     try:
         if df.empty or len(df) < MA_SLOW:
             return pd.DataFrame()
@@ -333,6 +333,17 @@ def analyze(df):
         if len(df) < 2:  # Проверяем, что осталось достаточно данных
             return pd.DataFrame()
             
+        # === VWAP ===
+        df['cum_vol'] = df['volume'].cumsum()
+        df['cum_vol_price'] = (df['close'] * df['volume']).cumsum()
+        df['vwap'] = df['cum_vol_price'] / df['cum_vol']
+
+        # === Stochastic Oscillator ===
+        stoch_k = ta.momentum.stoch(df['high'], df['low'], df['close'], window=14, smooth_window=3)
+        stoch_d = ta.momentum.stoch_signal(df['high'], df['low'], df['close'], window=14, smooth_window=3)
+        df['stoch_k'] = stoch_k
+        df['stoch_d'] = stoch_d
+        
         return df
     except Exception as e:
         logging.error(f"Ошибка в анализе данных: {e}")
@@ -400,7 +411,7 @@ def detect_chart_pattern(df):
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
-    """Оценивает силу сигнала в баллах (score) для 15-минутного таймфрейма."""
+    """Оценивает силу сигнала в баллах (score) для 15-минутного таймфрейма, теперь с учётом VWAP и Stochastic."""
     score = 0
     pattern_name = None
     last = df.iloc[-1]
@@ -505,6 +516,23 @@ def evaluate_signal_strength(df, symbol, action):
         elif action == 'SELL' and last['momentum'] < -0.5:
             score += 0.5
             logging.info(f"{symbol}: +0.5 балла за отрицательный импульс {last['momentum']:.2f}%")
+
+    # 10. VWAP (цена относительно VWAP)
+    if 'vwap' in last:
+        if action == 'BUY' and last['close'] > last['vwap']:
+            score += 0.5
+            logging.info(f"{symbol}: +0.5 балла за close > VWAP")
+        elif action == 'SELL' and last['close'] < last['vwap']:
+            score += 0.5
+            logging.info(f"{symbol}: +0.5 балла за close < VWAP")
+    # 11. Стохастик (Stochastic Oscillator)
+    if 'stoch_k' in last and 'stoch_d' in last:
+        if action == 'BUY' and last['stoch_k'] < 30 and last['stoch_k'] > last['stoch_d']:
+            score += 0.5
+            logging.info(f"{symbol}: +0.5 балла за стохастик (k < 30 и k > d)")
+        elif action == 'SELL' and last['stoch_k'] > 70 and last['stoch_k'] < last['stoch_d']:
+            score += 0.5
+            logging.info(f"{symbol}: +0.5 балла за стохастик (k > 70 и k < d)")
 
     return score, pattern_name
 
@@ -701,6 +729,8 @@ def check_signals(df, symbol):
             
         signals = []
         score_penalty = 0
+        vwap_penalty = 0
+        stoch_penalty = 0
         
         # === Фильтр по BTC ADX для альтов ===
         # Смягчаем фильтр по BTC ADX для увеличения числа сигналов
@@ -811,9 +841,31 @@ def check_signals(df, symbol):
                     score_penalty -= 0.5 # Было -1
                     logging.info(f"{symbol}: штраф -0.5 к score за явно медвежью свечу для BUY")
                 
+                # === Гибкий фильтр по VWAP ===
+                if 'vwap' in last:
+                    # Для BUY
+                    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+                        if last['close'] < last['vwap'] * 0.995:
+                            logging.info(f"{symbol}: close < VWAP, сигнал не формируется (VWAP фильтр)")
+                            return []
+                        elif last['close'] < last['vwap'] * 1.002:
+                            vwap_penalty -= 0.5
+                            logging.info(f"{symbol}: close чуть ниже VWAP, штраф -0.5 к score (VWAP фильтр)")
+                
+                # === Гибкий фильтр по стохастику ===
+                if 'stoch_k' in last and 'stoch_d' in last:
+                    # Для BUY
+                    if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+                        if last['stoch_k'] > 80:
+                            logging.info(f"{symbol}: stoch_k > 80, сигнал не формируется (Stochastic фильтр)")
+                            return []
+                        elif last['stoch_k'] > 60:
+                            stoch_penalty -= 0.5
+                            logging.info(f"{symbol}: stoch_k > 60, штраф -0.5 к score (Stochastic фильтр)")
+                
                 # Рассчитываем финальный score
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
-                score += score_penalty
+                score += score_penalty + vwap_penalty + stoch_penalty
                 
                 # Снижаем минимальный порог для формирования сигнала до 3 (было 4)
                 if score < 3:
@@ -886,9 +938,31 @@ def check_signals(df, symbol):
                     score_penalty -= 0.5 # Было -1
                     logging.info(f"{symbol}: штраф -0.5 к score за явно бычью свечу для SELL")
                 
+                # === Гибкий фильтр по VWAP ===
+                if 'vwap' in last:
+                    # Для SELL
+                    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+                        if last['close'] > last['vwap'] * 1.005:
+                            logging.info(f"{symbol}: close > VWAP, сигнал не формируется (VWAP фильтр)")
+                            return []
+                        elif last['close'] > last['vwap'] * 0.998:
+                            vwap_penalty -= 0.5
+                            logging.info(f"{symbol}: close чуть выше VWAP, штраф -0.5 к score (VWAP фильтр)")
+                
+                # === Гибкий фильтр по стохастику ===
+                if 'stoch_k' in last and 'stoch_d' in last:
+                    # Для SELL
+                    if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+                        if last['stoch_k'] < 20:
+                            logging.info(f"{symbol}: stoch_k < 20, сигнал не формируется (Stochastic фильтр)")
+                            return []
+                        elif last['stoch_k'] < 40:
+                            stoch_penalty -= 0.5
+                            logging.info(f"{symbol}: stoch_k < 40, штраф -0.5 к score (Stochastic фильтр)")
+                
                 # Рассчитываем финальный score
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
-                score += score_penalty
+                score += score_penalty + vwap_penalty + stoch_penalty
                 
                 # Снижаем минимальный порог для формирования сигнала до 3 (было 4)
                 if score < 3:
