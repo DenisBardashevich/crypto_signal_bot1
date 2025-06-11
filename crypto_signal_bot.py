@@ -904,11 +904,10 @@ def check_signals(df, symbol):
         stoch_penalty = 0
         
         # === Фильтр по BTC ADX для альтов ===
-        # Еще больше смягчаем фильтр по BTC ADX для увеличения числа сигналов
         if symbol != 'BTC/USDT:USDT':
             btc_adx = get_btc_adx()
-            if btc_adx < 8:  # Уменьшаем с 12 до 8
-                logging.info(f"{symbol}: BTC ADX {btc_adx:.2f} < 8, сигналы по альтам не формируются")
+            if btc_adx < 10:  # Увеличиваем с 8 до 10
+                logging.info(f"{symbol}: BTC ADX {btc_adx:.2f} < 10, сигналы по альтам не формируются")
                 return []
                 
         # === БАЗОВЫЕ ФИЛЬТРЫ ===
@@ -930,15 +929,15 @@ def check_signals(df, symbol):
             
         # Фильтр по объему для 15м - делаем более гибким
         if USE_VOLUME_FILTER:
-            if last['volume_ratio'] < VOLUME_SPIKE_MULT and last['volume'] < df['volume'].rolling(10).mean().iloc[-1] * 0.5:
+            if last['volume_ratio'] < VOLUME_SPIKE_MULT and last['volume'] < df['volume'].rolling(10).mean().iloc[-1] * 0.6:  # Увеличиваем с 0.5 до 0.6
                 logging.info(f"{symbol}: низкий относительный объём {last['volume_ratio']:.2f} < {VOLUME_SPIKE_MULT}, сигнал не формируется")
                 return []
             
             # Проверка z-score объема - делаем еще более гибкой
-            if 'volume_z_score' in last and abs(last['volume_z_score']) < 0.3:  # Снижено с 0.5
+            if 'volume_z_score' in last and abs(last['volume_z_score']) < 0.4:  # Увеличиваем с 0.3 до 0.4
                 # Но если сильное движение цены, все равно рассматриваем
                 price_move = abs(last['close'] - last['open']) / last['open']
-                if price_move < 0.003:  # Только если нет значительного движения цены
+                if price_move < 0.004:  # Увеличиваем с 0.003 до 0.004
                     logging.info(f"{symbol}: недостаточный z-score объема {last['volume_z_score']:.2f}, сигнал не формируется")
                     return []
         
@@ -960,86 +959,90 @@ def check_signals(df, symbol):
             avg_bb_width = df['bb_width'].rolling(20).mean().iloc[-1]
             
             # Если текущая ширина значительно выше средней, это может указывать на чрезмерную волатильность
-            if last['bb_width'] > avg_bb_width * 2 and last['bb_width'] > MAX_BB_WIDTH:
-                logging.info(f"{symbol}: чрезмерная волатильность BB {last['bb_width']:.3f} > {avg_bb_width*2:.3f}, сигнал не формируется")
+            if last['bb_width'] > avg_bb_width * 1.8 and last['bb_width'] > MAX_BB_WIDTH:  # Уменьшаем с 2 до 1.8
+                logging.info(f"{symbol}: чрезмерная волатильность BB {last['bb_width']:.3f} > {avg_bb_width*1.8:.3f}, сигнал не формируется")
                 return []
             
         # Проверка на тренд по 5 свечам - для контекста
         price_trend = sum(1 if df['close'].iloc[i] > df['close'].iloc[i-1] else -1 for i in range(-5, 0))
+        
+        # Проверка подтверждения старшим таймфреймом (1h)
+        try:
+            ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=10)
+            df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+            # Определяем направление 1h тренда
+            hourly_trend = 1 if df_1h['c'].iloc[-1] > df_1h['c'].iloc[-3] else -1
+        except Exception as e:
+            logging.error(f"Ошибка при проверке 1h тренда: {e}")
+            hourly_trend = 0  # Нейтральный если не удалось получить данные
             
         # === СИГНАЛЫ НА ПОКУПКУ ===
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             # Смягчаем требование на MACD
             macd_mean = df['macd'].rolling(3).mean().iloc[-1] if len(df) >= 3 else 0
             if last['macd'] > macd_mean or last['macd'] > last['macd_signal']:
+                # Дополнительная проверка направления тренда на 1h для BUY
+                if hourly_trend < 0:  # Противоположный тренд на 1h
+                    score_penalty -= 0.5  # Увеличиваем штраф с 0.3 до 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за противоположный тренд на 1h для BUY")
+                
                 # Смягчаем проверку на динамику RSI
                 if last['rsi'] < prev['rsi'] - 10: # Штраф только при значительном падении RSI
                     score_penalty -= 0.5
                     logging.info(f"{symbol}: штраф -0.5 к score за значительное падение RSI для BUY")
                 
-                # Проверка тренда на 1h - делаем опциональной с меньшим штрафом
-                try:
-                    ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=5)
-                    df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-                    hourly_trend = 1 if df_1h['c'].iloc[-1] > df_1h['c'].iloc[-2] else -1
-                    if hourly_trend < 0:
-                        score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                        logging.info(f"{symbol}: штраф -0.3 к score за отсутствие роста на 1h для BUY")
-                except Exception as e:
-                    logging.error(f"Ошибка при проверке 1h тренда: {e}")
-                
                 # Мультифреймовый фильтр: еще больше смягчаем
                 trend_score = is_global_uptrend(symbol)
                 if trend_score < 0.5:  # Снижаем с 1 до 0.5
-                    score_penalty -= 0.5  # Снижаем с 1 до 0.5
-                    logging.info(f"{symbol}: штраф -0.5 к score за отсутствие подтверждения тренда (совпало {trend_score} из 4)")
+                    score_penalty -= 0.7  # Увеличиваем с 0.5 до 0.7
+                    logging.info(f"{symbol}: штраф -0.7 к score за отсутствие подтверждения тренда (совпало {trend_score} из 4)")
                 
                 # Проверка динамики MACD - делаем еще более опциональной
                 if len(df) >= 3 and last['macd'] < df['macd'].iloc[-2] * 0.5:  # Только если MACD очень резко снижается
-                    score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                    logging.info(f"{symbol}: штраф -0.3 к score за резкое снижение MACD")
+                    score_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за резкое снижение MACD")
                 
                 # Проверка объема - делаем еще более опциональной
                 vol_avg_5 = df['volume'].iloc[-5:].mean()
                 if last['volume'] < vol_avg_5 * 0.5:  # Только если объем значительно ниже
-                    score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                    logging.info(f"{symbol}: штраф -0.3 к score за объем значительно ниже среднего за 5 свечей")
+                    score_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за объем значительно ниже среднего за 5 свечей")
                 
                 # Учет краткосрочного тренда - делаем еще более опциональным
                 if price_trend < -3:  # Только если очень явно нисходящий тренд
-                    score_penalty -= 0.5  # Снижаем с 1 до 0.5
-                    logging.info(f"{symbol}: штраф -0.5 к score за очень явно нисходящий тренд по 5 свечам")
+                    score_penalty -= 0.7  # Увеличиваем с 0.5 до 0.7
+                    logging.info(f"{symbol}: штраф -0.7 к score за очень явно нисходящий тренд по 5 свечам")
                 
                 action = 'BUY'
                 
                 # Проверка на бычью свечу - делаем еще более опциональной
                 if df['close'].iloc[-1] < df['open'].iloc[-1] * 0.985:  # Только если явно медвежья с большим телом
-                    score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                    logging.info(f"{symbol}: штраф -0.3 к score за явно медвежью свечу для BUY")
+                    score_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за явно медвежью свечу для BUY")
                 
                 # === Гибкий фильтр по VWAP ===
                 if 'vwap' in last:
                     # Для BUY - делаем еще более опциональным
                     if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
                         if last['close'] < last['vwap'] * 0.995:  # Только при значительном отклонении от VWAP
-                            vwap_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                            logging.info(f"{symbol}: close значительно ниже VWAP, штраф -0.3 к score (VWAP фильтр)")
+                            vwap_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                            logging.info(f"{symbol}: close значительно ниже VWAP, штраф -0.5 к score (VWAP фильтр)")
                 
                 # === Гибкий фильтр по стохастику ===
                 if 'stoch_k' in last and 'stoch_d' in last:
                     # Для BUY - делаем еще более опциональным
                     if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
                         if last['stoch_k'] > 80:  # Только при очень высоком стохастике
-                            stoch_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                            logging.info(f"{symbol}: stoch_k > 80, штраф -0.3 к score (Stochastic фильтр)")
+                            stoch_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                            logging.info(f"{symbol}: stoch_k > 80, штраф -0.5 к score (Stochastic фильтр)")
                 
                 # Рассчитываем финальный score
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
                 score += score_penalty + vwap_penalty + stoch_penalty
                 
-                # Снижаем минимальный порог для формирования сигнала до 2.0 (было 2.5)
-                if score < 2.0:
-                    logging.info(f"{symbol}: score {score} < 2.0, сигнал не формируется")
+                # Увеличиваем минимальный порог для формирования сигнала до 2.3 (было 2.0)
+                if score < 2.3:
+                    logging.info(f"{symbol}: score {score} < 2.3, сигнал не формируется")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -1062,74 +1065,68 @@ def check_signals(df, symbol):
             # Смягчаем требование на MACD
             macd_mean = df['macd'].rolling(3).mean().iloc[-1] if len(df) >= 3 else 0
             if last['macd'] < macd_mean or last['macd'] < last['macd_signal']:
+                # Дополнительная проверка направления тренда на 1h для SELL
+                if hourly_trend > 0:  # Противоположный тренд на 1h
+                    score_penalty -= 0.5  # Увеличиваем штраф с 0.3 до 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за противоположный тренд на 1h для SELL")
+                
                 # Смягчаем проверку на динамику RSI
                 if last['rsi'] > prev['rsi'] + 10:  # Штраф только при значительном росте RSI
                     score_penalty -= 0.5
                     logging.info(f"{symbol}: штраф -0.5 к score за значительный рост RSI для SELL")
                 
-                # Проверка тренда на 1h - делаем опциональной с меньшим штрафом
-                try:
-                    ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=5)
-                    df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-                    hourly_trend = 1 if df_1h['c'].iloc[-1] > df_1h['c'].iloc[-2] else -1
-                    if hourly_trend > 0:
-                        score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                        logging.info(f"{symbol}: штраф -0.3 к score за отсутствие падения на 1h для SELL")
-                except Exception as e:
-                    logging.error(f"Ошибка при проверке 1h тренда: {e}")
-                
                 # Мультифреймовый фильтр: еще больше смягчаем
                 trend_score = is_global_uptrend(symbol)
                 if trend_score > 3.5:  # Увеличиваем с 3 до 3.5
-                    score_penalty -= 0.5  # Снижаем с 1 до 0.5
-                    logging.info(f"{symbol}: штраф -0.5 к score за отсутствие подтверждения нисходящего тренда (совпало {trend_score} из 4)")
+                    score_penalty -= 0.7  # Увеличиваем с 0.5 до 0.7
+                    logging.info(f"{symbol}: штраф -0.7 к score за отсутствие подтверждения нисходящего тренда (совпало {trend_score} из 4)")
                 
                 # Проверка динамики MACD - делаем еще более опциональной
                 if len(df) >= 3 and last['macd'] > df['macd'].iloc[-2] * 1.5:  # Только если MACD очень резко растет
-                    score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                    logging.info(f"{symbol}: штраф -0.3 к score за резкий рост MACD для SELL")
+                    score_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за резкий рост MACD для SELL")
 
                 # Проверка объема - делаем еще более опциональной
                 vol_avg_5 = df['volume'].iloc[-5:].mean()
                 if last['volume'] < vol_avg_5 * 0.5:  # Только если объем значительно ниже
-                    score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                    logging.info(f"{symbol}: штраф -0.3 к score за объем значительно ниже среднего за 5 свечей")
+                    score_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за объем значительно ниже среднего за 5 свечей")
                 
                 # Учет краткосрочного тренда - делаем еще более опциональным
                 if price_trend > 3:  # Только если очень явно восходящий тренд
-                    score_penalty -= 0.5  # Снижаем с 1 до 0.5
-                    logging.info(f"{symbol}: штраф -0.5 к score за очень явно восходящий тренд по 5 свечам")
+                    score_penalty -= 0.7  # Увеличиваем с 0.5 до 0.7
+                    logging.info(f"{symbol}: штраф -0.7 к score за очень явно восходящий тренд по 5 свечам")
                 
                 action = 'SELL'
                 
                 # Проверка на медвежью свечу - делаем еще более опциональной
                 if df['close'].iloc[-1] > df['open'].iloc[-1] * 1.015:  # Только если явно бычья с большим телом
-                    score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                    logging.info(f"{symbol}: штраф -0.3 к score за явно бычью свечу для SELL")
+                    score_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                    logging.info(f"{symbol}: штраф -0.5 к score за явно бычью свечу для SELL")
                 
                 # === Гибкий фильтр по VWAP ===
                 if 'vwap' in last:
                     # Для SELL - делаем еще более опциональным
                     if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
                         if last['close'] > last['vwap'] * 1.005:  # Только при значительном отклонении от VWAP
-                            vwap_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                            logging.info(f"{symbol}: close значительно выше VWAP, штраф -0.3 к score (VWAP фильтр)")
+                            vwap_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                            logging.info(f"{symbol}: close значительно выше VWAP, штраф -0.5 к score (VWAP фильтр)")
                 
                 # === Гибкий фильтр по стохастику ===
                 if 'stoch_k' in last and 'stoch_d' in last:
                     # Для SELL - делаем еще более опциональным
                     if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
                         if last['stoch_k'] < 20:  # Только при очень низком стохастике
-                            stoch_penalty -= 0.3  # Снижаем с 0.5 до 0.3
-                            logging.info(f"{symbol}: stoch_k < 20, штраф -0.3 к score (Stochastic фильтр)")
+                            stoch_penalty -= 0.5  # Увеличиваем с 0.3 до 0.5
+                            logging.info(f"{symbol}: stoch_k < 20, штраф -0.5 к score (Stochastic фильтр)")
                 
                 # Рассчитываем финальный score
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
                 score += score_penalty + vwap_penalty + stoch_penalty
                 
-                # Снижаем минимальный порог для формирования сигнала до 2.0 (было 2.5)
-                if score < 2.0:
-                    logging.info(f"{symbol}: score {score} < 2.0, сигнал не формируется")
+                # Увеличиваем минимальный порог для формирования сигнала до 2.3 (было 2.0)
+                if score < 2.3:
+                    logging.info(f"{symbol}: score {score} < 2.3, сигнал не формируется")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -1166,13 +1163,13 @@ def calculate_rr_ratio(score):
     Возвращает значение для отображения в формате "1:X" где X - это TP/SL
     """
     if score >= 6:
-        return 3.0  # Высокая вероятность успеха - можно использовать большее соотношение
+        return 3.5  # Увеличиваем с 3.0 до 3.5 для очень сильных сигналов
     elif score >= 4:
-        return 2.5  # Средняя вероятность успеха
-    elif score >= 2:
-        return 2.0  # Низкая вероятность успеха - лучше использовать меньшее соотношение
+        return 3.0  # Увеличиваем с 2.5 до 3.0 для средне-сильных сигналов
+    elif score >= 2.3:  # Увеличиваем с 2.0 до 2.3
+        return 2.5  # Увеличиваем с 2.0 до 2.5
     else:
-        return 1.5  # Очень низкая вероятность - минимальное соотношение
+        return 2.0  # Увеличиваем с 1.5 до 2.0 - базовый минимум
 
 def analyze_long(df):
     """Долгосрочный анализ: EMA50/200, MACD, RSI на дневках."""
