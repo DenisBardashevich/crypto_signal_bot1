@@ -454,25 +454,30 @@ def evaluate_signal_strength(df, symbol, action):
             logging.info(f"{symbol}: +0.5 балла за rsi: {last['rsi']:.1f}")
 
     # 3. Положение цены относительно Bollinger Bands - улучшено для 15м
-    if 'bollinger_mid' in df.columns:
+    if 'bollinger_mid' in df.columns and 'bollinger_high' in df.columns and 'bollinger_low' in df.columns:
+        bb_mid = last['bollinger_mid']
+        bb_high = last['bollinger_high']
+        bb_low = last['bollinger_low']
+        close = last['close']
+        
         if action == 'BUY':
-            if last['close'] > last['bollinger_mid'] and last['close'] < (last['bollinger_high'] + last['bollinger_mid'])/2:
+            if close > bb_mid and close < (bb_high + bb_mid)/2:
                 score += 1
                 logging.info(f"{symbol}: +1 балл за положение цены между серединой и верхней BB")
-            elif last['close'] < last['bollinger_mid'] and last['close'] > (last['bollinger_low'] + last['bollinger_mid'])/2:
+            elif close < bb_mid and close > (bb_low + bb_mid)/2:
                 score += 0.5
                 logging.info(f"{symbol}: +0.5 балла за положение цены между серединой и нижней BB")
-            elif last['close'] < last['bollinger_low'] * 1.01:  # Цена у нижней границы или ниже
+            elif close < bb_low * 1.01:  # Цена у нижней границы или ниже
                 score += 1.5
                 logging.info(f"{symbol}: +1.5 балла за положение цены у/ниже нижней границы BB (сильная перепроданность)")
         elif action == 'SELL':
-            if last['close'] < last['bollinger_mid'] and last['close'] > (last['bollinger_low'] + last['bollinger_mid'])/2:
+            if close < bb_mid and close > (bb_low + bb_mid)/2:
                 score += 1
                 logging.info(f"{symbol}: +1 балл за положение цены между серединой и нижней BB")
-            elif last['close'] > last['bollinger_mid'] and last['close'] < (last['bollinger_high'] + last['bollinger_mid'])/2:
+            elif close > bb_mid and close < (bb_high + bb_mid)/2:
                 score += 0.5
                 logging.info(f"{symbol}: +0.5 балла за положение цены между серединой и верхней BB")
-            elif last['close'] > last['bollinger_high'] * 0.99:  # Цена у верхней границы или выше
+            elif close > bb_high * 0.99:  # Цена у верхней границы или выше
                 score += 1.5
                 logging.info(f"{symbol}: +1.5 балла за положение цены у/выше верхней границы BB (сильная перекупленность)")
     
@@ -547,70 +552,88 @@ def evaluate_signal_strength(df, symbol, action):
     
     # 9. Импульс для 15-минутного таймфрейма
     if 'momentum' in last:
-        if action == 'BUY' and last['momentum'] > 0.8:
-            score += 0.8  # Увеличиваем бонус
-            logging.info(f"{symbol}: +0.8 балла за сильный положительный импульс {last['momentum']:.2f}%")
-        elif action == 'BUY' and last['momentum'] > 0.3:
-            score += 0.5
-            logging.info(f"{symbol}: +0.5 балла за положительный импульс {last['momentum']:.2f}%")
-        elif action == 'SELL' and last['momentum'] < -0.8:
-            score += 0.8  # Увеличиваем бонус
-            logging.info(f"{symbol}: +0.8 балла за сильный отрицательный импульс {last['momentum']:.2f}%")
-        elif action == 'SELL' and last['momentum'] < -0.3:
-            score += 0.5
-            logging.info(f"{symbol}: +0.5 балла за отрицательный импульс {last['momentum']:.2f}%")
+        momentum_val = last['momentum']
+        if action == 'BUY':
+            if momentum_val > 0.8:
+                score += 0.8  # Увеличиваем бонус
+                logging.info(f"{symbol}: +0.8 балла за сильный положительный импульс {momentum_val:.2f}%")
+            elif momentum_val > 0.3:
+                score += 0.5
+                logging.info(f"{symbol}: +0.5 балла за положительный импульс {momentum_val:.2f}%")
+        elif action == 'SELL':
+            if momentum_val < -0.8:
+                score += 0.8  # Увеличиваем бонус
+                logging.info(f"{symbol}: +0.8 балла за сильный отрицательный импульс {momentum_val:.2f}%")
+            elif momentum_val < -0.3:
+                score += 0.5
+                logging.info(f"{symbol}: +0.5 балла за отрицательный импульс {momentum_val:.2f}%")
 
     # 10. VWAP (цена относительно VWAP)
     if 'vwap' in last:
+        close = last['close']
+        vwap = last['vwap']
         if action == 'BUY':
-            if last['close'] > last['vwap'] * 1.005:  # Заметно выше VWAP
+            if close > vwap * 1.005:  # Заметно выше VWAP
                 score += 0.7  # Увеличиваем бонус
                 logging.info(f"{symbol}: +0.7 балла за close заметно выше VWAP")
-            elif last['close'] > last['vwap']:
+            elif close > vwap:
                 score += 0.5
                 logging.info(f"{symbol}: +0.5 балла за close > VWAP")
         elif action == 'SELL':
-            if last['close'] < last['vwap'] * 0.995:  # Заметно ниже VWAP
+            if close < vwap * 0.995:  # Заметно ниже VWAP
                 score += 0.7  # Увеличиваем бонус
                 logging.info(f"{symbol}: +0.7 балла за close заметно ниже VWAP")
-            elif last['close'] < last['vwap']:
+            elif close < vwap:
                 score += 0.5
                 logging.info(f"{symbol}: +0.5 балла за close < VWAP")
     
     # 11. Стохастик (Stochastic Oscillator)
     if 'stoch_k' in last and 'stoch_d' in last:
+        stoch_k = last['stoch_k']
+        stoch_d = last['stoch_d']
         if action == 'BUY':
-            if last['stoch_k'] < 20 and last['stoch_k'] > last['stoch_d']:
+            if stoch_k < 20 and stoch_k > stoch_d:
                 score += 1.0  # Увеличиваем бонус
                 logging.info(f"{symbol}: +1.0 балла за стохастик (k < 20 и k > d) - перепроданность")
-            elif last['stoch_k'] < 30 and last['stoch_k'] > last['stoch_d']:
+            elif stoch_k < 30 and stoch_k > stoch_d:
                 score += 0.7
                 logging.info(f"{symbol}: +0.7 балла за стохастик (k < 30 и k > d)")
         elif action == 'SELL':
-            if last['stoch_k'] > 80 and last['stoch_k'] < last['stoch_d']:
+            if stoch_k > 80 and stoch_k < stoch_d:
                 score += 1.0  # Увеличиваем бонус
                 logging.info(f"{symbol}: +1.0 балла за стохастик (k > 80 и k < d) - перекупленность")
-            elif last['stoch_k'] > 70 and last['stoch_k'] < last['stoch_d']:
+            elif stoch_k > 70 and stoch_k < stoch_d:
                 score += 0.7
                 logging.info(f"{symbol}: +0.7 балла за стохастик (k > 70 и k < d)")
     
     # 12. Проверка MACD
     if 'macd' in last and 'macd_signal' in last:
+        macd_val = last['macd']
+        macd_signal = last['macd_signal']
         # Сила MACD относительно нуля
-        if action == 'BUY' and last['macd'] > 0 and last['macd'] > last['macd_signal']:
+        if action == 'BUY' and macd_val > 0 and macd_val > macd_signal:
             score += 0.7
             logging.info(f"{symbol}: +0.7 балла за MACD > 0 и выше сигнальной линии")
-        elif action == 'SELL' and last['macd'] < 0 and last['macd'] < last['macd_signal']:
+        elif action == 'SELL' and macd_val < 0 and macd_val < macd_signal:
             score += 0.7
             logging.info(f"{symbol}: +0.7 балла за MACD < 0 и ниже сигнальной линии")
         
         # Проверка на расхождение MACD
         if len(df) >= 5:
-            # Гистограмма MACD
-            if action == 'BUY' and all(df['macd'].iloc[-i] > df['macd'].iloc[-i-1] for i in range(1, 4)):
+            # Проверяем тренд гистограммы MACD за последние 4 свечи
+            macd_trend_up = True
+            macd_trend_down = True
+            
+            for i in range(1, 4):
+                if df['macd'].iloc[-i] <= df['macd'].iloc[-i-1]:
+                    macd_trend_up = False
+                if df['macd'].iloc[-i] >= df['macd'].iloc[-i-1]:
+                    macd_trend_down = False
+            
+            if action == 'BUY' and macd_trend_up:
                 score += 0.5
                 logging.info(f"{symbol}: +0.5 балла за растущую гистограмму MACD (3 свечи подряд)")
-            elif action == 'SELL' and all(df['macd'].iloc[-i] < df['macd'].iloc[-i-1] for i in range(1, 4)):
+            elif action == 'SELL' and macd_trend_down:
                 score += 0.5
                 logging.info(f"{symbol}: +0.5 балла за падающую гистограмму MACD (3 свечи подряд)")
     
@@ -907,7 +930,7 @@ def check_signals(df, symbol):
             
         # Фильтр по объему для 15м - делаем более гибким
         if USE_VOLUME_FILTER:
-            if last['volume_ratio'] < VOLUME_SPIKE_MULT and last['volume'] < df['volume'].rolling(10).mean() * 0.5:
+            if last['volume_ratio'] < VOLUME_SPIKE_MULT and last['volume'] < df['volume'].rolling(10).mean().iloc[-1] * 0.5:
                 logging.info(f"{symbol}: низкий относительный объём {last['volume_ratio']:.2f} < {VOLUME_SPIKE_MULT}, сигнал не формируется")
                 return []
             
@@ -922,8 +945,7 @@ def check_signals(df, symbol):
         # Проверка импульса - делаем адаптивной к общей волатильности
         if 'momentum' in last:
             # Вычисляем среднюю волатильность за последние 20 свечей
-            avg_volatility = df['high'].rolling(20).max() / df['low'].rolling(20).min() - 1
-            avg_volatility = avg_volatility.iloc[-1]
+            avg_volatility = (df['high'].rolling(20).max() / df['low'].rolling(20).min() - 1).iloc[-1]
             
             # Адаптивный порог импульса, зависящий от волатильности
             adaptive_momentum = min(MIN_MOMENTUM, avg_volatility * 0.7)
@@ -948,7 +970,8 @@ def check_signals(df, symbol):
         # === СИГНАЛЫ НА ПОКУПКУ ===
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             # Смягчаем требование на MACD
-            if last['macd'] > last['macd'].rolling(3).mean() or last['macd'] > last['macd_signal']:
+            macd_mean = df['macd'].rolling(3).mean().iloc[-1] if len(df) >= 3 else 0
+            if last['macd'] > macd_mean or last['macd'] > last['macd_signal']:
                 # Смягчаем проверку на динамику RSI
                 if last['rsi'] < prev['rsi'] - 10: # Штраф только при значительном падении RSI
                     score_penalty -= 0.5
@@ -972,7 +995,7 @@ def check_signals(df, symbol):
                     logging.info(f"{symbol}: штраф -0.5 к score за отсутствие подтверждения тренда (совпало {trend_score} из 4)")
                 
                 # Проверка динамики MACD - делаем еще более опциональной
-                if len(df) >= 3 and last['macd'] < df.iloc[-2]['macd'] * 0.5:  # Только если MACD очень резко снижается
+                if len(df) >= 3 and last['macd'] < df['macd'].iloc[-2] * 0.5:  # Только если MACD очень резко снижается
                     score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
                     logging.info(f"{symbol}: штраф -0.3 к score за резкое снижение MACD")
                 
@@ -1037,7 +1060,8 @@ def check_signals(df, symbol):
         # === СИГНАЛЫ НА ПРОДАЖУ ===
         if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
             # Смягчаем требование на MACD
-            if last['macd'] < last['macd'].rolling(3).mean() or last['macd'] < last['macd_signal']:
+            macd_mean = df['macd'].rolling(3).mean().iloc[-1] if len(df) >= 3 else 0
+            if last['macd'] < macd_mean or last['macd'] < last['macd_signal']:
                 # Смягчаем проверку на динамику RSI
                 if last['rsi'] > prev['rsi'] + 10:  # Штраф только при значительном росте RSI
                     score_penalty -= 0.5
@@ -1061,7 +1085,7 @@ def check_signals(df, symbol):
                     logging.info(f"{symbol}: штраф -0.5 к score за отсутствие подтверждения нисходящего тренда (совпало {trend_score} из 4)")
                 
                 # Проверка динамики MACD - делаем еще более опциональной
-                if len(df) >= 3 and last['macd'] > df.iloc[-2]['macd'] * 1.5:  # Только если MACD очень резко растет
+                if len(df) >= 3 and last['macd'] > df['macd'].iloc[-2] * 1.5:  # Только если MACD очень резко растет
                     score_penalty -= 0.3  # Снижаем с 0.5 до 0.3
                     logging.info(f"{symbol}: штраф -0.3 к score за резкий рост MACD для SELL")
 
@@ -1261,7 +1285,7 @@ async def process_symbol(symbol):
         # Расчёт адаптивных целей по ATR и волатильности
         atr = df['atr'].iloc[-1]
         if not pd.isna(atr) and price > 0:
-            tp, sl = calculate_tp_sl(df, price, atr)
+            tp, sl = calculate_tp_sl(df, price, atr, symbol)
             adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
         else:
             tp, sl = TP_MIN, SL_MIN
@@ -1494,7 +1518,7 @@ def find_support_resistance(df, window=20):
         resistance = highs.iloc[:-1][highs.iloc[:-1] > last_close].min() if (highs.iloc[:-1] > last_close).any() else None
     return support, resistance
 
-def calculate_tp_sl(df, price, atr):
+def calculate_tp_sl(df, price, atr, symbol=None):
     """
     Усовершенствованный расчет TP/SL для 15-минутного таймфрейма:
     - Множители зависят от ADX, волатильности и общей силы сигнала
@@ -1511,9 +1535,12 @@ def calculate_tp_sl(df, price, atr):
     
     # Получаем данные 4h для определения общего направления тренда
     try:
-        ohlcv_4h = EXCHANGE.fetch_ohlcv(symbol, '4h', limit=5)
-        df_4h = pd.DataFrame(ohlcv_4h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-        trend_4h = 1 if df_4h['c'].iloc[-1] > df_4h['c'].iloc[-3] else -1  # Тренд по последним 3 свечам
+        if symbol:
+            ohlcv_4h = EXCHANGE.fetch_ohlcv(symbol, '4h', limit=5)
+            df_4h = pd.DataFrame(ohlcv_4h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+            trend_4h = 1 if df_4h['c'].iloc[-1] > df_4h['c'].iloc[-3] else -1  # Тренд по последним 3 свечам
+        else:
+            trend_4h = 0
     except Exception:
         trend_4h = 0  # Нейтральный если не удалось получить данные
     
@@ -1553,11 +1580,13 @@ def calculate_tp_sl(df, price, atr):
         sl_mult *= 0.8
     
     # Корректировка на основе тренда 4h
-    if trend_4h != 0:
-        # Если тренд на 4h совпадает с направлением сигнала, увеличиваем TP
-        if (trend_4h > 0 and 'side' in open_trades.get(symbol, {}) and open_trades[symbol]['side'] == 'long') or \
-           (trend_4h < 0 and 'side' in open_trades.get(symbol, {}) and open_trades[symbol]['side'] == 'short'):
-            tp_mult *= 1.2
+    if trend_4h != 0 and symbol:
+        # Проверяем, есть ли у нас открытая позиция по этой монете
+        if symbol in open_trades:
+            side = open_trades[symbol].get('side', '')
+            # Если тренд на 4h совпадает с направлением сигнала, увеличиваем TP
+            if (trend_4h > 0 and side == 'long') or (trend_4h < 0 and side == 'short'):
+                tp_mult *= 1.2
     
     # Расчет TP и SL с учетом всех факторов
     tp = min(max(round((atr * tp_mult) / price, 4), TP_MIN), TP_MAX)
@@ -1612,7 +1641,7 @@ def check_tp_sl(symbol, price, time, df):
             atr = df['atr'].iloc[-1] if 'atr' in df.columns else price * 0.01
             
         # Рассчитываем TP/SL с учетом score
-        tp, sl = calculate_tp_sl(df, price, atr)
+        tp, sl = calculate_tp_sl(df, price, atr, symbol)
         adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
     
     # Для long
