@@ -922,9 +922,9 @@ def check_signals(df, symbol):
             logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {MIN_VOLUME_USDT/1_000_000:.1f} млн, сигнал не формируется")
             return []
         
-        # Новый фильтр по объёму на 15м: не брать сигнал, если объём ниже 0.7 среднего за 20 свечей
-        if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.7:
-            logging.info(f"{symbol}: объём ниже 0.7 среднего за 20 свечей, сигнал не формируется")
+        # Новый фильтр по объёму на 15м: не брать сигнал, если объём ниже 0.6 среднего за 20 свечей
+        if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.6:
+            logging.info(f"{symbol}: объём ниже 0.6 среднего за 20 свечей, сигнал не формируется")
             return []
         
         # Проверка спреда - делаем более гибкой
@@ -934,15 +934,14 @@ def check_signals(df, symbol):
         
         # Фильтр по объему для 15м - делаем более гибким
         if USE_VOLUME_FILTER:
-            if last['volume_ratio'] < VOLUME_SPIKE_MULT and last['volume'] < df['volume'].rolling(10).mean().iloc[-1] * 0.6:  # Увеличиваем с 0.5 до 0.6
+            if last['volume_ratio'] < VOLUME_SPIKE_MULT and last['volume'] < df['volume'].rolling(10).mean().iloc[-1] * 0.6:
                 logging.info(f"{symbol}: низкий относительный объём {last['volume_ratio']:.2f} < {VOLUME_SPIKE_MULT}, сигнал не формируется")
                 return []
-            
             # Проверка z-score объема - делаем еще более гибкой
-            if 'volume_z_score' in last and abs(last['volume_z_score']) < 0.4:  # Увеличиваем с 0.3 до 0.4
+            if 'volume_z_score' in last and abs(last['volume_z_score']) < 0.25:
                 # Но если сильное движение цены, все равно рассматриваем
                 price_move = abs(last['close'] - last['open']) / last['open']
-                if price_move < 0.004:  # Увеличиваем с 0.003 до 0.004
+                if price_move < 0.004:
                     logging.info(f"{symbol}: недостаточный z-score объема {last['volume_z_score']:.2f}, сигнал не формируется")
                     return []
         
@@ -971,23 +970,19 @@ def check_signals(df, symbol):
         # Проверка на тренд по 5 свечам - для контекста
         price_trend = sum(1 if df['close'].iloc[i] > df['close'].iloc[i-1] else -1 for i in range(-5, 0))
         
-        # Новый фильтр по тренду на 1h (EMA21/EMA50)
+        # Новый фильтр по тренду на 1h (EMA21/EMA50) — теперь только штрафует score, не блокирует сигнал
+        hourly_trend = 0
         try:
             ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=50)
             df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
             df_1h['ema21'] = ta.trend.ema_indicator(df_1h['c'], 21)
             df_1h['ema50'] = ta.trend.ema_indicator(df_1h['c'], 50)
-            # Проверяем только если есть пересечение EMA_fast/EMA_slow
-            if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-                # Для BUY: не открывать, если на 1h тренд вниз
-                if df_1h['ema21'].iloc[-1] < df_1h['ema50'].iloc[-1]:
-                    logging.info(f"{symbol}: 1h тренд вниз (ema21 < ema50), не открываем лонг")
-                    return []
-            if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-                # Для SELL: не открывать, если на 1h тренд вверх
-                if df_1h['ema21'].iloc[-1] > df_1h['ema50'].iloc[-1]:
-                    logging.info(f"{symbol}: 1h тренд вверх (ema21 > ema50), не открываем шорт")
-                    return []
+            if df_1h['ema21'].iloc[-1] < df_1h['ema50'].iloc[-1]:
+                hourly_trend = -1  # тренд вниз
+            elif df_1h['ema21'].iloc[-1] > df_1h['ema50'].iloc[-1]:
+                hourly_trend = 1   # тренд вверх
+            else:
+                hourly_trend = 0
         except Exception as e:
             logging.warning(f"{symbol}: ошибка проверки тренда 1h: {e}")
         
@@ -1055,9 +1050,9 @@ def check_signals(df, symbol):
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
                 score += score_penalty + vwap_penalty + stoch_penalty
                 
-                # Увеличиваем минимальный порог для формирования сигнала до 2.3 (было 2.0)
-                if score < 2.3:
-                    logging.info(f"{symbol}: score {score} < 2.3, сигнал не формируется")
+                # Увеличиваем минимальный порог для формирования сигнала до 2.0 (было 2.3)
+                if score < 2.0:
+                    logging.info(f"{symbol}: score {score} < 2.0, сигнал не формируется")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
@@ -1139,9 +1134,9 @@ def check_signals(df, symbol):
                 score, pattern_name = evaluate_signal_strength(df, symbol, action)
                 score += score_penalty + vwap_penalty + stoch_penalty
                 
-                # Увеличиваем минимальный порог для формирования сигнала до 2.3 (было 2.0)
-                if score < 2.3:
-                    logging.info(f"{symbol}: score {score} < 2.3, сигнал не формируется")
+                # Увеличиваем минимальный порог для формирования сигнала до 2.0 (было 2.3)
+                if score < 2.0:
+                    logging.info(f"{symbol}: score {score} < 2.0, сигнал не формируется")
                     return []
                 
                 label, strength_chance = signal_strength_label(score)
