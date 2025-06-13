@@ -1683,69 +1683,52 @@ def check_tp_sl(symbol, price, time, df):
 
 def simple_stats():
     """
-    Формирует простую статистику: для каждой монеты — список завершённых сделок с результатом (УДАЧНО/НЕУДАЧНО),
+    Формирует простую статистику: для каждой завершённой сделки — только монета и результат (УДАЧНО/НЕУДАЧНО),
     внизу — общий итог по удачным и неудачным сделкам.
     """
     report = []
     total_win = 0
     total_loss = 0
-    
     for symbol, trades in virtual_portfolio.items():
         if symbol == 'open_trades':
             continue
-            
         # Группируем сделки по парам открытие-закрытие
         symbol_trades = []
         open_trade = None
-        
         for trade in trades:
-            # Проверяем, есть ли информация о типе операции
             operation = trade.get('operation', None)
-            
-            # Если нет явного указания операции, определяем по действию (старый формат)
             if operation is None:
                 if trade['action'] == 'BUY' and (open_trade is None or open_trade['action'] == 'SELL'):
                     open_trade = trade
                 elif trade['action'] == 'SELL' and open_trade is not None and open_trade['action'] == 'BUY':
-                    # Закрытие long позиции
                     symbol_trades.append((open_trade, trade))
                     open_trade = None
                 elif trade['action'] == 'SELL' and open_trade is None:
                     open_trade = trade
                 elif trade['action'] == 'BUY' and open_trade is not None and open_trade['action'] == 'SELL':
-                    # Закрытие short позиции
                     symbol_trades.append((open_trade, trade))
                     open_trade = None
             else:
-                # Новый формат с явным указанием операции
                 if operation == 'OPEN':
                     open_trade = trade
                 elif operation == 'CLOSE' and open_trade is not None:
                     symbol_trades.append((open_trade, trade))
                     open_trade = None
-        
         # Анализируем завершенные сделки
         for open_trade, close_trade in symbol_trades:
+            side = open_trade['side'].upper()
             entry = float(open_trade['price'])
             exit = float(close_trade['price'])
-            side = open_trade['side'].upper()
-            
-            # Определяем результат сделки
             if side == 'LONG':
-                pnl = (exit - entry) / entry
                 result = 'УДАЧНО' if exit > entry else 'НЕУДАЧНО'
-            else:  # SHORT
-                pnl = (entry - exit) / entry
+            else:
                 result = 'УДАЧНО' if exit < entry else 'НЕУДАЧНО'
-            
             if result == 'УДАЧНО':
                 total_win += 1
             else:
                 total_loss += 1
-                
-            pnl_pct = pnl * 100
-            report.append(f"{symbol}: {side}, вход {entry}, выход {exit}, P&L: {pnl_pct:.2f}%, результат: {result}")
-    
+            # Только монета и результат
+            report.append(f"{symbol}: {result}")
     # Добавляем общую статистику
     if total_win + total_loss > 0:
         winrate = (total_win / (total_win + total_loss)) * 100
@@ -1754,7 +1737,6 @@ def simple_stats():
         report.append(f"Винрейт: {winrate:.1f}%")
     else:
         report.append("\nНет завершённых сделок.")
-    
     return report, total_win, total_loss
 
 logging.basicConfig(level=logging.ERROR,
