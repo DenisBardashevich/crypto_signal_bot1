@@ -897,7 +897,7 @@ def check_signals(df, symbol):
         if len(df) < MIN_15M_CANDLES:
             logging.info(f"{symbol}: недостаточно данных для анализа на 15м (требуется {MIN_15M_CANDLES} свечей)")
             return []
-            
+        
         signals = []
         score_penalty = 0
         vwap_penalty = 0
@@ -909,24 +909,29 @@ def check_signals(df, symbol):
             if btc_adx < 10:  # Увеличиваем с 8 до 10
                 logging.info(f"{symbol}: BTC ADX {btc_adx:.2f} < 10, сигналы по альтам не формируются")
                 return []
-                
+        
         # === БАЗОВЫЕ ФИЛЬТРЫ ===
         # Адаптированы для 15м таймфрейма
         if last['adx'] < MIN_ADX:
             logging.info(f"{symbol}: ADX {last['adx']:.2f} < {MIN_ADX}, сигнал не формируется (слабый тренд)")
             return []
-            
+        
         volume = get_24h_volume(symbol)
         volume_mln = volume / 1_000_000
         if volume < MIN_VOLUME_USDT:
             logging.info(f"{symbol}: объём {volume_mln:.2f} млн < {MIN_VOLUME_USDT/1_000_000:.1f} млн, сигнал не формируется")
             return []
-            
+        
+        # Новый фильтр по объёму на 15м: не брать сигнал, если объём ниже 0.7 среднего за 20 свечей
+        if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.7:
+            logging.info(f"{symbol}: объём ниже 0.7 среднего за 20 свечей, сигнал не формируется")
+            return []
+        
         # Проверка спреда - делаем более гибкой
         if last['spread_pct'] > MAX_SPREAD_PCT and last['spread_pct'] > last['atr'] * 2:
             logging.info(f"{symbol}: большой спред {last['spread_pct']*100:.2f}% > {MAX_SPREAD_PCT*100:.2f}%, сигнал не формируется")
             return []
-            
+        
         # Фильтр по объему для 15м - делаем более гибким
         if USE_VOLUME_FILTER:
             if last['volume_ratio'] < VOLUME_SPIKE_MULT and last['volume'] < df['volume'].rolling(10).mean().iloc[-1] * 0.6:  # Увеличиваем с 0.5 до 0.6
@@ -952,7 +957,7 @@ def check_signals(df, symbol):
             if abs(last['momentum']) < adaptive_momentum:
                 logging.info(f"{symbol}: слабый импульс {last['momentum']:.2f} < {adaptive_momentum:.2f}, сигнал не формируется")
                 return []
-            
+        
         # Проверка ширины полос Боллинджера - делаем адаптивной
         if 'bb_width' in last:
             # Проверяем среднюю ширину BB за последние 20 свечей
@@ -962,20 +967,30 @@ def check_signals(df, symbol):
             if last['bb_width'] > avg_bb_width * 1.8 and last['bb_width'] > MAX_BB_WIDTH:  # Уменьшаем с 2 до 1.8
                 logging.info(f"{symbol}: чрезмерная волатильность BB {last['bb_width']:.3f} > {avg_bb_width*1.8:.3f}, сигнал не формируется")
                 return []
-            
+        
         # Проверка на тренд по 5 свечам - для контекста
         price_trend = sum(1 if df['close'].iloc[i] > df['close'].iloc[i-1] else -1 for i in range(-5, 0))
         
-        # Проверка подтверждения старшим таймфреймом (1h)
+        # Новый фильтр по тренду на 1h (EMA21/EMA50)
         try:
-            ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=10)
+            ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=50)
             df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-            # Определяем направление 1h тренда
-            hourly_trend = 1 if df_1h['c'].iloc[-1] > df_1h['c'].iloc[-3] else -1
+            df_1h['ema21'] = ta.trend.ema_indicator(df_1h['c'], 21)
+            df_1h['ema50'] = ta.trend.ema_indicator(df_1h['c'], 50)
+            # Проверяем только если есть пересечение EMA_fast/EMA_slow
+            if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+                # Для BUY: не открывать, если на 1h тренд вниз
+                if df_1h['ema21'].iloc[-1] < df_1h['ema50'].iloc[-1]:
+                    logging.info(f"{symbol}: 1h тренд вниз (ema21 < ema50), не открываем лонг")
+                    return []
+            if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+                # Для SELL: не открывать, если на 1h тренд вверх
+                if df_1h['ema21'].iloc[-1] > df_1h['ema50'].iloc[-1]:
+                    logging.info(f"{symbol}: 1h тренд вверх (ema21 > ema50), не открываем шорт")
+                    return []
         except Exception as e:
-            logging.error(f"Ошибка при проверке 1h тренда: {e}")
-            hourly_trend = 0  # Нейтральный если не удалось получить данные
-            
+            logging.warning(f"{symbol}: ошибка проверки тренда 1h: {e}")
+        
         # === СИГНАЛЫ НА ПОКУПКУ ===
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             # Смягчаем требование на MACD
