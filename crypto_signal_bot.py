@@ -986,6 +986,56 @@ def check_signals(df, symbol):
         except Exception as e:
             logging.warning(f"{symbol}: ошибка проверки тренда 1h: {e}")
         
+        # Фильтр по RSI
+        if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+            if last['rsi'] >= 65:
+                logging.info(f"{symbol}: RSI {last['rsi']:.2f} >= 65, не открываем лонг")
+                return []
+        if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+            if last['rsi'] <= 35:
+                logging.info(f"{symbol}: RSI {last['rsi']:.2f} <= 35, не открываем шорт")
+                return []
+        # Фильтр по свечному паттерну
+        if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+            if last['close'] <= last['open']:
+                logging.info(f"{symbol}: последняя свеча не бычья, не открываем лонг")
+                return []
+        if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+            if last['close'] >= last['open']:
+                logging.info(f"{symbol}: последняя свеча не медвежья, не открываем шорт")
+                return []
+        # Фильтр по тренду на 1h и 4h — брать только если совпадает с направлением сигнала
+        trend_1h = 0
+        trend_4h = 0
+        try:
+            ohlcv_1h = EXCHANGE.fetch_ohlcv(symbol, '1h', limit=50)
+            df_1h = pd.DataFrame(ohlcv_1h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+            df_1h['ema21'] = ta.trend.ema_indicator(df_1h['c'], 21)
+            df_1h['ema50'] = ta.trend.ema_indicator(df_1h['c'], 50)
+            if df_1h['ema21'].iloc[-1] > df_1h['ema50'].iloc[-1]:
+                trend_1h = 1
+            elif df_1h['ema21'].iloc[-1] < df_1h['ema50'].iloc[-1]:
+                trend_1h = -1
+            ohlcv_4h = EXCHANGE.fetch_ohlcv(symbol, '4h', limit=50)
+            df_4h = pd.DataFrame(ohlcv_4h, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+            df_4h['ema21'] = ta.trend.ema_indicator(df_4h['c'], 21)
+            df_4h['ema50'] = ta.trend.ema_indicator(df_4h['c'], 50)
+            if df_4h['ema21'].iloc[-1] > df_4h['ema50'].iloc[-1]:
+                trend_4h = 1
+            elif df_4h['ema21'].iloc[-1] < df_4h['ema50'].iloc[-1]:
+                trend_4h = -1
+        except Exception as e:
+            logging.warning(f"{symbol}: ошибка проверки тренда 1h/4h: {e}")
+        # Для лонга: тренд на 1h и 4h должен быть вверх, для шорта — вниз
+        if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+            if trend_1h < 1 or trend_4h < 1:
+                logging.info(f"{symbol}: тренд на 1h/4h не совпадает с лонгом, не открываем лонг")
+                return []
+        if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+            if trend_1h > -1 or trend_4h > -1:
+                logging.info(f"{symbol}: тренд на 1h/4h не совпадает с шортом, не открываем шорт")
+                return []
+        
         # === СИГНАЛЫ НА ПОКУПКУ ===
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             # Смягчаем требование на MACD
