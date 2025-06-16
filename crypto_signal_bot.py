@@ -794,7 +794,7 @@ async def main():
     tz_msk = timezone(timedelta(hours=3))
     last_alive = datetime.now(tz_msk) - timedelta(hours=6)  # timezone-aware
     last_report_hours = set()  # Часы, когда уже был отправлен отчёт (например, {9, 22})
-    last_long_signal = datetime.now(tz_msk) - timedelta(days=1)  # timezone-aware
+    # last_long_signal удален, так как долгосрочный анализ отключен
     adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
 
     # Запускаем Telegram-бота как асинхронную задачу
@@ -891,25 +891,11 @@ async def main():
             else:
                 _, symbol = result
                 logging.warning(f"Неполный результат для {symbol}, пропускаем")
-        # Долгосрочный анализ раз в сутки
+        # Долгосрочный анализ временно отключен (функции analyze_long и check_signals_long не определены)
+        # Можно включить позже при необходимости
+        # Alive-отчёт раз в 6 часов + список обработанных монет  
         now_utc = datetime.now(timezone.utc)
         now_msk = now_utc.astimezone(tz_msk)
-        now = datetime.now(tz_msk)  # timezone-aware now для сравнения с last_long_signal
-        if (now - last_long_signal) > timedelta(hours=23):
-            for symbol in SYMBOLS:
-                try:
-                    ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe='1d', limit=400)
-                    df_long = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                    df_long['timestamp'] = pd.to_datetime(df_long['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
-                    df_long = analyze_long(df_long)
-                    signals_long = check_signals_long(df_long)
-                    if signals_long:
-                        msg = f"\n\U0001F4BC Сигнал (долгосрок) для {symbol} на {df_long['timestamp'].iloc[-1].strftime('%d.%m.%Y')}:\n" + '\n\n'.join(signals_long)
-                        await send_telegram_message(msg)
-                except Exception as e:
-                    print(f"Ошибка долгосрок по {symbol}: {e}")
-            last_long_signal = now
-        # Alive-отчёт раз в 6 часов + список обработанных монет
         if (now_msk - last_alive) > timedelta(hours=6):
             msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
             msg += f"Обработано монет: {len(processed_symbols)}\n"
