@@ -90,6 +90,11 @@ def record_trade(symbol, action, price, time, side, score=None):
     action: 'OPEN' или 'CLOSE'
     side: 'long' или 'short'
     """
+    # Валидация входных параметров
+    if not symbol or action not in ['OPEN', 'CLOSE'] or side not in ['long', 'short']:
+        logging.error(f"Неверные параметры для record_trade: {symbol}, {action}, {side}")
+        return
+    
     if symbol not in virtual_portfolio:
         virtual_portfolio[symbol] = []
     
@@ -104,23 +109,21 @@ def record_trade(symbol, action, price, time, side, score=None):
     trade = {
         'action': trade_action,
         'side': side,
-        'price': price,
-        'time': time.strftime('%Y-%m-%d %H:%M')
+        'price': float(price),  # Убеждаемся что price - число
+        'time': time.strftime('%Y-%m-%d %H:%M'),
+        'operation': action  # Добавляем информацию о типе операции
     }
     
     # Добавляем оценку силы сигнала, если есть
     if score is not None:
-        trade['score'] = score
-    
-    # Добавляем информацию о типе операции (открытие/закрытие)
-    trade['operation'] = action
+        trade['score'] = float(score)
     
     # Добавляем сделку в портфель
     virtual_portfolio[symbol].append(trade)
     save_portfolio()
     
     # Логируем информацию о сделке
-    logging.info(f"Записана сделка: {symbol} {action} {side} по цене {price} в {time}")
+    logging.info(f"Записана сделка: {symbol} {action} {side} по цене {price} в {time} (score: {score})")
 
 # Открытие сделки
 def open_trade(symbol, price, time, side, atr=None, score=None, position_size=0.03):
@@ -875,12 +878,12 @@ async def main():
                 
                 # Открытие позиций по сигналам
                 for s in signals:
-                    if 'КУПИТЬ' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'long'):
+                    if 'ЛОНГ!' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'long'):
                         score = evaluate_signal_strength(df, symbol, 'BUY')[0]  # Получаем только score, без pattern_name
                         record_trade(symbol, 'OPEN', price, time, 'long', score=score)
                         open_trade(symbol, price, time, 'long', atr=atr, score=score)
                         logging.info(f"{symbol}: LONG открыт по цене {price}")
-                    if 'ПРОДАТЬ' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'short'):
+                    if 'ШОРТ!' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'short'):
                         score = evaluate_signal_strength(df, symbol, 'SELL')[0]  # Получаем только score, без pattern_name
                         record_trade(symbol, 'OPEN', price, time, 'short', score=score)
                         open_trade(symbol, price, time, 'short', atr=atr, score=score)
@@ -1071,16 +1074,22 @@ def simple_stats():
             side = open_trade['side'].upper()
             entry = float(open_trade['price'])
             exit = float(close_trade['price'])
+            
+            # Расчет P&L в процентах
             if side == 'LONG':
+                pnl_pct = ((exit - entry) / entry) * 100
                 result = 'УДАЧНО' if exit > entry else 'НЕУДАЧНО'
-            else:
+            else:  # SHORT
+                pnl_pct = ((entry - exit) / entry) * 100
                 result = 'УДАЧНО' if exit < entry else 'НЕУДАЧНО'
+            
             if result == 'УДАЧНО':
                 total_win += 1
             else:
                 total_loss += 1
-            # Только монета и результат
-            report.append(f"{symbol}: {result}")
+            
+            # Монета, результат и процент прибыли/убытка
+            report.append(f"{symbol}: {result} ({pnl_pct:+.2f}%)")
     # Добавляем общую статистику
     if total_win + total_loss > 0:
         winrate = (total_win / (total_win + total_loss)) * 100
