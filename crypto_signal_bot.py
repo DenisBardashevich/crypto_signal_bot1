@@ -580,8 +580,8 @@ def check_signals(df, symbol):
                 if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.4:
                     score -= 0.2
                 
-                # Минимальный порог для сигнала
-                if score >= 1.8:
+                # Минимальный порог для сигнала (только сигналы выше 65%)
+                if score >= 4.0:  # Изменено с 1.8 на 4.0 для фильтрации сигналов ниже 65%
                     label, strength_chance = signal_strength_label(score)
                     leverage = recommend_leverage(score, 50)  # Фиксированный процент
                     rr_ratio = calculate_rr_ratio(score)
@@ -644,8 +644,8 @@ def check_signals(df, symbol):
                 if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.4:
                     score -= 0.2
                 
-                # Минимальный порог для сигнала
-                if score >= 1.8:
+                # Минимальный порог для сигнала (только сигналы выше 65%)
+                if score >= 4.0:  # Изменено с 1.8 на 4.0 для фильтрации сигналов ниже 65%
                     label, strength_chance = signal_strength_label(score)
                     leverage = recommend_leverage(score, 50)  # Фиксированный процент
                     rr_ratio = calculate_rr_ratio(score)
@@ -671,16 +671,16 @@ def calculate_rr_ratio(score):
     Рассчитывает рекомендуемое соотношение риск/доходность на основе score
     Возвращает значение для отображения в формате "1:X" где X - это TP/SL
     """
-    if score >= 5:
+    if score >= 6:
+        return 4.0  # Для экстремально сильных сигналов
+    elif score >= 5:
         return 3.5  # Для очень сильных сигналов
-    elif score >= 3:
-        return 3.0  # Для средне-сильных сигналов
-    elif score >= 2:
+    elif score >= 4.5:
+        return 3.0  # Для сильных сигналов
+    elif score >= 4.0:  # Адаптируем под новый минимальный порог (65%)
         return 2.5  # Для умеренных сигналов
-    elif score >= 1.3:  # Адаптируем под новый минимальный порог
-        return 2.0  # Для слабых сигналов
     else:
-        return 1.5  # Минимальное соотношение
+        return 2.0  # Минимальное соотношение
 
 # Удаляем долгосрочные функции - не нужны для 15м фьючерсной торговли
 
