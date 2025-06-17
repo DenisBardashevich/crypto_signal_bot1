@@ -188,9 +188,13 @@ def calculate_profit():
                 entry_price = last_buy
                 side = last_side
                 
-                # Для LONG позиций: (exit - entry) / entry
-                # Для SHORT позиций: (entry - exit) / entry
-                pnl_pct = (exit_price - entry_price) / entry_price if side == 'long' else (entry_price - exit_price) / entry_price
+                # Расчет P&L в зависимости от направления позиции
+                if side == 'long':
+                    # Для LONG: прибыль когда цена выхода выше входа
+                    pnl_pct = (exit_price - entry_price) / entry_price
+                else:  # short
+                    # Для SHORT: прибыль когда цена выхода ниже входа
+                    pnl_pct = (entry_price - exit_price) / entry_price
                 
                 # Базовый размер позиции
                 size = 1
@@ -967,11 +971,14 @@ async def process_symbol(symbol):
         # Расчёт адаптивных целей по ATR и волатильности
         atr = df['atr'].iloc[-1]
         if not pd.isna(atr) and price > 0:
-            tp, sl = calculate_tp_sl(df, price, atr, symbol)
-            adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
+            # НЕ перезаписываем TP/SL для уже открытых позиций
+            # calculate_tp_sl вызывается уже в check_tp_sl при необходимости
+            pass
         else:
-            tp, sl = TP_MIN, SL_MIN
-            adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
+            # Для новых позиций устанавливаем минимальные значения
+            if symbol not in open_trades:
+                tp_pct, sl_pct = TP_MIN, SL_MIN
+                adaptive_targets[symbol] = {'tp': tp_pct, 'sl': sl_pct}
         
         # Проверка на открытые сделки (перенесено в monitor_open_positions)
         
@@ -1128,25 +1135,13 @@ async def main():
                 
                 combined_msg += '\n'.join(signals) + "\n\n"
                 
-                # Открываем виртуальные позиции
+                # Позиции уже открыты в check_signals(), не дублируем здесь
+                # Просто логируем информацию о сигналах
                 symbol = signal_info['symbol']
-                price = signal_info['price']
-                time = signal_info['time']
-                df = signal_info['df']
-                atr = signal_info['atr']
                 direction = signal_info['direction']
                 
-                for s in signals:
-                    if ('🟢 LONG' in s or 'ЛОНГ!' in s) and (symbol not in open_trades or open_trades[symbol]['side'] != 'long'):
-                        score = evaluate_signal_strength(df, symbol, 'BUY')[0]
-                        record_trade(symbol, 'OPEN', price, time, 'long', score=score)
-                        open_trade(symbol, price, time, 'long', atr=atr, score=score)
-                        logging.info(f"{symbol}: LONG открыт по цене {price}")
-                    elif ('🔴 SHORT' in s or 'ШОРТ!' in s) and (symbol not in open_trades or open_trades[symbol]['side'] != 'short'):
-                        score = evaluate_signal_strength(df, symbol, 'SELL')[0]
-                        record_trade(symbol, 'OPEN', price, time, 'short', score=score)
-                        open_trade(symbol, price, time, 'short', atr=atr, score=score)
-                        logging.info(f"{symbol}: SHORT открыт по цене {price}")
+                if symbol in open_trades:
+                    logging.info(f"{symbol}: {direction} позиция уже открыта")
             
             combined_msg += f"📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
             await send_telegram_message(combined_msg)
@@ -1273,44 +1268,70 @@ def check_tp_sl(symbol, price, time, df):
         if 'atr' in trade and trade['atr'] > 0:
             atr = trade['atr']
         else:
-            atr = df['atr'].iloc[-1] if 'atr' in df.columns else price * 0.01
+            atr = df['atr'].iloc[-1] if 'atr' in df.columns else entry * 0.01
             
         # Рассчитываем TP/SL - возвращает абсолютные цены
         direction = 'LONG' if side == 'long' else 'SHORT'
         tp_price, sl_price = calculate_tp_sl(df, entry, atr, direction)
         adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
     
+    # Определяем логику закрытия на основе реального движения цены
+    reason = None
+    result = None
+    
     # Для long позиций
     if side == 'long':
-        # Проверка достижения TP или SL (tp_price и sl_price уже абсолютные значения)
-        if price >= tp_price or price <= sl_price:
-            reason = 'TP' if price >= tp_price else 'SL'
-            result = 'УДАЧНО' if reason == 'TP' else 'НЕУДАЧНО'
-            pnl_pct = ((price - entry) / entry) * 100
+        # LONG: прибыль если цена выше входа, убыток если ниже
+        if price >= tp_price:
+            reason = 'TP'
+            result = 'УДАЧНО'
+        elif price <= sl_price:
+            reason = 'SL'
+            result = 'НЕУДАЧНО'
+        else:
+            return False  # Цена не достигла ни TP, ни SL
             
-            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {result}"
-            asyncio.create_task(send_telegram_message(msg))
-            
-            # Записываем результат в портфель
-            record_trade(symbol, 'CLOSE', price, time, side, score)
-            close_trade(symbol)
-            return True
+        pnl_pct = ((price - entry) / entry) * 100
     
     # Для short позиций
     elif side == 'short':
-        # Проверка достижения TP или SL (tp_price и sl_price уже абсолютные значения)
-        if price <= tp_price or price >= sl_price:
-            reason = 'TP' if price <= tp_price else 'SL'
-            result = 'УДАЧНО' if reason == 'TP' else 'НЕУДАЧНО'
-            pnl_pct = ((entry - price) / entry) * 100
+        # SHORT: прибыль если цена ниже входа, убыток если выше
+        if price <= tp_price:
+            reason = 'TP'
+            result = 'УДАЧНО'
+        elif price >= sl_price:
+            reason = 'SL'
+            result = 'НЕУДАЧНО'
+        else:
+            return False  # Цена не достигла ни TP, ни SL
             
-            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {result}"
-            asyncio.create_task(send_telegram_message(msg))
+        pnl_pct = ((entry - price) / entry) * 100
+    
+    # Если достигнут TP или SL, закрываем позицию
+    if reason:
+        # Дополнительная проверка корректности результата
+        if side == 'long':
+            # Для LONG: если цена выше входа - это должно быть успешно
+            actual_result = 'УДАЧНО' if price > entry else 'НЕУДАЧНО'
+        else:  # short
+            # Для SHORT: если цена ниже входа - это должно быть успешно
+            actual_result = 'УДАЧНО' if price < entry else 'НЕУДАЧНО'
+        
+        # Используем фактический результат для определения успешности
+        final_result = actual_result
+        
+        msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {final_result}"
+        asyncio.create_task(send_telegram_message(msg))
+        
+        # Записываем результат в портфель
+        record_trade(symbol, 'CLOSE', price, time, side, score)
+        close_trade(symbol)
+        
+        # Удаляем из adaptive_targets после закрытия
+        if symbol in adaptive_targets:
+            del adaptive_targets[symbol]
             
-            # Записываем результат в портфель
-            record_trade(symbol, 'CLOSE', price, time, side, score)
-            close_trade(symbol)
-            return True
+        return True
     
     return False
 
@@ -1353,13 +1374,15 @@ def simple_stats():
             entry = float(open_trade['price'])
             exit = float(close_trade['price'])
             
-            # Расчет P&L в процентах
+            # Расчет P&L в процентах и определение результата
             if side == 'LONG':
                 pnl_pct = ((exit - entry) / entry) * 100
-                result = 'УДАЧНО' if exit > entry else 'НЕУДАЧНО'
+                # Для LONG: прибыль если цена выхода выше входа
+                result = 'УДАЧНО' if pnl_pct > 0 else 'НЕУДАЧНО'
             else:  # SHORT
                 pnl_pct = ((entry - exit) / entry) * 100
-                result = 'УДАЧНО' if exit < entry else 'НЕУДАЧНО'
+                # Для SHORT: прибыль если цена выхода ниже входа
+                result = 'УДАЧНО' if pnl_pct > 0 else 'НЕУДАЧНО'
             
             if result == 'УДАЧНО':
                 total_win += 1
