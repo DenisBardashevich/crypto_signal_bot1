@@ -277,21 +277,26 @@ def get_ohlcv(symbol):
     return pd.DataFrame()  # Возвращаем пустой DataFrame после всех попыток
 
 def analyze(df):
-    """УПРОЩЁННЫЙ анализ для 15-минутных фьючерсов: только нужные индикаторы."""
+    """ОПТИМИЗИРОВАННЫЙ анализ для 15-минутных фьючерсов с современными настройками 2025."""
     try:
         if df.empty or len(df) < MA_SLOW:
             return pd.DataFrame()
             
-        # Основные индикаторы для 15м
-        df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=MA_FAST)
-        df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=MA_SLOW)
+        # EMA с обновленными периодами
+        df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=MA_FAST)  # 9
+        df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=MA_SLOW)  # 21
         
-        # MACD для подтверждения сигналов
+        # MACD с быстрыми настройками для 15м
         df['macd'] = ta.trend.macd_diff(df['close'])
         df['macd_signal'] = ta.trend.macd_signal(df['close'])
+        df['macd_line'] = ta.trend.macd(df['close'])
         
-        # RSI для фильтрации экстремальных значений
-        df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)
+        # RSI с оптимизированным окном
+        df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)  # 9
+        
+        # Stochastic RSI для дополнительного подтверждения
+        stoch_rsi = ta.momentum.stochrsi(df['close'], window=STOCH_RSI_LENGTH, smooth1=STOCH_RSI_K, smooth2=STOCH_RSI_D)
+        df['stoch_rsi_k'] = stoch_rsi * 100  # Приводим к шкале 0-100
         
         # ADX для определения силы тренда
         df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
@@ -299,19 +304,40 @@ def analyze(df):
         # ATR для расчёта TP/SL
         df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
         
-        # Bollinger Bands для определения перекупленности/перепроданности
-        df['bollinger_mid'] = ta.volatility.bollinger_mavg(df['close'], window=20)
-        df['bollinger_high'] = ta.volatility.bollinger_hband(df['close'], window=20)
-        df['bollinger_low'] = ta.volatility.bollinger_lband(df['close'], window=20)
+        # Bollinger Bands с новыми настройками
+        bb_indicator = ta.volatility.BollingerBands(df['close'], window=BB_WINDOW, window_dev=BB_STD_DEV)
+        df['bollinger_mid'] = bb_indicator.bollinger_mavg()
+        df['bollinger_high'] = bb_indicator.bollinger_hband()
+        df['bollinger_low'] = bb_indicator.bollinger_lband()
+        df['bb_width'] = (df['bollinger_high'] - df['bollinger_low']) / df['bollinger_mid']
         
-        # Объём - только если включен фильтр
+        # VWAP (критически важен для 15м)
+        if USE_VWAP:
+            # Простой расчет VWAP
+            df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
+            df['vwap_numerator'] = (df['typical_price'] * df['volume']).cumsum()
+            df['vwap_denominator'] = df['volume'].cumsum()
+            df['vwap'] = df['vwap_numerator'] / df['vwap_denominator']
+            df['vwap_deviation'] = (df['close'] - df['vwap']) / df['vwap']
+        
+        # Объём с улучшенной фильтрацией
         if USE_VOLUME_FILTER:
             df['volume_ema'] = ta.trend.ema_indicator(df['volume'], window=20)
             df['volume_ratio'] = df['volume'] / df['volume_ema']
         
-        # Спред и импульс для дополнительной фильтрации
+        # Волатильность за последние периоды
+        df['volatility'] = df['close'].rolling(window=VOLATILITY_LOOKBACK).std() / df['close'].rolling(window=VOLATILITY_LOOKBACK).mean()
+        
+        # Спред и импульс
         df['spread_pct'] = (df['high'] - df['low']) / df['low']
         df['momentum'] = df['close'].pct_change(5) * 100  # 5 свечей назад
+        
+        # Дополнительные индикаторы для адаптивной системы
+        # Trending vs Ranging market detection
+        df['ema_slope'] = df['ema_slow'].pct_change(3) * 100  # Наклон EMA
+        
+        # Williams %R для дополнительного подтверждения
+        df['williams_r'] = ta.momentum.williams_r(df['high'], df['low'], df['close'], lbp=14)
         
         # Убираем NaN
         df = df.dropna().reset_index(drop=True)
@@ -329,42 +355,156 @@ def analyze(df):
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
-    """Простая оценка силы сигнала для 15-минутных фьючерсов."""
-    score = 0
-    last = df.iloc[-1]
+    """Продвинутая оценка силы сигнала с весовой системой для 10+ сигналов в день."""
+    try:
+        if df.empty or len(df) < 2:
+            return 0, None
+            
+        score = 0
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        # Определяем текущую волатильность для адаптации
+        current_volatility = last.get('volatility', 0.02)
+        is_high_vol = current_volatility > HIGH_VOLATILITY_THRESHOLD
+        is_low_vol = current_volatility < LOW_VOLATILITY_THRESHOLD
+        
+        # Адаптируем пороги в зависимости от времени
+        now_utc = datetime.now(timezone.utc)
+        is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
+        
+        # 1. RSI анализ (вес 1.0)
+        rsi_score = 0
+        if action == 'BUY':
+            if last['rsi'] <= RSI_OVERSOLD:
+                rsi_score = 2.0
+            elif last['rsi'] <= (RSI_OVERSOLD + 10):
+                rsi_score = 1.5
+            elif 30 <= last['rsi'] <= 60:
+                rsi_score = 1.0
+        elif action == 'SELL':
+            if last['rsi'] >= RSI_OVERBOUGHT:
+                rsi_score = 2.0
+            elif last['rsi'] >= (RSI_OVERBOUGHT - 10):
+                rsi_score = 1.5
+            elif 40 <= last['rsi'] <= 70:
+                rsi_score = 1.0
+        score += rsi_score * WEIGHT_RSI
+        
+        # 2. MACD анализ (вес 1.2)
+        macd_score = 0
+        if 'macd' in df.columns and 'macd_signal' in df.columns:
+            macd_cross = last['macd'] - last['macd_signal']
+            prev_macd_cross = prev['macd'] - prev['macd_signal']
+            
+            if action == 'BUY':
+                if macd_cross > 0 and prev_macd_cross <= 0:  # Bullish crossover
+                    macd_score = 2.0
+                elif macd_cross > 0:  # Above signal line
+                    macd_score = 1.0
+            elif action == 'SELL':
+                if macd_cross < 0 and prev_macd_cross >= 0:  # Bearish crossover
+                    macd_score = 2.0
+                elif macd_cross < 0:  # Below signal line
+                    macd_score = 1.0
+        score += macd_score * WEIGHT_MACD
+        
+        # 3. Bollinger Bands анализ (вес 1.1)
+        bb_score = 0
+        if 'bollinger_low' in df.columns and 'bollinger_high' in df.columns:
+            close = last['close']
+            bb_position = (close - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
+            
+            if action == 'BUY':
+                if bb_position <= 0.1:  # Близко к нижней полосе
+                    bb_score = 2.0
+                elif bb_position <= 0.2:
+                    bb_score = 1.5
+                elif bb_position <= 0.4:
+                    bb_score = 1.0
+            elif action == 'SELL':
+                if bb_position >= 0.9:  # Близко к верхней полосе
+                    bb_score = 2.0
+                elif bb_position >= 0.8:
+                    bb_score = 1.5
+                elif bb_position >= 0.6:
+                    bb_score = 1.0
+        score += bb_score * WEIGHT_BB
+        
+        # 4. VWAP анализ (вес 1.3)
+        vwap_score = 0
+        if USE_VWAP and 'vwap' in df.columns:
+            vwap_dev = last.get('vwap_deviation', 0)
+            if action == 'BUY':
+                if vwap_dev <= -VWAP_DEVIATION_THRESHOLD:  # Значительно ниже VWAP
+                    vwap_score = 2.0
+                elif vwap_dev <= 0:  # Ниже VWAP
+                    vwap_score = 1.0
+            elif action == 'SELL':
+                if vwap_dev >= VWAP_DEVIATION_THRESHOLD:  # Значительно выше VWAP
+                    vwap_score = 2.0
+                elif vwap_dev >= 0:  # Выше VWAP
+                    vwap_score = 1.0
+        score += vwap_score * WEIGHT_VWAP
+        
+        # 5. Объём анализ (вес 0.8)
+        volume_score = 0
+        if USE_VOLUME_FILTER and 'volume_ratio' in df.columns:
+            vol_ratio = last.get('volume_ratio', 1.0)
+            if vol_ratio >= 1.5:
+                volume_score = 2.0
+            elif vol_ratio >= 1.2:
+                volume_score = 1.0
+        score += volume_score * WEIGHT_VOLUME
+        
+        # 6. ADX анализ (вес 0.9)
+        adx_score = 0
+        min_adx = HIGH_VOL_ADX_MIN if is_high_vol else (LOW_VOL_ADX_MIN if is_low_vol else MIN_ADX)
+        
+        if last['adx'] >= 30:
+            adx_score = 2.0
+        elif last['adx'] >= 25:
+            adx_score = 1.5
+        elif last['adx'] >= min_adx:
+            adx_score = 1.0
+        else:
+            adx_score = 0.5
+        score += adx_score * WEIGHT_ADX
+        
+        # 7. Дополнительные бонусы
+        # Convergence/Divergence patterns
+        if len(df) >= 10:
+            price_trend = df['close'].iloc[-5:].pct_change().sum()
+            rsi_trend = df['rsi'].iloc[-5:].pct_change().sum()
+            
+            # Bullish divergence: price down, RSI up
+            if action == 'BUY' and price_trend < 0 and rsi_trend > 0:
+                score += 1.0
+            # Bearish divergence: price up, RSI down  
+            elif action == 'SELL' and price_trend > 0 and rsi_trend < 0:
+                score += 1.0
+        
+        # Stochastic RSI confirmation
+        if 'stoch_rsi_k' in df.columns:
+            stoch_k = last.get('stoch_rsi_k', 50)
+            if action == 'BUY' and stoch_k <= 20:
+                score += 0.5
+            elif action == 'SELL' and stoch_k >= 80:
+                score += 0.5
+        
+        # Адаптация к активным часам
+        if is_active_hour:
+            score *= (1 + (1 - ACTIVE_HOURS_MULTIPLIER))  # Небольшой бонус в активные часы
+        
+        return max(0, score), None
+        
+    except Exception as e:
+        logging.error(f"Ошибка в оценке силы сигнала: {e}")
+        return 0, None
 
-    # Сила тренда по ADX
-    if last['adx'] > 30:
-        score += 2.0
-    elif last['adx'] > 25:
-        score += 1.5
-    elif last['adx'] > 20:
-        score += 1.0
-    else:
-        score += 0.5
+# Убираем сложные графические паттерны для упрощения 15м торговли
 
-    # RSI
-    if action == 'BUY':
-        if 30 <= last['rsi'] <= 65:
-            score += 1.0
-        elif last['rsi'] < 30:
-            score += 1.5
-    elif action == 'SELL':
-        if 35 <= last['rsi'] <= 70:
-            score += 1.0
-        elif last['rsi'] > 70:
-            score += 1.5
-
-    # Bollinger Bands
-    if 'bollinger_low' in df.columns and 'bollinger_high' in df.columns:
-        close = last['close']
-        if action == 'BUY' and close <= last['bollinger_low'] * 1.02:
-            score += 1.0
-        elif action == 'SELL' and close >= last['bollinger_high'] * 0.98:
-            score += 1.0
-
-    return score, None
-
+# ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def signal_strength_label(score):
     """
     Преобразует числовую оценку силы сигнала в текстовую метку
@@ -494,8 +634,8 @@ def get_btc_adx():
 
 def check_signals(df, symbol):
     """
-    ОПТИМИЗИРОВАННАЯ функция проверки сигналов для 15-минутных фьючерсов
-    Фокус на простоте, скорости и надёжности
+    СОВРЕМЕННАЯ система генерации сигналов для 15м фьючерсов с композитным скорингом.
+    Цель: 10+ надёжных сигналов в сутки.
     """
     try:
         if df.empty or len(df) < MIN_15M_CANDLES:
@@ -505,27 +645,19 @@ def check_signals(df, symbol):
         prev = df.iloc[-2]
         signals = []
         
-        # === БАЗОВЫЕ ОБЯЗАТЕЛЬНЫЕ ФИЛЬТРЫ ===
-        # 1. Минимальная сила тренда
-        if last['adx'] < MIN_ADX:
-            return []
-            
-        # 2. Минимальный объём торгов
+        # === БЫСТРЫЕ БАЗОВЫЕ ФИЛЬТРЫ ===
+        # 1. Объём торгов (основной фильтр)
         volume = get_24h_volume(symbol)
         if volume < MIN_VOLUME_USDT:
             return []
         
-        # Дополнительная фильтрация для очень низких объемов
-        if volume < 1_000_000:  # Менее 1М USDT объем за 24ч
-            return []
-            
-        # 3. Максимальный спред
+        # 2. Максимальный спред
         if last['spread_pct'] > MAX_SPREAD_PCT:
             return []
         
-        # === ПРОВЕРКА COOLDOWN ===
+        # 3. Проверка Cooldown
         if symbol not in last_signal_time:
-            last_signal_time[symbol] = datetime.now(timezone.utc) - timedelta(minutes=10)
+            last_signal_time[symbol] = datetime.now(timezone.utc) - timedelta(minutes=SIGNAL_COOLDOWN_MINUTES + 1)
         
         if last_signal_time[symbol].tzinfo is None:
             last_signal_time[symbol] = last_signal_time[symbol].replace(tzinfo=timezone.utc)
@@ -534,148 +666,189 @@ def check_signals(df, symbol):
         if now - last_signal_time[symbol] < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES):
             return []
         
+        # Определяем адаптивные пороги
+        current_volatility = last.get('volatility', 0.02)
+        is_high_vol = current_volatility > HIGH_VOLATILITY_THRESHOLD
+        is_low_vol = current_volatility < LOW_VOLATILITY_THRESHOLD
+        is_active_hour = now.hour in ACTIVE_HOURS_UTC
+        
+        # Адаптивный минимум ADX
+        min_adx = HIGH_VOL_ADX_MIN if is_high_vol else (LOW_VOL_ADX_MIN if is_low_vol else MIN_ADX)
+        
+        # 4. Базовая сила тренда
+        if last['adx'] < min_adx:
+            return []
+        
+        # === ГЕНЕРАЦИЯ СИГНАЛОВ ===
+        
         # === СИГНАЛ НА ПОКУПКУ ===
-        if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-            # Простая проверка MACD
-            if last['macd'] > last['macd_signal'] or last['macd'] > 0:
-                # Дополнительная проверка RSI - избегаем перекупленности
-                if last['rsi'] > 80:
-                    return []
+        buy_triggers = 0
+        
+        # Триггер 1: EMA кроссовер (главный)
+        if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+            buy_triggers += 1
+        
+        # Триггер 2: Цена выше EMA (быстрой) - менее строгий
+        elif last['close'] > last['ema_fast'] and last['close'] > prev['close']:
+            buy_triggers += 0.5
+        
+        # Триггер 3: MACD бычий
+        if 'macd' in df.columns and 'macd_signal' in df.columns:
+            if last['macd'] > last['macd_signal']:
+                buy_triggers += 0.5
+            # Кроссовер MACD - дополнительный бонус
+            if prev['macd'] <= prev['macd_signal'] and last['macd'] > last['macd_signal']:
+                buy_triggers += 0.5
+        
+        # Триггер 4: Bollinger Bands
+        if 'bollinger_low' in df.columns:
+            bb_position = (last['close'] - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
+            if bb_position <= 0.3:  # В нижней части диапазона
+                buy_triggers += 0.5
+        
+        # Триггер 5: VWAP
+        if USE_VWAP and 'vwap' in df.columns:
+            vwap_dev = last.get('vwap_deviation', 0)
+            if vwap_dev <= 0 and vwap_dev >= -VWAP_DEVIATION_THRESHOLD * 2:  # Ниже VWAP но не критично
+                buy_triggers += 0.3
+        
+        # Определяем эффективный минимальный скор
+        effective_min_score = MIN_COMPOSITE_SCORE
+        if is_active_hour:
+            effective_min_score *= ACTIVE_HOURS_MULTIPLIER
+        
+        # Проверяем достаточность триггеров для BUY - смягчаем пороги
+        min_triggers = 0.8 if is_active_hour else 1.0
+        
+        if buy_triggers >= min_triggers:
+            # Дополнительные фильтры для качества
+            
+            # Избегаем экстремальной перекупленности
+            if last['rsi'] > 85:
+                pass  # Пропускаем сигнал
+            else:
+                # Генерируем детальную оценку
+                score, pattern = evaluate_signal_strength(df, symbol, 'BUY')
                 
-                # Начальный score
-                score = 2.0  # Базовый score за EMA кросс
-                
-                # БОНУСЫ (максимум +3.0)
-                # 1. ADX - сила тренда
-                if last['adx'] > 25:
-                    score += 1.0
-                elif last['adx'] > 20:
-                    score += 0.5
-                
-                # 2. RSI - хороший уровень для входа
-                if 30 <= last['rsi'] <= 65:
-                    score += 0.8
-                elif last['rsi'] < 30:  # Перепроданность
-                    score += 1.2
-                
-                # 3. Объём - всплеск активности
-                if USE_VOLUME_FILTER and 'volume_ratio' in last:
-                    if last['volume_ratio'] > 1.2:
-                        score += 0.5
-                
-                # 4. Импульс цены
-                if 'momentum' in last and last['momentum'] > 0.05:
-                    score += 0.3
-                
-                # 5. Bollinger Bands - цена у нижней границы
-                if 'bollinger_low' in last and last['close'] <= last['bollinger_low'] * 1.02:
-                    score += 0.7
-                
-                # 6. Бычья свеча
-                if last['close'] > last['open']:
-                    score += 0.3
-                
-                # ШТРАФЫ (максимум -1.0)
-                # 1. Слабый BTC для альтов
-                if symbol != 'BTC/USDT:USDT':
-                    btc_adx = get_btc_adx()
-                    if btc_adx < 8:
-                        score -= 0.3
-                
-                # 2. Очень высокий RSI
-                if last['rsi'] > 75:
-                    score -= 0.5
-                
-                # 3. Очень низкий объём
-                if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.4:
-                    score -= 0.2
-                
-                # Минимальный порог для сигнала (только сигналы выше 70%)
-                if score >= 4.2:  # Повышено с 4.0 до 4.2 для лучшего качества (примерно 70%)
-                    label, strength_chance = signal_strength_label(score)
-                    leverage = recommend_leverage(score, 50)  # Фиксированный процент
+                if score >= effective_min_score:
+                    # Получаем метку силы
+                    strength_label, win_prob = signal_strength_label(score)
+                    
+                    # Рассчитываем TP/SL
+                    tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'])
                     rr_ratio = calculate_rr_ratio(score)
                     
-                    msg = f'🚀 ФЬЮЧЕРСЫ BYBIT: ЛОНГ!\n💪 Сила: {label} ({strength_chance*100:.0f}%)\n⚡ Плечо: {leverage}x\n🎯 R:R = 1:{rr_ratio}\n📊 {symbol}\n💰 Объём: {volume/1_000_000:.1f}М USDT\n📈 ADX: {last["adx"]:.0f}\n⭐ Score: {score:.1f}'
+                    # Рекомендуем плечо
+                    leverage = recommend_leverage(score, win_prob * 100)
                     
-                    signals.append(msg)
-                    logging.info(f"{symbol}: LONG сигнал сформирован, score: {score:.1f}")
+                    # Составляем сообщение
+                    signal = f"🟢 LONG {symbol}\n"
+                    signal += f"Цена: {last['close']:.6f}\n"
+                    signal += f"Сила: {strength_label} ({score:.1f})\n"
+                    signal += f"Вероятность: {win_prob:.0%}\n"
+                    signal += f"TP: {tp_price:.6f} | SL: {sl_price:.6f}\n"
+                    signal += f"R:R = 1:{rr_ratio:.1f}\n"
+                    signal += f"Плечо: {leverage}\n"
+                    signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
+                    
+                    # Добавляем детали триггеров
+                    signal += f"Триггеры: {buy_triggers:.1f}"
+                    if USE_VWAP and 'vwap' in df.columns:
+                        signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
+                    if 'bb_width' in df.columns:
+                        signal += f" | BB: {last['bb_width']*100:.1f}%"
+                    
+                    signals.append(signal)
+                    
+                    # Открываем виртуальную сделку
+                    open_trade(symbol, last['close'], now, 'long', last['atr'], score)
+                    record_trade(symbol, 'OPEN', last['close'], now, 'long', score)
+                    
+                    last_signal_time[symbol] = now
         
         # === СИГНАЛ НА ПРОДАЖУ ===
-        if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-            # Простая проверка MACD
-            if last['macd'] < last['macd_signal'] or last['macd'] < 0:
-                # Дополнительная проверка RSI - избегаем перепроданности
-                if last['rsi'] < 20:
-                    return []
+        sell_triggers = 0
+        
+        # Триггер 1: EMA кроссовер (главный)
+        if prev['ema_fast'] >= prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+            sell_triggers += 1
+        
+        # Триггер 2: Цена ниже EMA (быстрой) - менее строгий
+        elif last['close'] < last['ema_fast'] and last['close'] < prev['close']:
+            sell_triggers += 0.5
+        
+        # Триггер 3: MACD медвежий
+        if 'macd' in df.columns and 'macd_signal' in df.columns:
+            if last['macd'] < last['macd_signal']:
+                sell_triggers += 0.5
+            # Кроссовер MACD - дополнительный бонус
+            if prev['macd'] >= prev['macd_signal'] and last['macd'] < last['macd_signal']:
+                sell_triggers += 0.5
+        
+        # Триггер 4: Bollinger Bands
+        if 'bollinger_high' in df.columns:
+            bb_position = (last['close'] - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
+            if bb_position >= 0.7:  # В верхней части диапазона
+                sell_triggers += 0.5
+        
+        # Триггер 5: VWAP
+        if USE_VWAP and 'vwap' in df.columns:
+            vwap_dev = last.get('vwap_deviation', 0)
+            if vwap_dev >= 0 and vwap_dev <= VWAP_DEVIATION_THRESHOLD * 2:  # Выше VWAP но не критично
+                sell_triggers += 0.3
+        
+        # Проверяем достаточность триггеров для SELL
+        if sell_triggers >= min_triggers:
+            # Дополнительные фильтры для качества
+            
+            # Избегаем экстремальной перепроданности
+            if last['rsi'] < 15:
+                pass  # Пропускаем сигнал
+            else:
+                # Генерируем детальную оценку
+                score, pattern = evaluate_signal_strength(df, symbol, 'SELL')
                 
-                # Начальный score
-                score = 2.0  # Базовый score за EMA кросс
-                
-                # БОНУСЫ (максимум +3.0)
-                # 1. ADX - сила тренда
-                if last['adx'] > 25:
-                    score += 1.0
-                elif last['adx'] > 20:
-                    score += 0.5
-                
-                # 2. RSI - хороший уровень для входа
-                if 35 <= last['rsi'] <= 70:
-                    score += 0.8
-                elif last['rsi'] > 70:  # Перекупленность
-                    score += 1.2
-                
-                # 3. Объём - всплеск активности
-                if USE_VOLUME_FILTER and 'volume_ratio' in last:
-                    if last['volume_ratio'] > 1.2:
-                        score += 0.5
-                
-                # 4. Импульс цены
-                if 'momentum' in last and last['momentum'] < -0.05:
-                    score += 0.3
-                
-                # 5. Bollinger Bands - цена у верхней границы
-                if 'bollinger_high' in last and last['close'] >= last['bollinger_high'] * 0.98:
-                    score += 0.7
-                
-                # 6. Медвежья свеча
-                if last['close'] < last['open']:
-                    score += 0.3
-                
-                # ШТРАФЫ (максимум -1.0)
-                # 1. Слабый BTC для альтов
-                if symbol != 'BTC/USDT:USDT':
-                    btc_adx = get_btc_adx()
-                    if btc_adx < 8:
-                        score -= 0.3
-                
-                # 2. Очень низкий RSI
-                if last['rsi'] < 25:
-                    score -= 0.5
-                
-                # 3. Очень низкий объём
-                if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.4:
-                    score -= 0.2
-                
-                # Минимальный порог для сигнала (только сигналы выше 70%)
-                if score >= 4.2:  # Повышено с 4.0 до 4.2 для лучшего качества (примерно 70%)
-                    label, strength_chance = signal_strength_label(score)
-                    leverage = recommend_leverage(score, 50)  # Фиксированный процент
+                # Проверяем минимальный композитный скор
+                if score >= effective_min_score:
+                    # Получаем метку силы
+                    strength_label, win_prob = signal_strength_label(score)
+                    
+                    # Рассчитываем TP/SL
+                    tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], 'SELL')
                     rr_ratio = calculate_rr_ratio(score)
                     
-                    msg = f'📉 ФЬЮЧЕРСЫ BYBIT: ШОРТ!\n💪 Сила: {label} ({strength_chance*100:.0f}%)\n⚡ Плечо: {leverage}x\n🎯 R:R = 1:{rr_ratio}\n📊 {symbol}\n💰 Объём: {volume/1_000_000:.1f}М USDT\n📈 ADX: {last["adx"]:.0f}\n⭐ Score: {score:.1f}'
+                    # Рекомендуем плечо
+                    leverage = recommend_leverage(score, win_prob * 100)
                     
-                    signals.append(msg)
-                    logging.info(f"{symbol}: SHORT сигнал сформирован, score: {score:.1f}")
+                    # Составляем сообщение
+                    signal = f"🔴 SHORT {symbol}\n"
+                    signal += f"Цена: {last['close']:.6f}\n"
+                    signal += f"Сила: {strength_label} ({score:.1f})\n"
+                    signal += f"Вероятность: {win_prob:.0%}\n"
+                    signal += f"TP: {tp_price:.6f} | SL: {sl_price:.6f}\n"
+                    signal += f"R:R = 1:{rr_ratio:.1f}\n"
+                    signal += f"Плечо: {leverage}\n"
+                    signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
+                    
+                    # Добавляем детали триггеров
+                    signal += f"Триггеры: {sell_triggers:.1f}"
+                    if USE_VWAP and 'vwap' in df.columns:
+                        signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
+                    if 'bb_width' in df.columns:
+                        signal += f" | BB: {last['bb_width']*100:.1f}%"
+                    
+                    signals.append(signal)
+                    
+                    # Открываем виртуальную сделку
+                    open_trade(symbol, last['close'], now, 'short', last['atr'], score)
+                    record_trade(symbol, 'OPEN', last['close'], now, 'short', score)
+                    
+                    last_signal_time[symbol] = now
         
-        # Обновляем время последнего сигнала
-        if signals:
-            last_signal_time[symbol] = now
-            
         return signals
         
     except Exception as e:
-        logging.error(f"Ошибка при проверке сигналов для {symbol}: {e}")
+        logging.error(f"Ошибка в check_signals для {symbol}: {e}")
         return []
 
 # Добавляем новую функцию для расчета соотношения риск/доходность на основе score
@@ -930,42 +1103,79 @@ async def main():
 
 # Удаляем find_support_resistance - не используется в сигналах
 
-def calculate_tp_sl(df, price, atr, symbol=None):
+def calculate_tp_sl(df, price, atr, direction='LONG'):
     """
-    УЛУЧШЕННЫЙ расчет TP/SL для 15-минутных фьючерсов
-    Более консервативный подход для лучшего винрейта
+    СОВРЕМЕННЫЙ расчет TP/SL для 15-минутных фьючерсов с поддержкой LONG/SHORT.
+    Адаптивные множители для лучшего соотношения R:R и винрейта.
     """
-    last = df.iloc[-1]
-    adx = last['adx']
-    
-    # Более консервативные множители на основе ADX
-    if adx > 30:
-        tp_mult = 2.2  # Снижено с 2.5
-        sl_mult = 1.0
-    elif adx > 20:
-        tp_mult = 1.8  # Снижено с 2.0
-        sl_mult = 0.8
-    else:
-        tp_mult = 1.5  # Снижено с 1.8
-        sl_mult = 0.7
-    
-    # Корректировка на основе импульса (менее агрессивная)
-    if 'momentum' in last and abs(last['momentum']) > 0.8:
-        tp_mult *= 1.1  # Снижено с 1.2
-    
-    # Расчет TP и SL
-    tp = max(round((atr * tp_mult) / price, 4), TP_MIN)
-    sl = max(round((atr * sl_mult) / price, 4), SL_MIN)
-    
-    # Обеспечиваем минимальное соотношение R:R = 1.8 (более консервативно)
-    if tp / sl < 1.8:
-        tp = sl * 1.8
-    
-    # Ограничиваем максимальными значениями
-    tp = min(tp, TP_MAX)
-    sl = min(sl, SL_MAX)
-    
-    return tp, sl
+    try:
+        last = df.iloc[-1]
+        adx = last.get('adx', 20)
+        
+        # Адаптивные множители на основе силы тренда (ADX)
+        if adx > 30:
+            # Сильный тренд - можно взять больше прибыли
+            tp_mult = TP_ATR_MULT  # 1.8
+            sl_mult = SL_ATR_MULT  # 0.9
+        elif adx > 20:
+            # Умеренный тренд
+            tp_mult = TP_ATR_MULT * 0.9  # 1.62
+            sl_mult = SL_ATR_MULT * 0.9  # 0.81
+        else:
+            # Слабый тренд - более консервативный подход
+            tp_mult = TP_ATR_MULT * 0.7  # 1.26
+            sl_mult = SL_ATR_MULT * 0.8  # 0.72
+        
+        # Учитываем волатильность
+        if 'volatility' in last:
+            vol = last['volatility']
+            if vol > HIGH_VOLATILITY_THRESHOLD:
+                # Высокая волатильность - уменьшаем TP, увеличиваем SL
+                tp_mult *= 0.8
+                sl_mult *= 1.2
+            elif vol < LOW_VOLATILITY_THRESHOLD:
+                # Низкая волатильность - можем взять больше прибыли
+                tp_mult *= 1.1
+                sl_mult *= 0.9
+        
+        # Учитываем импульс цены
+        if 'momentum' in last:
+            momentum = abs(last['momentum'])
+            if momentum > 1.0:  # Сильный импульс
+                tp_mult *= 1.1
+            elif momentum < 0.3:  # Слабый импульс
+                tp_mult *= 0.9
+        
+        # Базовый расчет в процентах от цены
+        tp_pct = max((atr * tp_mult) / price, TP_MIN)
+        sl_pct = max((atr * sl_mult) / price, SL_MIN)
+        
+        # Обеспечиваем минимальное соотношение R:R = 1.8
+        min_rr = 1.8
+        if tp_pct / sl_pct < min_rr:
+            tp_pct = sl_pct * min_rr
+        
+        # Ограничиваем максимальными значениями
+        tp_pct = min(tp_pct, TP_MAX)
+        sl_pct = min(sl_pct, SL_MAX)
+        
+        # Рассчитываем абсолютные цены
+        if direction.upper() == 'LONG':
+            tp_price = price * (1 + tp_pct)
+            sl_price = price * (1 - sl_pct)
+        else:  # SHORT
+            tp_price = price * (1 - tp_pct)
+            sl_price = price * (1 + sl_pct)
+        
+        return tp_price, sl_price
+        
+    except Exception as e:
+        logging.error(f"Ошибка в calculate_tp_sl: {e}")
+        # Возвращаем безопасные значения
+        if direction.upper() == 'LONG':
+            return price * 1.015, price * 0.992  # +1.5% TP, -0.8% SL
+        else:
+            return price * 0.985, price * 1.008  # -1.5% TP, +0.8% SL
 
 def check_tp_sl(symbol, price, time, df):
     global adaptive_targets
