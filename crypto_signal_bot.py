@@ -741,12 +741,16 @@ def check_signals(df, symbol):
                     # Рекомендуем плечо
                     leverage = recommend_leverage(score, win_prob * 100)
                     
+                    # Рассчитываем проценты для TP/SL
+                    tp_pct = ((tp_price - last['close']) / last['close']) * 100
+                    sl_pct = ((last['close'] - sl_price) / last['close']) * 100
+                    
                     # Составляем сообщение
                     signal = f"🟢 LONG {symbol}\n"
                     signal += f"Цена: {last['close']:.6f}\n"
                     signal += f"Сила: {strength_label} ({score:.1f})\n"
                     signal += f"Вероятность: {win_prob:.0%}\n"
-                    signal += f"TP: {tp_price:.6f} | SL: {sl_price:.6f}\n"
+                    signal += f"TP: +{tp_pct:.2f}% ({tp_price:.6f}) | SL: -{sl_pct:.2f}% ({sl_price:.6f})\n"
                     signal += f"R:R = 1:{rr_ratio:.1f}\n"
                     signal += f"Плечо: {leverage}\n"
                     signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
@@ -820,12 +824,16 @@ def check_signals(df, symbol):
                     # Рекомендуем плечо
                     leverage = recommend_leverage(score, win_prob * 100)
                     
+                    # Рассчитываем проценты для TP/SL для SHORT
+                    tp_pct = ((last['close'] - tp_price) / last['close']) * 100
+                    sl_pct = ((sl_price - last['close']) / last['close']) * 100
+                    
                     # Составляем сообщение
                     signal = f"🔴 SHORT {symbol}\n"
                     signal += f"Цена: {last['close']:.6f}\n"
                     signal += f"Сила: {strength_label} ({score:.1f})\n"
                     signal += f"Вероятность: {win_prob:.0%}\n"
-                    signal += f"TP: {tp_price:.6f} | SL: {sl_price:.6f}\n"
+                    signal += f"TP: +{tp_pct:.2f}% ({tp_price:.6f}) | SL: -{sl_pct:.2f}% ({sl_price:.6f})\n"
                     signal += f"R:R = 1:{rr_ratio:.1f}\n"
                     signal += f"Плечо: {leverage}\n"
                     signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
