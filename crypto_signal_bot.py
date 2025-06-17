@@ -514,6 +514,10 @@ def check_signals(df, symbol):
         volume = get_24h_volume(symbol)
         if volume < MIN_VOLUME_USDT:
             return []
+        
+        # Дополнительная фильтрация для очень низких объемов
+        if volume < 1_000_000:  # Менее 1М USDT объем за 24ч
+            return []
             
         # 3. Максимальный спред
         if last['spread_pct'] > MAX_SPREAD_PCT:
@@ -534,6 +538,9 @@ def check_signals(df, symbol):
         if prev['ema_fast'] < prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             # Простая проверка MACD
             if last['macd'] > last['macd_signal'] or last['macd'] > 0:
+                # Дополнительная проверка RSI - избегаем перекупленности
+                if last['rsi'] > 80:
+                    return []
                 
                 # Начальный score
                 score = 2.0  # Базовый score за EMA кросс
@@ -583,8 +590,8 @@ def check_signals(df, symbol):
                 if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.4:
                     score -= 0.2
                 
-                # Минимальный порог для сигнала (только сигналы выше 65%)
-                if score >= 4.0:  # Изменено с 1.8 на 4.0 для фильтрации сигналов ниже 65%
+                # Минимальный порог для сигнала (только сигналы выше 70%)
+                if score >= 4.2:  # Повышено с 4.0 до 4.2 для лучшего качества (примерно 70%)
                     label, strength_chance = signal_strength_label(score)
                     leverage = recommend_leverage(score, 50)  # Фиксированный процент
                     rr_ratio = calculate_rr_ratio(score)
@@ -598,6 +605,9 @@ def check_signals(df, symbol):
         if prev['ema_fast'] > prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
             # Простая проверка MACD
             if last['macd'] < last['macd_signal'] or last['macd'] < 0:
+                # Дополнительная проверка RSI - избегаем перепроданности
+                if last['rsi'] < 20:
+                    return []
                 
                 # Начальный score
                 score = 2.0  # Базовый score за EMA кросс
@@ -647,8 +657,8 @@ def check_signals(df, symbol):
                 if last['volume'] < df['volume'].rolling(20).mean().iloc[-1] * 0.4:
                     score -= 0.2
                 
-                # Минимальный порог для сигнала (только сигналы выше 65%)
-                if score >= 4.0:  # Изменено с 1.8 на 4.0 для фильтрации сигналов ниже 65%
+                # Минимальный порог для сигнала (только сигналы выше 70%)
+                if score >= 4.2:  # Повышено с 4.0 до 4.2 для лучшего качества (примерно 70%)
                     label, strength_chance = signal_strength_label(score)
                     leverage = recommend_leverage(score, 50)  # Фиксированный процент
                     rr_ratio = calculate_rr_ratio(score)
@@ -680,7 +690,7 @@ def calculate_rr_ratio(score):
         return 3.5  # Для очень сильных сигналов
     elif score >= 4.5:
         return 3.0  # Для сильных сигналов
-    elif score >= 4.0:  # Адаптируем под новый минимальный порог (65%)
+    elif score >= 4.2:  # Адаптируем под новый минимальный порог (70%)
         return 2.5  # Для умеренных сигналов
     else:
         return 2.0  # Минимальное соотношение
@@ -922,34 +932,34 @@ async def main():
 
 def calculate_tp_sl(df, price, atr, symbol=None):
     """
-    УПРОЩЁННЫЙ расчет TP/SL для 15-минутных фьючерсов
-    Без API-запросов, только на основе ADX и ATR
+    УЛУЧШЕННЫЙ расчет TP/SL для 15-минутных фьючерсов
+    Более консервативный подход для лучшего винрейта
     """
     last = df.iloc[-1]
     adx = last['adx']
     
-    # Простые множители на основе ADX
-    if adx > 25:
-        tp_mult = 2.5
+    # Более консервативные множители на основе ADX
+    if adx > 30:
+        tp_mult = 2.2  # Снижено с 2.5
         sl_mult = 1.0
-    elif adx > 15:
-        tp_mult = 2.0
+    elif adx > 20:
+        tp_mult = 1.8  # Снижено с 2.0
         sl_mult = 0.8
     else:
-        tp_mult = 1.8
+        tp_mult = 1.5  # Снижено с 1.8
         sl_mult = 0.7
     
-    # Корректировка на основе импульса
+    # Корректировка на основе импульса (менее агрессивная)
     if 'momentum' in last and abs(last['momentum']) > 0.8:
-        tp_mult *= 1.2
+        tp_mult *= 1.1  # Снижено с 1.2
     
     # Расчет TP и SL
     tp = max(round((atr * tp_mult) / price, 4), TP_MIN)
     sl = max(round((atr * sl_mult) / price, 4), SL_MIN)
     
-    # Обеспечиваем минимальное соотношение R:R = 2.0
-    if tp / sl < 2.0:
-        tp = sl * 2.0
+    # Обеспечиваем минимальное соотношение R:R = 1.8 (более консервативно)
+    if tp / sl < 1.8:
+        tp = sl * 1.8
     
     # Ограничиваем максимальными значениями
     tp = min(tp, TP_MAX)
