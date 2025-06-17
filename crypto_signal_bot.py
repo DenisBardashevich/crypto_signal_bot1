@@ -979,6 +979,8 @@ async def main():
     last_report_hours = set()  # Часы, когда уже был отправлен отчёт (например, {9, 22})
     # last_long_signal удален, так как долгосрочный анализ отключен
     adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
+    
+    # Убраны лимиты сигналов по просьбе пользователя
 
     # Запускаем Telegram-бота как асинхронную задачу
     asyncio.create_task(telegram_bot())
@@ -1021,6 +1023,8 @@ async def main():
             consecutive_losses = 0
 
     while True:
+        # Убрана логика лимитов сигналов
+        
         # Проверка наличия монет
         if not SYMBOLS:
             error_msg = "❗️ Ошибка: список монет для анализа пуст. Проверь подключение к бирже или фильтры."
@@ -1030,12 +1034,13 @@ async def main():
             continue
         signals_sent = False
         processed_symbols = []
+        all_current_signals = []  # Собираем все потенциальные сигналы
         
         # Асинхронная обработка всех монет параллельно
         tasks = [process_symbol(symbol) for symbol in SYMBOLS]
         results = await asyncio.gather(*tasks)
         
-        # Обработка результатов анализа
+        # Обработка результатов анализа - СНАЧАЛА СОБИРАЕМ, ПОТОМ ФИЛЬТРУЕМ
         for result in results:
             if result is None or len(result) < 2:
                 continue
@@ -1048,32 +1053,96 @@ async def main():
                 if not signals:
                     continue
                 
-                # Сигналы на вход/выход
-                tp = adaptive_targets[symbol]['tp'] if symbol in adaptive_targets else 0.02
-                sl = adaptive_targets[symbol]['sl'] if symbol in adaptive_targets else 0.02
-                tp_price = round(price * (1 + tp), 6)
-                sl_price = round(price * (1 - sl), 6)
-                msg = f"\n\U0001F4B0 Сигналы для {symbol} на {time.strftime('%d.%m.%Y %H:%M')}:\n" + '\n\n'.join(signals)
-                msg += f"\nАдаптивный тейк-профит: +{tp*100:.2f}% ({tp_price}), стоп-лосс: -{sl*100:.2f}% ({sl_price})"
-                await send_telegram_message(msg)
-                logging.info(f"{symbol}: сигнал отправлен в Telegram")
-                signals_sent = True
+                # Получаем правильные TP/SL значения
+                direction = 'SHORT' if '🔴 SHORT' in signals[0] else 'LONG'
+                if symbol in adaptive_targets:
+                    tp_price = adaptive_targets[symbol]['tp']
+                    sl_price = adaptive_targets[symbol]['sl']
+                else:
+                    # Рассчитываем TP/SL правильно
+                    tp_price, sl_price = calculate_tp_sl(df, price, atr, direction)
+                    adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
                 
-                # Открытие позиций по сигналам
-                for s in signals:
-                    if 'ЛОНГ!' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'long'):
-                        score = evaluate_signal_strength(df, symbol, 'BUY')[0]  # Получаем только score, без pattern_name
-                        record_trade(symbol, 'OPEN', price, time, 'long', score=score)
-                        open_trade(symbol, price, time, 'long', atr=atr, score=score)
-                        logging.info(f"{symbol}: LONG открыт по цене {price}")
-                    if 'ШОРТ!' in s and (symbol not in open_trades or open_trades[symbol]['side'] != 'short'):
-                        score = evaluate_signal_strength(df, symbol, 'SELL')[0]  # Получаем только score, без pattern_name
-                        record_trade(symbol, 'OPEN', price, time, 'short', score=score)
-                        open_trade(symbol, price, time, 'short', atr=atr, score=score)
-                        logging.info(f"{symbol}: SHORT открыт по цене {price}")
+                # Рассчитываем проценты для отображения
+                if direction == 'LONG':
+                    tp_pct = ((tp_price - price) / price) * 100
+                    sl_pct = ((price - sl_price) / price) * 100
+                else:  # SHORT
+                    tp_pct = ((price - tp_price) / price) * 100
+                    sl_pct = ((sl_price - price) / price) * 100
+                
+                # Извлекаем силу сигнала для сортировки
+                signal_strength = 0
+                try:
+                    for signal in signals:
+                        if 'Сила:' in signal:
+                            strength_line = [line for line in signal.split('\n') if 'Сила:' in line][0]
+                            signal_strength = float(strength_line.split('(')[1].split(')')[0])
+                            break
+                except:
+                    signal_strength = 0
+                
+                # Собираем информацию о сигнале
+                signal_info = {
+                    'signals': signals,
+                    'symbol': symbol,
+                    'price': price,
+                    'time': time,
+                    'df': df,
+                    'atr': atr,
+                    'tp_price': tp_price,
+                    'sl_price': sl_price,
+                    'tp_pct': tp_pct,
+                    'sl_pct': sl_pct,
+                    'strength': signal_strength,
+                    'direction': direction
+                }
+                all_current_signals.append(signal_info)
             else:
                 _, symbol = result
                 logging.warning(f"Неполный результат для {symbol}, пропускаем")
+        
+        # Отправляем все найденные надежные сигналы (без лимитов)
+        if all_current_signals and trading_enabled:
+            # Сортируем по силе сигнала (берем самые сильные первыми)
+            all_current_signals.sort(key=lambda x: x['strength'], reverse=True)
+            logging.info(f"Найдено {len(all_current_signals)} надежных сигналов")
+            
+            # Отправляем группой
+            combined_msg = f"💰 Надежные сигналы на {all_current_signals[0]['time'].strftime('%d.%m.%Y %H:%M')}:\n\n"
+            
+            for signal_info in all_current_signals:
+                signals = signal_info['signals']
+                tp_pct = signal_info['tp_pct']
+                sl_pct = signal_info['sl_pct']
+                tp_price = signal_info['tp_price']
+                sl_price = signal_info['sl_price']
+                
+                combined_msg += '\n'.join(signals) + "\n\n"
+                
+                # Открываем виртуальные позиции
+                symbol = signal_info['symbol']
+                price = signal_info['price']
+                time = signal_info['time']
+                df = signal_info['df']
+                atr = signal_info['atr']
+                direction = signal_info['direction']
+                
+                for s in signals:
+                    if ('🟢 LONG' in s or 'ЛОНГ!' in s) and (symbol not in open_trades or open_trades[symbol]['side'] != 'long'):
+                        score = evaluate_signal_strength(df, symbol, 'BUY')[0]
+                        record_trade(symbol, 'OPEN', price, time, 'long', score=score)
+                        open_trade(symbol, price, time, 'long', atr=atr, score=score)
+                        logging.info(f"{symbol}: LONG открыт по цене {price}")
+                    elif ('🔴 SHORT' in s or 'ШОРТ!' in s) and (symbol not in open_trades or open_trades[symbol]['side'] != 'short'):
+                        score = evaluate_signal_strength(df, symbol, 'SELL')[0]
+                        record_trade(symbol, 'OPEN', price, time, 'short', score=score)
+                        open_trade(symbol, price, time, 'short', atr=atr, score=score)
+                        logging.info(f"{symbol}: SHORT открыт по цене {price}")
+            
+            combined_msg += f"📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
+            await send_telegram_message(combined_msg)
+            signals_sent = True
         # Долгосрочный анализ временно отключен (функции analyze_long и check_signals_long не определены)
         # Можно включить позже при необходимости
         # Alive-отчёт раз в 6 часов + список обработанных монет  
@@ -1187,10 +1256,10 @@ def check_tp_sl(symbol, price, time, df):
     entry = trade['entry_price']
     score = trade.get('score', None)
     
-    # Получаем или рассчитываем TP/SL
+    # Получаем или рассчитываем TP/SL (теперь это абсолютные цены)
     if symbol in adaptive_targets:
-        tp = adaptive_targets[symbol]['tp'] 
-        sl = adaptive_targets[symbol]['sl']
+        tp_price = adaptive_targets[symbol]['tp'] 
+        sl_price = adaptive_targets[symbol]['sl']
     else:
         # Рассчитываем ATR
         if 'atr' in trade and trade['atr'] > 0:
@@ -1198,22 +1267,20 @@ def check_tp_sl(symbol, price, time, df):
         else:
             atr = df['atr'].iloc[-1] if 'atr' in df.columns else price * 0.01
             
-        # Рассчитываем TP/SL с учетом score
-        tp, sl = calculate_tp_sl(df, price, atr, symbol)
-        adaptive_targets[symbol] = {'tp': tp, 'sl': sl}
+        # Рассчитываем TP/SL - возвращает абсолютные цены
+        direction = 'LONG' if side == 'long' else 'SHORT'
+        tp_price, sl_price = calculate_tp_sl(df, entry, atr, direction)
+        adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
     
-    # Для long
+    # Для long позиций
     if side == 'long':
-        tp_price = entry * (1 + tp)
-        sl_price = entry * (1 - sl)
-        
-        # Проверка достижения TP или SL
+        # Проверка достижения TP или SL (tp_price и sl_price уже абсолютные значения)
         if price >= tp_price or price <= sl_price:
             reason = 'TP' if price >= tp_price else 'SL'
             result = 'УДАЧНО' if reason == 'TP' else 'НЕУДАЧНО'
             pnl_pct = ((price - entry) / entry) * 100
             
-            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry}, выход {price}, P&L: {pnl_pct:.2f}%, результат: {result}"
+            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {result}"
             asyncio.create_task(send_telegram_message(msg))
             
             # Записываем результат в портфель
@@ -1221,18 +1288,15 @@ def check_tp_sl(symbol, price, time, df):
             close_trade(symbol)
             return True
     
-    # Для short
+    # Для short позиций
     elif side == 'short':
-        tp_price = entry * (1 - tp)  # Для SHORT TP ниже входа
-        sl_price = entry * (1 + sl)  # Для SHORT SL выше входа
-        
-        # Проверка достижения TP или SL
+        # Проверка достижения TP или SL (tp_price и sl_price уже абсолютные значения)
         if price <= tp_price or price >= sl_price:
             reason = 'TP' if price <= tp_price else 'SL'
             result = 'УДАЧНО' if reason == 'TP' else 'НЕУДАЧНО'
             pnl_pct = ((entry - price) / entry) * 100
             
-            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry}, выход {price}, P&L: {pnl_pct:.2f}%, результат: {result}"
+            msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {result}"
             asyncio.create_task(send_telegram_message(msg))
             
             # Записываем результат в портфель
