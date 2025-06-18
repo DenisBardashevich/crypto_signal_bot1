@@ -377,22 +377,24 @@ def evaluate_signal_strength(df, symbol, action):
         now_utc = datetime.now(timezone.utc)
         is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
-        # 1. RSI анализ (вес 1.0)
+        # 1. RSI анализ (вес 1.0) - ЛОГИКА ИЗМЕНЕНА НА ПОИСК ПОДТВЕРЖДЕНИЯ
         rsi_score = 0
         if action == 'BUY':
-            if last['rsi'] <= RSI_OVERSOLD:
+            # Сигнал, когда RSI выходит из зоны перепроданности (подтверждение)
+            if prev['rsi'] <= (RSI_OVERSOLD + 5) and last['rsi'] > prev['rsi']: # Выход из зоны <=25
                 rsi_score = 2.0
-            elif last['rsi'] <= (RSI_OVERSOLD + 10):
+            elif prev['rsi'] <= (RSI_OVERSOLD + 10) and last['rsi'] > prev['rsi']: # Выход из зоны <=30
                 rsi_score = 1.5
-            elif 30 <= last['rsi'] <= 60:
-                rsi_score = 1.0
+            elif last['rsi'] > prev['rsi'] and 40 < last['rsi'] < 60: # Умеренный рост в нейтральной зоне
+                rsi_score = 0.5
         elif action == 'SELL':
-            if last['rsi'] >= RSI_OVERBOUGHT:
+            # Сигнал, когда RSI выходит из зоны перекупленности
+            if prev['rsi'] >= (RSI_OVERBOUGHT - 5) and last['rsi'] < prev['rsi']: # Выход из зоны >=75
                 rsi_score = 2.0
-            elif last['rsi'] >= (RSI_OVERBOUGHT - 10):
+            elif prev['rsi'] >= (RSI_OVERBOUGHT - 10) and last['rsi'] < prev['rsi']: # Выход из зоны >=70
                 rsi_score = 1.5
-            elif 40 <= last['rsi'] <= 70:
-                rsi_score = 1.0
+            elif last['rsi'] < prev['rsi'] and 40 < last['rsi'] < 60: # Умеренное падение в нейтральной зоне
+                rsi_score = 0.5
         score += rsi_score * WEIGHT_RSI
         
         # 2. MACD анализ (вес 1.2)
@@ -1200,13 +1202,13 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
         if 'volatility' in last:
             vol = last['volatility']
             if vol > HIGH_VOLATILITY_THRESHOLD:
-                # Высокая волатильность - уменьшаем TP, увеличиваем SL
-                tp_mult *= 0.8
-                sl_mult *= 1.2
+                # Высокая волатильность - увеличиваем TP для захвата большого движения, и сужаем SL для безопасности
+                tp_mult *= 1.2  # было 0.8
+                sl_mult *= 0.8  # было 1.2
             elif vol < LOW_VOLATILITY_THRESHOLD:
-                # Низкая волатильность - можем взять больше прибыли
-                tp_mult *= 1.1
-                sl_mult *= 0.9
+                # Низкая волатильность - можем взять меньше прибыли, т.к. больших движений нет
+                tp_mult *= 0.9 # было 1.1
+                sl_mult *= 1.1 # было 0.9
         
         # Учитываем импульс цены
         if 'momentum' in last:
