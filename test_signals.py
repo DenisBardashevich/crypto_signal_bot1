@@ -7,7 +7,7 @@ from datetime import datetime
 from config import *
 from crypto_signal_bot import (
     analyze, check_signals, evaluate_signal_strength, 
-    signal_strength_label, get_24h_volume
+    signal_strength_label, get_24h_volume, SYMBOLS
 )
 
 # Настройка логирования
@@ -27,31 +27,22 @@ EXCHANGE = ccxt.bybit({
 def get_futures_symbols():
     """Получает список популярных фьючерсных пар с достаточным объёмом."""
     try:
-        markets = EXCHANGE.load_markets()
-        futures_symbols = []
-        
-        for symbol, market in markets.items():
-            if (market['type'] == 'swap' and 
-                market['quote'] == 'USDT' and 
-                market['active'] and
-                ':USDT' in symbol):
-                futures_symbols.append(symbol)
-        
-        # Ограничиваем до 45 пар для тестирования
-        return futures_symbols[:45]
+        # Используем тот же список что и в основном боте
+        return SYMBOLS
     except Exception as e:
         logging.error(f"Ошибка получения списка пар: {e}")
-        # Резервный список
+        # Резервный список топовых монет для 15м торговли
         return [
             'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 
             'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT', 
             'LINK/USDT:USDT', 'BNB/USDT:USDT', 'ADA/USDT:USDT', 
-            'DOT/USDT:USDT'
+            'DOT/USDT:USDT', '1000PEPE/USDT:USDT', 'WIF/USDT:USDT',
+            'TIA/USDT:USDT', 'SEI/USDT:USDT', 'OP/USDT:USDT'
         ]
 
 # Получаем список пар для тестирования
 TEST_SYMBOLS = get_futures_symbols()
-print(f"FUTURES SYMBOLS: {TEST_SYMBOLS}")
+print(f"ТЕСТИРУЕМ РЕАЛЬНЫЕ МОНЕТЫ ИЗ БОТА: {len(TEST_SYMBOLS)} пар")
 
 def get_ohlcv(symbol):
     """Получить исторические данные по монете."""
@@ -129,17 +120,28 @@ def run_test():
         signal_rate = (signals_found / total_tested) * 100
         print(f"📈 Частота сигналов: {signal_rate:.1f}% от пар")
         
-        # Прогноз на день (96 проверок в день при интервале 15 минут)
-        daily_projection = (signals_found / total_tested) * total_tested * (1440 / SIGNAL_COOLDOWN_MINUTES)
+        # Правильный прогноз на день:
+        # 15м таймфрейм = 96 проверок в день
+        # Кулдаун 30 минут = 2 таймфрейма = проверка каждые 30 минут = 48 проверок в день
+        checks_per_day = 24 * 60 / SIGNAL_COOLDOWN_MINUTES  # 48 проверок в день
+        daily_projection = (signals_found / total_tested) * total_tested * checks_per_day / total_tested
+        daily_projection = signals_found * checks_per_day / total_tested if total_tested > 0 else 0
+        
         print(f"🔮 Прогноз сигналов в день: ~{daily_projection:.0f} сигналов")
+        print(f"⏰ Проверок в день с кулдауном {SIGNAL_COOLDOWN_MINUTES}м: {checks_per_day:.0f}")
         
         if daily_projection >= 10:
             print("✅ ЦЕЛЬ ДОСТИГНУТА: 10+ сигналов в день")
         else:
             print("⚠️ Нужно ещё снизить пороги для достижения 10+ сигналов")
+            print(f"💡 Для 10+ сигналов нужна частота: {10 / checks_per_day * 100:.1f}% от пар")
     
     if signals_found == 0:
         print("❌ Сигналов не найдено - возможно, пороги слишком строгие")
+        print("💡 Рекомендации:")
+        print("   - Снизить MIN_COMPOSITE_SCORE с 7.0 до 6.5")
+        print("   - Снизить MIN_ADX с 25 до 20")
+        print("   - Увеличить RSI диапазоны")
     
     print(f"{'='*60}")
 
