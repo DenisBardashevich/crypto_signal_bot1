@@ -754,9 +754,8 @@ def check_signals(df, symbol):
                     signal += f"Цена: {last['close']:.6f}\n"
                     signal += f"Сила: {strength_label} ({score:.1f})\n"
                     signal += f"Вероятность: {win_prob:.0%}\n"
-                    signal += f"TP: +{tp_pct:.2f}% ({tp_price:.6f}) | SL: -{sl_pct:.2f}% ({sl_price:.6f})\n"
+                    signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
                     signal += f"R:R = 1:{rr_ratio:.1f}\n"
-                    signal += f"Плечо: {leverage}\n"
                     signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
                     
                     # Добавляем детали триггеров
@@ -837,9 +836,8 @@ def check_signals(df, symbol):
                     signal += f"Цена: {last['close']:.6f}\n"
                     signal += f"Сила: {strength_label} ({score:.1f})\n"
                     signal += f"Вероятность: {win_prob:.0%}\n"
-                    signal += f"TP: +{tp_pct:.2f}% ({tp_price:.6f}) | SL: -{sl_pct:.2f}% ({sl_price:.6f})\n"
+                    signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
                     signal += f"R:R = 1:{rr_ratio:.1f}\n"
-                    signal += f"Плечо: {leverage}\n"
                     signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
                     
                     # Добавляем детали триггеров
