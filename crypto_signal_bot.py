@@ -35,44 +35,47 @@ EXCHANGE = ccxt.bybit({
     }
 })
 
-# ОПТИМИЗИРОВАННЫЙ список монет (удалены неэффективные, добавлены лучшие)
+# ФИНАЛЬНО ОПТИМИЗИРОВАННЫЙ список (смешанный: топовые + проверенные + новые эффективные)
 TOP_SYMBOLS = [
-    # ТОПОВЫЕ ЛИКВИДНЫЕ (проверенные, оставляем)
+    # ⭐ ПРОВЕРЕННЫЕ ПОБЕДИТЕЛИ (высокий винрейт)
+    'DOGE/USDT:USDT',  # 100% винрейт, +1.36% P&L
+    'YFI/USDT:USDT',   # 100% винрейт, +1.12% P&L
+    'RUNE/USDT:USDT',  # 100% винрейт, +1.40% P&L (новый!)
+    'TRX/USDT:USDT',   # 66.7% винрейт, +0.34% P&L
+    'TON/USDT:USDT',   # 66.7% винрейт, +0.41% P&L (новый!)
+    'SUI/USDT:USDT',   # 50% винрейт, +0.69% P&L
+    'SEI/USDT:USDT',   # 50% винрейт, +0.42% P&L
+    'VET/USDT:USDT',   # 50% винрейт, +0.36% P&L (новый!)
+    
+    # 💎 ТОПОВЫЕ ЛИКВИДНЫЕ (основа портфеля - могут активироваться)
     'BTC/USDT:USDT', 'ETH/USDT:USDT', 'BNB/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
     'ADA/USDT:USDT', 'AVAX/USDT:USDT', 'MATIC/USDT:USDT',
     
-    # ЛУЧШИЕ ПО РЕЗУЛЬТАТАМ АНАЛИЗА (высокий винрейт)
-    'DOGE/USDT:USDT',  # 100% винрейт!
-    'TRX/USDT:USDT',   # 66.7% винрейт
-    'SUI/USDT:USDT',   # 50% винрейт
-    'SEI/USDT:USDT',   # 50% винрейт
+    # 🎲 МЕМКОИНЫ (высокая волатильность - потенциал для сигналов)
+    'SHIB/USDT:USDT', 'PEPE/USDT:USDT', '1000PEPE/USDT:USDT', 'FLOKI/USDT:USDT', 
+    'BONK/USDT:USDT', 'WIF/USDT:USDT',
     
-    # МЕМКОИНЫ И ВОЛАТИЛЬНЫЕ (хорошие движения)
-    'SHIB/USDT:USDT', 'PEPE/USDT:USDT', '1000PEPE/USDT:USDT', 'FLOKI/USDT:USDT', 'BONK/USDT:USDT',
-    
-    # НОВЫЕ ПЕРСПЕКТИВНЫЕ МОНЕТЫ (вместо плохих)
-    'SAND/USDT:USDT',   # Gaming токен с хорошей волатильностью  
-    'MANA/USDT:USDT',   # Metaverse токен
-    'CRV/USDT:USDT',    # DeFi с хорошими движениями
-    'COMP/USDT:USDT',   # DeFi протокол
-    'SUSHI/USDT:USDT',  # DeFi AMM
-    'YFI/USDT:USDT',    # DeFi yield farming
-    'SNX/USDT:USDT',    # Synthetic assets
-    '1INCH/USDT:USDT',  # DEX агрегатор
-    'GMT/USDT:USDT',    # Move-to-earn
-    'GALA/USDT:USDT',   # Gaming токен
-    
-    # СТАБИЛЬНЫЕ DEFI (хорошая ликвидность)
+    # 🔥 АКТИВНЫЕ АЛЬТКОИНЫ (средняя волатильность)
     'UNI/USDT:USDT', 'AAVE/USDT:USDT', 'MKR/USDT:USDT', 'LDO/USDT:USDT',
+    'ARB/USDT:USDT', 'OP/USDT:USDT', 'LRC/USDT:USDT', 
     
-    # LAYER 2 И НОВЫЕ ТЕХНОЛОГИИ (но без плохих)
-    'ARB/USDT:USDT', 'RNDR/USDT:USDT', 'INJ/USDT:USDT',
+    # 🎮 GAMING И NFT (периодически активные)
+    'SAND/USDT:USDT', 'MANA/USDT:USDT', 'AXS/USDT:USDT', 'ENJ/USDT:USDT',
     
-    # ПЕРСПЕКТИВНЫЕ АЛЬТКОИНЫ (оставляем лучшие)
-    'NOT/USDT:USDT', 'MAVIA/USDT:USDT', 'ZRO/USDT:USDT', 'PYTH/USDT:USDT', 'JUP/USDT:USDT',
+    # 🚀 AI И TECH (перспективные)
+    'RNDR/USDT:USDT', 'FET/USDT:USDT', 'INJ/USDT:USDT',
     
-    # JASMY оставляем (может активироваться)
-    'JASMY/USDT:USDT',
+    # 📈 КЛАССИЧЕСКИЕ АЛЬТЫ (стабильность)
+    'LTC/USDT:USDT', 'BCH/USDT:USDT', 'ETC/USDT:USDT',
+    
+    # 🆕 НОВЫЕ ПЕРСПЕКТИВНЫЕ (2024-2025)
+    'JUP/USDT:USDT', 'PYTH/USDT:USDT', 'TIA/USDT:USDT', 'ALT/USDT:USDT',
+    'PIXEL/USDT:USDT', 'PORTAL/USDT:USDT', 'STX/USDT:USDT', 'ORDI/USDT:USDT',
+    
+    # 💼 ДОПОЛНИТЕЛЬНЫЕ (для диверсификации)
+    'THETA/USDT:USDT', 'FIL/USDT:USDT', 'COMP/USDT:USDT', 'SUSHI/USDT:USDT',
+    'CAKE/USDT:USDT', 'CRV/USDT:USDT', 'IMX/USDT:USDT', 'ALICE/USDT:USDT',
+    'GMT/USDT:USDT', 'MAVIA/USDT:USDT', 'JTO/USDT:USDT', 'STRK/USDT:USDT'
 ]
 markets = EXCHANGE.load_markets()
 # Фильтруем только те пары, которые есть на фьючерсах (swap) и активны
