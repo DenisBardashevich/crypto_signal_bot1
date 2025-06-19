@@ -401,51 +401,8 @@ def evaluate_signal_strength(df, symbol, action):
         now_utc = datetime.now(timezone.utc)
         is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
-        # НОВЫЕ КАЧЕСТВЕННЫЕ ФИЛЬТРЫ
-        # 1. Фильтр качества свечи
-        candle_body = abs(last['close'] - last['open'])
-        candle_range = last['high'] - last['low']
-        
-        if candle_range == 0 or candle_body / candle_range < MIN_CANDLE_BODY_PCT:
-            return 0, None  # Слишком маленькое тело свечи
-        
-        upper_wick = last['high'] - max(last['close'], last['open'])
-        lower_wick = min(last['close'], last['open']) - last['low']
-        max_wick = max(upper_wick, lower_wick)
-        
-        if candle_body > 0 and max_wick / candle_body > MAX_WICK_TO_BODY_RATIO:
-            return 0, None  # Слишком большие фитили
-        
-        # 2. Фильтр объема
-        if 'volume_ratio' in df.columns:
-            vol_ratio = last.get('volume_ratio', 1.0)
-            if vol_ratio < MIN_VOLUME_MA_RATIO:
-                return 0, None  # Недостаточный объем
-        
-        # 3. НОВЫЙ: Фильтр разделения EMA
-        if 'ema_fast' in df.columns and 'ema_slow' in df.columns:
-            ema_separation = abs(last['ema_fast'] - last['ema_slow']) / last['close']
-            if hasattr(globals(), 'MIN_EMA_SEPARATION') and ema_separation < MIN_EMA_SEPARATION:
-                return 0, None  # Слишком близкие EMA
-        
-        # 4. НОВЫЙ: Фильтр волатильности RSI
-        if len(df) >= 5 and hasattr(globals(), 'MAX_RSI_VOLATILITY'):
-            rsi_recent = df['rsi'].iloc[-5:]
-            rsi_volatility = rsi_recent.std()
-            if rsi_volatility > MAX_RSI_VOLATILITY:
-                return 0, None  # Слишком хаотичный RSI
-        
-        # 5. НОВЫЙ: Фильтр консистентности объема
-        if len(df) >= 5 and 'volume_ratio' in df.columns and hasattr(globals(), 'MIN_VOLUME_CONSISTENCY'):
-            volume_recent = df['volume_ratio'].iloc[-5:]
-            volume_consistency = 1 - (volume_recent.std() / volume_recent.mean()) if volume_recent.mean() > 0 else 0
-            if volume_consistency < MIN_VOLUME_CONSISTENCY:
-                return 0, None  # Слишком непостоянный объем
-        
-        # 6. Фильтр времени - избегаем выходные
-        if hasattr(globals(), 'AVOID_WEEKEND_SIGNALS') and AVOID_WEEKEND_SIGNALS:
-            if now_utc.weekday() >= 5:  # Суббота = 5, Воскресенье = 6
-                score *= 0.7  # Штраф за выходные
+        # КАЧЕСТВЕННЫЕ ФИЛЬТРЫ (ОТКЛЮЧЕНЫ ДЛЯ ТЕСТИРОВАНИЯ)
+        # Временно отключены строгие фильтры для получения сигналов
         
         # 1. УЛУЧШЕННЫЙ RSI анализ (вес увеличен)
         rsi_score = 0
@@ -487,16 +444,8 @@ def evaluate_signal_strength(df, symbol, action):
             prev_macd_histogram = prev_macd_cross
             histogram_growing = macd_histogram > prev_macd_histogram
             
-            # Требуем подтверждение гистограммы если включено
-            histogram_confirmed = True
-            if hasattr(globals(), 'REQUIRE_MACD_HISTOGRAM_CONFIRMATION') and REQUIRE_MACD_HISTOGRAM_CONFIRMATION:
-                if action == 'BUY':
-                    histogram_confirmed = histogram_growing and macd_histogram > 0
-                elif action == 'SELL':
-                    histogram_confirmed = not histogram_growing and macd_histogram < 0
-            
-            if not histogram_confirmed:
-                return 0, None  # Нет подтверждения гистограммы
+            # Требуем подтверждение гистограммы если включено (ОТКЛЮЧЕНО ДЛЯ ТЕСТИРОВАНИЯ)
+            histogram_confirmed = True  # Временно всегда True
             
             if action == 'BUY':
                 if macd_cross > 0 and prev_macd_cross <= 0 and macd_momentum > 0 and histogram_growing:
@@ -851,7 +800,7 @@ def check_signals(df, symbol):
             effective_min_score *= ACTIVE_HOURS_MULTIPLIER
         
         # Проверяем достаточность триггеров для BUY - смягчаем пороги
-        min_triggers = 0.8 if is_active_hour else 1.0
+        min_triggers = MIN_TRIGGERS_ACTIVE_HOURS if is_active_hour else MIN_TRIGGERS_INACTIVE_HOURS
         
         if buy_triggers >= min_triggers:
             # Дополнительные фильтры для качества

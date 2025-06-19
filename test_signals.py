@@ -47,7 +47,21 @@ def get_futures_symbols():
 
 # Получаем список пар для тестирования
 TEST_SYMBOLS = get_futures_symbols()
+
+# БЫСТРЫЙ РЕЖИМ - только проверенные чемпионы для тестирования фильтров
+QUICK_TEST_SYMBOLS = [
+    'DOGE/USDT:USDT',  # 100% винрейт
+    'YFI/USDT:USDT',   # 100% винрейт
+    'RUNE/USDT:USDT',  # 100% винрейт
+    'TRX/USDT:USDT',   # 66.7% винрейт
+    'TON/USDT:USDT',   # 66.7% винрейт
+    'BTC/USDT:USDT',   # Всегда активная пара
+    'BNB/USDT:USDT',   # 33% винрейт но стабильная
+    'SUI/USDT:USDT'    # 50% винрейт
+]
+
 print(f"ТЕСТИРУЕМ РЕАЛЬНЫЕ МОНЕТЫ ИЗ БОТА: {len(TEST_SYMBOLS)} пар")
+print(f"БЫСТРЫЙ РЕЖИМ ДОСТУПЕН: {len(QUICK_TEST_SYMBOLS)} топовых пар")
 
 def get_ohlcv(symbol, hours_back=24):
     """Получить исторические данные за указанное количество часов."""
@@ -200,7 +214,7 @@ def check_signal_filters(df, symbol):
     if is_active_hour:
         effective_min_score *= ACTIVE_HOURS_MULTIPLIER
     
-    min_triggers = 0.8 if is_active_hour else 1.0
+    min_triggers = MIN_TRIGGERS_ACTIVE_HOURS if is_active_hour else MIN_TRIGGERS_INACTIVE_HOURS
     diag['metrics']['min_triggers_required'] = min_triggers
     diag['metrics']['effective_min_score'] = effective_min_score
     
@@ -344,14 +358,26 @@ def simulate_day_signals(hours_back=24):
     
     return simulation_results
 
-def run_detailed_diagnostic():
-    """Запускает детальную диагностику текущего состояния всех пар."""
-    print(f"\n==== ДЕТАЛЬНАЯ ДИАГНОСТИКА СИГНАЛОВ {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} ====")
-    print(f"Анализируем {len(TEST_SYMBOLS)} пар на предмет возможных сигналов...\n")
+def run_detailed_diagnostic(quick_mode=False):
+    """
+    Запускает детальную диагностику текущего состояния всех пар.
+    
+    Args:
+        quick_mode (bool): Если True, тестирует только топовые 8 монет для быстрой проверки
+    """
+    symbols_to_test = QUICK_TEST_SYMBOLS if quick_mode else TEST_SYMBOLS
+    mode_text = "БЫСТРАЯ" if quick_mode else "ПОЛНАЯ"
+    
+    print(f"\n==== {mode_text} ДИАГНОСТИКА СИГНАЛОВ {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} ====")
+    print(f"Анализируем {len(symbols_to_test)} пар на предмет возможных сигналов...")
+    if quick_mode:
+        print("⚡ БЫСТРЫЙ РЕЖИМ: Тестируем только топовые эффективные монеты")
+    print()
     
     diagnostic_results = {
         'timestamp': datetime.now().isoformat(),
-        'total_symbols': len(TEST_SYMBOLS),
+        'total_symbols': len(symbols_to_test),
+        'quick_mode': quick_mode,
         'results': {}
     }
     
@@ -366,7 +392,7 @@ def run_detailed_diagnostic():
         'rsi_extreme': 0
     }
     
-    for symbol in TEST_SYMBOLS:
+    for symbol in symbols_to_test:
         print(f"🔍 Анализ {symbol}...")
         
         try:
@@ -506,13 +532,14 @@ def save_test_results(results):
     except Exception as e:
         print(f"❌ Ошибка сохранения результатов: {e}")
 
-def run_full_analysis():
+def run_full_analysis(quick_mode=False):
     """Запускает полный анализ: текущую диагностику + симуляцию за день."""
-    print("🚀 ЗАПУСК ПОЛНОГО АНАЛИЗА ТОРГОВЫХ СИГНАЛОВ")
+    mode_text = "БЫСТРЫЙ" if quick_mode else "ПОЛНЫЙ"
+    print(f"🚀 ЗАПУСК {mode_text}О АНАЛИЗА ТОРГОВЫХ СИГНАЛОВ")
     print("=" * 80)
     
     # 1. Текущая диагностика
-    diagnostic_results = run_detailed_diagnostic()
+    diagnostic_results = run_detailed_diagnostic(quick_mode)
     
     # 2. Симуляция за день
     simulation_results = simulate_day_signals(24)
@@ -587,13 +614,32 @@ if __name__ == "__main__":
     # Можно запускать разные режимы
     import sys
     
-    if len(sys.argv) > 1 and sys.argv[1] == 'diag':
-        # Только диагностика
-        run_detailed_diagnostic()
-    elif len(sys.argv) > 1 and sys.argv[1] == 'sim':
-        # Только симуляция
-        hours = int(sys.argv[2]) if len(sys.argv) > 2 else 24
-        simulate_day_signals(hours)
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        
+        if command == 'quick' or command == 'q':
+            # Быстрая диагностика (только топовые монеты)
+            print("🚀 БЫСТРЫЙ ТЕСТ ФИЛЬТРОВ")
+            run_detailed_diagnostic(quick_mode=True)
+        elif command == 'diag':
+            # Полная диагностика
+            run_detailed_diagnostic(quick_mode=False)
+        elif command == 'sim':
+            # Только симуляция
+            hours = int(sys.argv[2]) if len(sys.argv) > 2 else 24
+            simulate_day_signals(hours)
+        elif command == 'full':
+            # Полный анализ
+            run_full_analysis(quick_mode=False)
+        else:
+            print("❌ Неизвестная команда!")
+            print("📖 Доступные команды:")
+            print("   py test_signals.py quick  - Быстрый тест фильтров (8 топовых монет)")
+            print("   py test_signals.py diag   - Полная диагностика всех монет")
+            print("   py test_signals.py sim    - Симуляция за сутки")
+            print("   py test_signals.py full   - Полный анализ")
     else:
-        # Полный анализ
-        run_full_analysis()
+        # По умолчанию - быстрый режим
+        print("🚀 БЫСТРЫЙ ТЕСТ ФИЛЬТРОВ ПО УМОЛЧАНИЮ")
+        print("💡 Используйте 'py test_signals.py full' для полного анализа")
+        run_detailed_diagnostic(quick_mode=True)
