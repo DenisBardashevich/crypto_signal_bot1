@@ -14,6 +14,11 @@ import logging
 from collections import defaultdict
 from config import *
 import numpy as np
+import warnings
+
+# Подавляем RuntimeWarnings от библиотеки TA (деление на ноль в некоторых индикаторах)
+warnings.filterwarnings('ignore', category=RuntimeWarning)
+warnings.filterwarnings('ignore', message='invalid value encountered in scalar divide')
 
 # ========== НАСТРОЙКИ ==========
 # Удаляю старые параметры, заменяю на импорт из config.py
@@ -748,6 +753,10 @@ def check_signals(df, symbol):
         if now - last_signal_time[symbol] < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES):
             return []
         
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем открытые позиции - НЕ ОТКРЫВАЕМ противоположные сигналы!
+        if symbol in open_trades:
+            return []  # Уже есть открытая позиция по этому символу
+        
         # Определяем адаптивные пороги
         current_volatility = last.get('volatility', 0.02)
         is_high_vol = current_volatility > HIGH_VOLATILITY_THRESHOLD
@@ -802,55 +811,6 @@ def check_signals(df, symbol):
         # Проверяем достаточность триггеров для BUY - смягчаем пороги
         min_triggers = MIN_TRIGGERS_ACTIVE_HOURS if is_active_hour else MIN_TRIGGERS_INACTIVE_HOURS
         
-        if buy_triggers >= min_triggers:
-            # Дополнительные фильтры для качества
-            
-            # Избегаем экстремальной перекупленности
-            if last['rsi'] > 85:
-                pass  # Пропускаем сигнал
-            else:
-                # Генерируем детальную оценку
-                score, pattern = evaluate_signal_strength(df, symbol, 'BUY')
-                
-                if score >= effective_min_score:
-                    # Получаем метку силы
-                    strength_label, win_prob = signal_strength_label(score)
-                    
-                    # Рассчитываем TP/SL
-                    tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'])
-                    rr_ratio = calculate_rr_ratio(score)
-                    
-                    # Рекомендуем плечо
-                    leverage = recommend_leverage(score, win_prob * 100)
-                    
-                    # Рассчитываем проценты для TP/SL
-                    tp_pct = ((tp_price - last['close']) / last['close']) * 100
-                    sl_pct = ((last['close'] - sl_price) / last['close']) * 100
-                    
-                    # Составляем сообщение
-                    signal = f"🟢 LONG {symbol}\n"
-                    signal += f"Цена: {last['close']:.6f}\n"
-                    signal += f"Сила: {strength_label} ({score:.1f})\n"
-                    signal += f"Вероятность: {win_prob:.0%}\n"
-                    signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
-                    signal += f"R:R = 1:{rr_ratio:.1f}\n"
-                    signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
-                    
-                    # Добавляем детали триггеров
-                    signal += f"Триггеры: {buy_triggers:.1f}"
-                    if USE_VWAP and 'vwap' in df.columns:
-                        signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
-                    if 'bb_width' in df.columns:
-                        signal += f" | BB: {last['bb_width']*100:.1f}%"
-                    
-                    signals.append(signal)
-                    
-                    # Открываем виртуальную сделку
-                    open_trade(symbol, last['close'], now, 'long', last['atr'], score)
-                    record_trade(symbol, 'OPEN', last['close'], now, 'long', score)
-                    
-                    last_signal_time[symbol] = now
-        
         # === СИГНАЛ НА ПРОДАЖУ ===
         sell_triggers = 0
         
@@ -882,56 +842,104 @@ def check_signals(df, symbol):
             if vwap_dev >= 0 and vwap_dev <= VWAP_DEVIATION_THRESHOLD * 2:  # Выше VWAP но не критично
                 sell_triggers += 0.3
         
-        # Проверяем достаточность триггеров для SELL
-        if sell_triggers >= min_triggers:
-            # Дополнительные фильтры для качества
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Генерируем ТОЛЬКО ОДИН тип сигнала (сильнейший)
+        strongest_signal = None
+        strongest_score = 0
+        
+        # Проверяем BUY сигнал
+        if buy_triggers >= min_triggers and last['rsi'] <= 85:
+            buy_score, buy_pattern = evaluate_signal_strength(df, symbol, 'BUY')
+            if buy_score >= effective_min_score:
+                strongest_signal = 'BUY'
+                strongest_score = buy_score
+        
+        # Проверяем SELL сигнал
+        if sell_triggers >= min_triggers and last['rsi'] >= 15:
+            sell_score, sell_pattern = evaluate_signal_strength(df, symbol, 'SELL')
+            if sell_score >= effective_min_score:
+                # Выбираем сильнейший сигнал
+                if sell_score > strongest_score:
+                    strongest_signal = 'SELL'
+                    strongest_score = sell_score
+        
+        # Генерируем только один сигнал (сильнейший)
+        if strongest_signal == 'BUY':
+            # Получаем метку силы
+            strength_label, win_prob = signal_strength_label(strongest_score)
             
-            # Избегаем экстремальной перепроданности
-            if last['rsi'] < 15:
-                pass  # Пропускаем сигнал
-            else:
-                # Генерируем детальную оценку
-                score, pattern = evaluate_signal_strength(df, symbol, 'SELL')
-                
-                # Проверяем минимальный композитный скор
-                if score >= effective_min_score:
-                    # Получаем метку силы
-                    strength_label, win_prob = signal_strength_label(score)
-                    
-                    # Рассчитываем TP/SL
-                    tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], 'SELL')
-                    rr_ratio = calculate_rr_ratio(score)
-                    
-                    # Рекомендуем плечо
-                    leverage = recommend_leverage(score, win_prob * 100)
-                    
-                    # Рассчитываем проценты для TP/SL для SHORT
-                    tp_pct = ((last['close'] - tp_price) / last['close']) * 100
-                    sl_pct = ((sl_price - last['close']) / last['close']) * 100
-                    
-                    # Составляем сообщение
-                    signal = f"🔴 SHORT {symbol}\n"
-                    signal += f"Цена: {last['close']:.6f}\n"
-                    signal += f"Сила: {strength_label} ({score:.1f})\n"
-                    signal += f"Вероятность: {win_prob:.0%}\n"
-                    signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
-                    signal += f"R:R = 1:{rr_ratio:.1f}\n"
-                    signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
-                    
-                    # Добавляем детали триггеров
-                    signal += f"Триггеры: {sell_triggers:.1f}"
-                    if USE_VWAP and 'vwap' in df.columns:
-                        signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
-                    if 'bb_width' in df.columns:
-                        signal += f" | BB: {last['bb_width']*100:.1f}%"
-                    
-                    signals.append(signal)
-                    
-                    # Открываем виртуальную сделку
-                    open_trade(symbol, last['close'], now, 'short', last['atr'], score)
-                    record_trade(symbol, 'OPEN', last['close'], now, 'short', score)
-                    
-                    last_signal_time[symbol] = now
+            # Рассчитываем TP/SL
+            tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'])
+            rr_ratio = calculate_rr_ratio(strongest_score)
+            
+            # Рекомендуем плечо
+            leverage = recommend_leverage(strongest_score, win_prob * 100)
+            
+            # Рассчитываем проценты для TP/SL
+            tp_pct = ((tp_price - last['close']) / last['close']) * 100
+            sl_pct = ((last['close'] - sl_price) / last['close']) * 100
+            
+            # Составляем сообщение
+            signal = f"🟢 LONG {symbol}\n"
+            signal += f"Цена: {last['close']:.6f}\n"
+            signal += f"Сила: {strength_label} ({strongest_score:.1f})\n"
+            signal += f"Вероятность: {win_prob:.0%}\n"
+            signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
+            signal += f"R:R = 1:{rr_ratio:.1f}\n"
+            signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
+            
+            # Добавляем детали триггеров
+            signal += f"Триггеры: {buy_triggers:.1f}"
+            if USE_VWAP and 'vwap' in df.columns:
+                signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
+            if 'bb_width' in df.columns:
+                signal += f" | BB: {last['bb_width']*100:.1f}%"
+            
+            signals.append(signal)
+            
+            # Открываем виртуальную сделку
+            open_trade(symbol, last['close'], now, 'long', last['atr'], strongest_score)
+            record_trade(symbol, 'OPEN', last['close'], now, 'long', strongest_score)
+            
+            last_signal_time[symbol] = now
+        
+        elif strongest_signal == 'SELL':
+            # Получаем метку силы
+            strength_label, win_prob = signal_strength_label(strongest_score)
+            
+            # Рассчитываем TP/SL
+            tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], 'SHORT')
+            rr_ratio = calculate_rr_ratio(strongest_score)
+            
+            # Рекомендуем плечо
+            leverage = recommend_leverage(strongest_score, win_prob * 100)
+            
+            # Рассчитываем проценты для TP/SL для SHORT
+            tp_pct = ((last['close'] - tp_price) / last['close']) * 100
+            sl_pct = ((sl_price - last['close']) / last['close']) * 100
+            
+            # Составляем сообщение
+            signal = f"🔴 SHORT {symbol}\n"
+            signal += f"Цена: {last['close']:.6f}\n"
+            signal += f"Сила: {strength_label} ({strongest_score:.1f})\n"
+            signal += f"Вероятность: {win_prob:.0%}\n"
+            signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
+            signal += f"R:R = 1:{rr_ratio:.1f}\n"
+            signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
+            
+            # Добавляем детали триггеров
+            signal += f"Триггеры: {sell_triggers:.1f}"
+            if USE_VWAP and 'vwap' in df.columns:
+                signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
+            if 'bb_width' in df.columns:
+                signal += f" | BB: {last['bb_width']*100:.1f}%"
+            
+            signals.append(signal)
+            
+            # Открываем виртуальную сделку
+            open_trade(symbol, last['close'], now, 'short', last['atr'], strongest_score)
+            record_trade(symbol, 'OPEN', last['close'], now, 'short', strongest_score)
+            
+            last_signal_time[symbol] = now
         
         return signals
         
@@ -1193,35 +1201,90 @@ async def main():
                 _, symbol = result
                 logging.warning(f"Неполный результат для {symbol}, пропускаем")
         
-        # Отправляем все найденные надежные сигналы (без лимитов)
+        # Отправляем все найденные надежные сигналы (БЕЗ ЛИМИТОВ!)
         if all_current_signals and trading_enabled:
             # Сортируем по силе сигнала (берем самые сильные первыми)
             all_current_signals.sort(key=lambda x: x['strength'], reverse=True)
             logging.info(f"Найдено {len(all_current_signals)} надежных сигналов")
             
-            # Отправляем группой
-            combined_msg = f"💰 Надежные сигналы на {all_current_signals[0]['time'].strftime('%d.%m.%Y %H:%M')}:\n\n"
+            # УЛУЧШЕНИЕ: Убираем ограничения - пусть ВСЕ качественные сигналы проходят!
+            MAX_SIGNALS_PER_MESSAGE = 3  # Только для группировки по длине сообщения
+            MAX_MESSAGE_LENGTH = 3500  # Максимальная длина сообщения Telegram
             
-            for signal_info in all_current_signals:
-                signals = signal_info['signals']
-                tp_pct = signal_info['tp_pct']
-                sl_pct = signal_info['sl_pct']
-                tp_price = signal_info['tp_price']
-                sl_price = signal_info['sl_price']
-                
-                combined_msg += '\n'.join(signals) + "\n\n"
-                
-                # Позиции уже открыты в check_signals(), не дублируем здесь
-                # Просто логируем информацию о сигналах
-                symbol = signal_info['symbol']
-                direction = signal_info['direction']
-                
-                if symbol in open_trades:
-                    logging.info(f"{symbol}: {direction} позиция уже открыта")
+            # Разбиваем сигналы на группы только для удобства отправки
+            signal_groups = []
+            for i in range(0, len(all_current_signals), MAX_SIGNALS_PER_MESSAGE):
+                signal_groups.append(all_current_signals[i:i+MAX_SIGNALS_PER_MESSAGE])
             
-            combined_msg += f"📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
-            await send_telegram_message(combined_msg)
-            signals_sent = True
+            # Отправляем ВСЕ группы (убираем ограничение на 3 группы)
+            for group_idx, signal_group in enumerate(signal_groups):
+                combined_msg = f"💰 Надежные сигналы на {signal_group[0]['time'].strftime('%d.%m.%Y %H:%M')}:\n\n"
+                
+                for signal_info in signal_group:
+                    signals = signal_info['signals']
+                    
+                    # Добавляем каждый сигнал
+                    signal_text = '\n'.join(signals) + "\n"
+                    
+                    # Проверяем длину сообщения
+                    if len(combined_msg + signal_text) > MAX_MESSAGE_LENGTH:
+                        # Если текущий сигнал не помещается, отправляем то что есть
+                        if len(combined_msg) > 200:  # Если есть что отправить
+                            combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
+                            
+                            # Добавляем номер группы если групп больше одной
+                            if len(signal_groups) > 1:
+                                combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
+                            
+                            # Отправляем накопленное сообщение
+                            try:
+                                await send_telegram_message(combined_msg)
+                                signals_sent = True
+                                await asyncio.sleep(1)  # Пауза между сообщениями
+                            except Exception as e:
+                                logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
+                            
+                            # Начинаем новое сообщение с текущим сигналом
+                            group_idx += 1
+                            combined_msg = f"💰 Надежные сигналы (продолжение):\n\n" + signal_text
+                        else:
+                            break  # Если даже один сигнал не помещается
+                    else:
+                        combined_msg += signal_text
+                    
+                    # Позиции уже открыты в check_signals(), не дублируем здесь
+                    symbol = signal_info['symbol']
+                    direction = signal_info['direction']
+                    
+                    if symbol in open_trades:
+                        logging.info(f"{symbol}: {direction} позиция уже открыта")
+                
+                # Отправляем последнее накопленное сообщение
+                if len(combined_msg) > 200:
+                    combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
+                    
+                    # Добавляем номер группы если групп больше одной
+                    if len(signal_groups) > 1:
+                        combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
+                    
+                    # Отправляем сообщение
+                    try:
+                        await send_telegram_message(combined_msg)
+                        signals_sent = True
+                        # Небольшая пауза между сообщениями
+                        if group_idx < len(signal_groups) - 1:
+                            await asyncio.sleep(1)
+                    except Exception as e:
+                        logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
+                        # Если сообщение все еще слишком длинное, отправляем укороченную версию
+                        if "too long" in str(e).lower():
+                            short_msg = f"⚡ {len(signal_group)} сигналов на {signal_group[0]['time'].strftime('%H:%M')}:\n"
+                            for signal_info in signal_group:
+                                symbol = signal_info['symbol']
+                                direction = "🟢 LONG" if signal_info['direction'] == 'LONG' else "🔴 SHORT"
+                                strength = signal_info['strength']
+                                short_msg += f"{direction} {symbol} (сила: {strength:.1f})\n"
+                            await send_telegram_message(short_msg)
         # Долгосрочный анализ временно отключен (функции analyze_long и check_signals_long не определены)
         # Можно включить позже при необходимости
         # Alive-отчёт раз в 6 часов + список обработанных монет  
@@ -1396,7 +1459,14 @@ def check_tp_sl(symbol, price, time, df):
         # Используем фактический результат для определения успешности
         final_result = actual_result
         
-        msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {final_result}"
+        # ИСПРАВЛЕНИЕ: Корректируем отображение результата - если закрыто по TP, то это всегда УДАЧНО
+        display_result = final_result
+        if reason == 'TP':
+            display_result = 'УДАЧНО'  # TP всегда означает успех
+        elif reason == 'SL':
+            display_result = 'НЕУДАЧНО'  # SL всегда означает убыток
+            
+        msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {display_result}"
         asyncio.create_task(send_telegram_message(msg))
         
         # Записываем результат в портфель
