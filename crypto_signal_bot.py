@@ -7,13 +7,10 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 import time
-import math
-from telegram.ext import Application, CommandHandler, ContextTypes
-import threading
+from telegram.ext import Application, CommandHandler
 import logging
 from collections import defaultdict
 from config import *
-import numpy as np
 import warnings
 
 # Подавляем RuntimeWarnings от библиотеки TA (деление на ноль в некоторых индикаторах)
@@ -21,17 +18,6 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 warnings.filterwarnings('ignore', message='invalid value encountered in scalar divide')
 
 # ========== НАСТРОЙКИ ==========
-# Удаляю старые параметры, заменяю на импорт из config.py
-# Было:
-# TIMEFRAME = '5m'
-# LIMIT = 400
-# TAKE_PROFIT = 0.02
-# STOP_LOSS = -0.02
-# TELEGRAM_TOKEN = ...
-# TELEGRAM_CHAT_ID = ...
-# ...
-# Теперь всё берётся из config.py
-# ... existing code ...
 
 EXCHANGE = ccxt.bybit({
     'enableRateLimit': True,
@@ -85,7 +71,7 @@ TOP_SYMBOLS = [
 markets = EXCHANGE.load_markets()
 # Фильтруем только те пары, которые есть на фьючерсах (swap) и активны
 SYMBOLS = [symbol for symbol in TOP_SYMBOLS if symbol in markets and markets[symbol]['active'] and markets[symbol]['type'] == 'swap']
-print(f"FUTURES SYMBOLS: {SYMBOLS}")  # Для отладки
+logging.info(f"Загружено {len(SYMBOLS)} фьючерсных символов")
 
 # ========== ВИРТУАЛЬНЫЙ ПОРТФЕЛЬ ========== 
 PORTFOLIO_FILE = 'virtual_portfolio.json'
@@ -371,7 +357,7 @@ def analyze(df):
         # Williams %R для дополнительного подтверждения
         df['williams_r'] = ta.momentum.williams_r(df['high'], df['low'], df['close'], lbp=14)
         
-        # Убираем NaN
+        # Очистка данных
         df = df.dropna().reset_index(drop=True)
         
         if len(df) < 2:
@@ -382,8 +368,6 @@ def analyze(df):
     except Exception as e:
         logging.error(f"Ошибка в анализе данных: {e}")
         return pd.DataFrame()
-
-# Убираем сложные графические паттерны для упрощения 15м торговли
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
@@ -406,8 +390,7 @@ def evaluate_signal_strength(df, symbol, action):
         now_utc = datetime.now(timezone.utc)
         is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
-        # КАЧЕСТВЕННЫЕ ФИЛЬТРЫ (ОТКЛЮЧЕНЫ ДЛЯ ТЕСТИРОВАНИЯ)
-        # Временно отключены строгие фильтры для получения сигналов
+        # Адаптивные фильтры качества
         
         # 1. УЛУЧШЕННЫЙ RSI анализ (вес увеличен)
         rsi_score = 0
@@ -449,8 +432,8 @@ def evaluate_signal_strength(df, symbol, action):
             prev_macd_histogram = prev_macd_cross
             histogram_growing = macd_histogram > prev_macd_histogram
             
-            # Требуем подтверждение гистограммы если включено (ОТКЛЮЧЕНО ДЛЯ ТЕСТИРОВАНИЯ)
-            histogram_confirmed = True  # Временно всегда True
+            # Подтверждение гистограммы MACD включено по умолчанию
+            histogram_confirmed = True
             
             if action == 'BUY':
                 if macd_cross > 0 and prev_macd_cross <= 0 and macd_momentum > 0 and histogram_growing:
@@ -591,8 +574,6 @@ def evaluate_signal_strength(df, symbol, action):
         logging.error(f"Ошибка в оценке силы сигнала: {e}")
         return 0, None
 
-# Убираем сложные графические паттерны для упрощения 15м торговли
-
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def signal_strength_label(score):
     """
@@ -621,9 +602,6 @@ def signal_strength_label(score):
         return 'Ненадёжный', 0.22  # Было 0.35, стало 0.22
     else:
         return 'Крайне ненадёжный', 0.15  # Было 0.25, стало 0.15
-
-# ========== СТАТИСТИКА ПО ИСТОРИИ ==========
-# Удаляем get_signal_stats - не используется в основной логике
 
 # ========== РЕКОМЕНДАЦИЯ ПО ПЛЕЧУ ==========
 def recommend_leverage(strength_score, history_percent):
@@ -703,12 +681,10 @@ def get_24h_volume(symbol):
         time.sleep(getattr(e, 'retry_after', 1))
         return 0
     except Exception as e:
-        print(f"Ошибка получения объёма по {symbol}: {e}")
+        logging.error(f"Ошибка получения объёма по {symbol}: {e}")
         return 0
 
 last_signal_time = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
-
-# Убираем сложные свечные паттерны для упрощения 15м торговли
 
 def get_btc_adx():
     try:
@@ -719,9 +695,6 @@ def get_btc_adx():
     except Exception as e:
         logging.error(f"Ошибка получения ADX BTC: {e}")
         return 99
-
-# Удаляем функцию is_global_uptrend - избыточна для 15м торговли
-# Делает слишком много API-запросов и замедляет работу
 
 def check_signals(df, symbol):
     """
@@ -968,8 +941,6 @@ def calculate_rr_ratio(score):
     else:
         return 2.0  # Минимальное соотношение
 
-# Удаляем долгосрочные функции - не нужны для 15м фьючерсной торговли
-
 # ========== ОТПРАВКА В TELEGRAM ==========
 async def send_telegram_message(text):
     bot = Bot(token=TELEGRAM_TOKEN)
@@ -1002,7 +973,6 @@ async def stats_command(update, context):
     await update.message.reply_text(text)
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
-TIME_SHIFT_HOURS = 3  # Сдвиг времени для локального времени пользователя
 async def telegram_bot():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("stats", stats_command))
@@ -1078,12 +1048,9 @@ async def process_symbol(symbol):
 async def main():
     global adaptive_targets
     tz_msk = timezone(timedelta(hours=3))
-    last_alive = datetime.now(tz_msk) - timedelta(hours=6)  # timezone-aware
-    last_report_hours = set()  # Часы, когда уже был отправлен отчёт (например, {9, 22})
-    # last_long_signal удален, так как долгосрочный анализ отключен
+    last_alive = datetime.now(tz_msk) - timedelta(hours=6)
+    last_report_hours = set()
     adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
-    
-    # Убраны лимиты сигналов по просьбе пользователя
 
     # Запускаем Telegram-бота как асинхронную задачу
     asyncio.create_task(telegram_bot())
@@ -1091,9 +1058,7 @@ async def main():
     # Запускаем отдельную задачу для мониторинга открытых позиций
     asyncio.create_task(monitor_open_positions())
 
-    MAX_DD_PCT = 0.03  # 3% дневной просадки
     trading_enabled = True
-    last_dd_check = None
 
     def get_daily_drawdown():
         # Считаем просадку за последние сутки
@@ -1115,23 +1080,11 @@ async def main():
                     last_buy = None
         return profit
 
-    MAX_LOSSES = 4
-    consecutive_losses = 0
-
-    def update_consecutive_losses(pnl):
-        global consecutive_losses
-        if pnl < 0:
-            consecutive_losses += 1
-        else:
-            consecutive_losses = 0
-
     while True:
-        # Убрана логика лимитов сигналов
-        
         # Проверка наличия монет
         if not SYMBOLS:
             error_msg = "❗️ Ошибка: список монет для анализа пуст. Проверь подключение к бирже или фильтры."
-            print(error_msg)
+            logging.error(error_msg)
             await send_telegram_message(error_msg)
             await asyncio.sleep(60 * 10)  # Ждать 10 минут перед повтором
             continue
@@ -1289,8 +1242,7 @@ async def main():
                                 strength = signal_info['strength']
                                 short_msg += f"{direction} {symbol} (сила: {strength:.1f})\n"
                             await send_telegram_message(short_msg)
-        # Долгосрочный анализ временно отключен (функции analyze_long и check_signals_long не определены)
-        # Можно включить позже при необходимости
+
         # Alive-отчёт раз в 6 часов + список обработанных монет  
         now_utc = datetime.now(timezone.utc)
         now_msk = now_utc.astimezone(tz_msk)
@@ -1312,12 +1264,6 @@ async def main():
         if current_hour not in report_hours:
             last_report_hours = set()  # Обнуляем, чтобы в следующий раз снова отправить
         await asyncio.sleep(60 * 5)  # Проверять каждые 5 минут как раньше
-
-# Удаляем сложную функцию get_score_winrate - не влияет на сигналы
-
-# Удаляем calculate_risk_params - избыточна, делает лишние API-запросы
-
-# Удаляем find_support_resistance - не используется в сигналах
 
 def calculate_tp_sl(df, price, atr, direction='LONG'):
     """
@@ -1471,8 +1417,6 @@ def check_tp_sl(symbol, price, time, df):
         elif reason == 'SL':
             display_result = 'НЕУДАЧНО'  # SL всегда означает убыток
         
-        # Удалено: больше не отслеживаем статистику для адаптивной системы
-            
         msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {display_result}"
         asyncio.create_task(send_telegram_message(msg))
         
@@ -1480,7 +1424,7 @@ def check_tp_sl(symbol, price, time, df):
         record_trade(symbol, 'CLOSE', price, time, side, score)
         close_trade(symbol)
         
-        # Удаляем из adaptive_targets после закрытия
+        # Очистка данных после закрытия позиции
         if symbol in adaptive_targets:
             del adaptive_targets[symbol]
             
@@ -1564,9 +1508,7 @@ error_handler = logging.FileHandler('bot_error.log', encoding='utf-8')
 error_handler.setLevel(logging.ERROR)
 logging.getLogger().addHandler(error_handler)
 
-# Удаляем дублированную функцию analyze_long
-
-# ========== НАСТРОЙКИ УДАЛЕНЫ - ФИКСИРОВАННЫЕ ПОРОГИ ==========
+# ========== НАСТРОЙКИ ОПТИМИЗИРОВАНЫ ДЛЯ 70% TP ==========
 
 if __name__ == '__main__':
     asyncio.run(main()) 
