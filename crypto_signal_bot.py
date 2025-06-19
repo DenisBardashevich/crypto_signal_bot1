@@ -35,24 +35,44 @@ EXCHANGE = ccxt.bybit({
     }
 })
 
-# Белый список топ-50 популярных монет + перспективные альткойны и волатильные монеты (фьючерсы)
+# ОПТИМИЗИРОВАННЫЙ список монет (удалены неэффективные, добавлены лучшие)
 TOP_SYMBOLS = [
-    # Топовые ликвидные (основа)
+    # ТОПОВЫЕ ЛИКВИДНЫЕ (проверенные, оставляем)
     'BTC/USDT:USDT', 'ETH/USDT:USDT', 'BNB/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
-    'ADA/USDT:USDT', 'DOGE/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT', 'MATIC/USDT:USDT',
-    'TRX/USDT:USDT', 'DOT/USDT:USDT', 'LTC/USDT:USDT',
-    # Новые трендовые альты 2024–2025
-    'JASMY/USDT:USDT', 'ARKM/USDT:USDT', 'STRK/USDT:USDT', 'ACE/USDT:USDT',
-    'WLD/USDT:USDT', 'ORDI/USDT:USDT', 'ENA/USDT:USDT', 'TNSR/USDT:USDT',
-    'NOT/USDT:USDT', 'MAVIA/USDT:USDT', 'ZRO/USDT:USDT', 'BB/USDT:USDT', 'OMNI/USDT:USDT',
-    # Мемкоины и волатильные
-    'PEPE/USDT:USDT', '1000PEPE/USDT:USDT', 'FLOKI/USDT:USDT', 'BONK/USDT:USDT', 'SHIB/USDT:USDT', 'WIF/USDT:USDT',
-    # Перспективные альткойны
-    'PYTH/USDT:USDT', 'JUP/USDT:USDT', 'TIA/USDT:USDT', 'SEI/USDT:USDT',
-    # Ещё ликвидные и трендовые (добавляем до 50)
-    'OP/USDT:USDT', 'ARB/USDT:USDT', 'FIL/USDT:USDT', 'APT/USDT:USDT', 'RNDR/USDT:USDT',
-    'INJ/USDT:USDT', 'NEAR/USDT:USDT', 'SUI/USDT:USDT', 'STX/USDT:USDT', 'DYDX/USDT:USDT',
-    'LDO/USDT:USDT', 'UNI/USDT:USDT', 'AAVE/USDT:USDT', 'MKR/USDT:USDT', 'ATOM/USDT:USDT',
+    'ADA/USDT:USDT', 'AVAX/USDT:USDT', 'MATIC/USDT:USDT',
+    
+    # ЛУЧШИЕ ПО РЕЗУЛЬТАТАМ АНАЛИЗА (высокий винрейт)
+    'DOGE/USDT:USDT',  # 100% винрейт!
+    'TRX/USDT:USDT',   # 66.7% винрейт
+    'SUI/USDT:USDT',   # 50% винрейт
+    'SEI/USDT:USDT',   # 50% винрейт
+    
+    # МЕМКОИНЫ И ВОЛАТИЛЬНЫЕ (хорошие движения)
+    'SHIB/USDT:USDT', 'PEPE/USDT:USDT', '1000PEPE/USDT:USDT', 'FLOKI/USDT:USDT', 'BONK/USDT:USDT',
+    
+    # НОВЫЕ ПЕРСПЕКТИВНЫЕ МОНЕТЫ (вместо плохих)
+    'SAND/USDT:USDT',   # Gaming токен с хорошей волатильностью  
+    'MANA/USDT:USDT',   # Metaverse токен
+    'CRV/USDT:USDT',    # DeFi с хорошими движениями
+    'COMP/USDT:USDT',   # DeFi протокол
+    'SUSHI/USDT:USDT',  # DeFi AMM
+    'YFI/USDT:USDT',    # DeFi yield farming
+    'SNX/USDT:USDT',    # Synthetic assets
+    '1INCH/USDT:USDT',  # DEX агрегатор
+    'GMT/USDT:USDT',    # Move-to-earn
+    'GALA/USDT:USDT',   # Gaming токен
+    
+    # СТАБИЛЬНЫЕ DEFI (хорошая ликвидность)
+    'UNI/USDT:USDT', 'AAVE/USDT:USDT', 'MKR/USDT:USDT', 'LDO/USDT:USDT',
+    
+    # LAYER 2 И НОВЫЕ ТЕХНОЛОГИИ (но без плохих)
+    'ARB/USDT:USDT', 'RNDR/USDT:USDT', 'INJ/USDT:USDT',
+    
+    # ПЕРСПЕКТИВНЫЕ АЛЬТКОИНЫ (оставляем лучшие)
+    'NOT/USDT:USDT', 'MAVIA/USDT:USDT', 'ZRO/USDT:USDT', 'PYTH/USDT:USDT', 'JUP/USDT:USDT',
+    
+    # JASMY оставляем (может активироваться)
+    'JASMY/USDT:USDT',
 ]
 markets = EXCHANGE.load_markets()
 # Фильтруем только те пары, которые есть на фьючерсах (swap) и активны
@@ -359,14 +379,15 @@ def analyze(df):
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
-    """Продвинутая оценка силы сигнала с весовой системой для 10+ сигналов в день."""
+    """УЛУЧШЕННАЯ оценка силы сигнала для повышения винрейта с 31% до 55%+."""
     try:
-        if df.empty or len(df) < 2:
+        if df.empty or len(df) < 5:
             return 0, None
             
         score = 0
         last = df.iloc[-1]
         prev = df.iloc[-2]
+        prev2 = df.iloc[-3] if len(df) > 3 else prev
         
         # Определяем текущую волатильность для адаптации
         current_volatility = last.get('volatility', 0.02)
@@ -377,42 +398,126 @@ def evaluate_signal_strength(df, symbol, action):
         now_utc = datetime.now(timezone.utc)
         is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
-        # 1. RSI анализ (вес 1.0) - ЛОГИКА ИЗМЕНЕНА НА ПОИСК ПОДТВЕРЖДЕНИЯ
+        # НОВЫЕ КАЧЕСТВЕННЫЕ ФИЛЬТРЫ
+        # 1. Фильтр качества свечи
+        candle_body = abs(last['close'] - last['open'])
+        candle_range = last['high'] - last['low']
+        
+        if candle_range == 0 or candle_body / candle_range < MIN_CANDLE_BODY_PCT:
+            return 0, None  # Слишком маленькое тело свечи
+        
+        upper_wick = last['high'] - max(last['close'], last['open'])
+        lower_wick = min(last['close'], last['open']) - last['low']
+        max_wick = max(upper_wick, lower_wick)
+        
+        if candle_body > 0 and max_wick / candle_body > MAX_WICK_TO_BODY_RATIO:
+            return 0, None  # Слишком большие фитили
+        
+        # 2. Фильтр объема
+        if 'volume_ratio' in df.columns:
+            vol_ratio = last.get('volume_ratio', 1.0)
+            if vol_ratio < MIN_VOLUME_MA_RATIO:
+                return 0, None  # Недостаточный объем
+        
+        # 3. НОВЫЙ: Фильтр разделения EMA
+        if 'ema_fast' in df.columns and 'ema_slow' in df.columns:
+            ema_separation = abs(last['ema_fast'] - last['ema_slow']) / last['close']
+            if hasattr(globals(), 'MIN_EMA_SEPARATION') and ema_separation < MIN_EMA_SEPARATION:
+                return 0, None  # Слишком близкие EMA
+        
+        # 4. НОВЫЙ: Фильтр волатильности RSI
+        if len(df) >= 5 and hasattr(globals(), 'MAX_RSI_VOLATILITY'):
+            rsi_recent = df['rsi'].iloc[-5:]
+            rsi_volatility = rsi_recent.std()
+            if rsi_volatility > MAX_RSI_VOLATILITY:
+                return 0, None  # Слишком хаотичный RSI
+        
+        # 5. НОВЫЙ: Фильтр консистентности объема
+        if len(df) >= 5 and 'volume_ratio' in df.columns and hasattr(globals(), 'MIN_VOLUME_CONSISTENCY'):
+            volume_recent = df['volume_ratio'].iloc[-5:]
+            volume_consistency = 1 - (volume_recent.std() / volume_recent.mean()) if volume_recent.mean() > 0 else 0
+            if volume_consistency < MIN_VOLUME_CONSISTENCY:
+                return 0, None  # Слишком непостоянный объем
+        
+        # 6. Фильтр времени - избегаем выходные
+        if hasattr(globals(), 'AVOID_WEEKEND_SIGNALS') and AVOID_WEEKEND_SIGNALS:
+            if now_utc.weekday() >= 5:  # Суббота = 5, Воскресенье = 6
+                score *= 0.7  # Штраф за выходные
+        
+        # 1. УЛУЧШЕННЫЙ RSI анализ (вес увеличен)
         rsi_score = 0
+        rsi_momentum = last['rsi'] - prev['rsi']
+        
         if action == 'BUY':
-            # Сигнал, когда RSI выходит из зоны перепроданности (подтверждение)
-            if prev['rsi'] <= (RSI_OVERSOLD + 5) and last['rsi'] > prev['rsi']: # Выход из зоны <=25
+            # Более строгие условия для BUY
+            if last['rsi'] < RSI_EXTREME_OVERSOLD and rsi_momentum > 2:  # Сильный отскок от экстремума
+                rsi_score = 3.0
+            elif last['rsi'] < RSI_OVERSOLD and rsi_momentum > 1:  # Выход из перепроданности
                 rsi_score = 2.0
-            elif prev['rsi'] <= (RSI_OVERSOLD + 10) and last['rsi'] > prev['rsi']: # Выход из зоны <=30
-                rsi_score = 1.5
-            elif last['rsi'] > prev['rsi'] and 40 < last['rsi'] < 60: # Умеренный рост в нейтральной зоне
-                rsi_score = 0.5
+            elif RSI_OVERSOLD < last['rsi'] < 45 and rsi_momentum > 0:  # Подтверждение роста
+                rsi_score = 1.0
+            elif last['rsi'] > RSI_OVERBOUGHT:  # Штраф за перекупленность
+                rsi_score = -1.0
+                
         elif action == 'SELL':
-            # Сигнал, когда RSI выходит из зоны перекупленности
-            if prev['rsi'] >= (RSI_OVERBOUGHT - 5) and last['rsi'] < prev['rsi']: # Выход из зоны >=75
+            # Более строгие условия для SELL
+            if last['rsi'] > RSI_EXTREME_OVERBOUGHT and rsi_momentum < -2:  # Сильный разворот от экстремума
+                rsi_score = 3.0
+            elif last['rsi'] > RSI_OVERBOUGHT and rsi_momentum < -1:  # Выход из перекупленности
                 rsi_score = 2.0
-            elif prev['rsi'] >= (RSI_OVERBOUGHT - 10) and last['rsi'] < prev['rsi']: # Выход из зоны >=70
-                rsi_score = 1.5
-            elif last['rsi'] < prev['rsi'] and 40 < last['rsi'] < 60: # Умеренное падение в нейтральной зоне
-                rsi_score = 0.5
+            elif 55 < last['rsi'] < RSI_OVERBOUGHT and rsi_momentum < 0:  # Подтверждение падения
+                rsi_score = 1.0
+            elif last['rsi'] < RSI_OVERSOLD:  # Штраф за перепроданность
+                rsi_score = -1.0
+                
         score += rsi_score * WEIGHT_RSI
         
-        # 2. MACD анализ (вес 1.2)
+        # 2. МАКСИМАЛЬНО УЛУЧШЕННЫЙ MACD анализ с гистограммой
         macd_score = 0
         if 'macd' in df.columns and 'macd_signal' in df.columns:
             macd_cross = last['macd'] - last['macd_signal']
             prev_macd_cross = prev['macd'] - prev['macd_signal']
+            macd_momentum = last['macd'] - prev['macd']
+            
+            # НОВЫЙ: Подтверждение гистограммы MACD
+            macd_histogram = macd_cross
+            prev_macd_histogram = prev_macd_cross
+            histogram_growing = macd_histogram > prev_macd_histogram
+            
+            # Требуем подтверждение гистограммы если включено
+            histogram_confirmed = True
+            if hasattr(globals(), 'REQUIRE_MACD_HISTOGRAM_CONFIRMATION') and REQUIRE_MACD_HISTOGRAM_CONFIRMATION:
+                if action == 'BUY':
+                    histogram_confirmed = histogram_growing and macd_histogram > 0
+                elif action == 'SELL':
+                    histogram_confirmed = not histogram_growing and macd_histogram < 0
+            
+            if not histogram_confirmed:
+                return 0, None  # Нет подтверждения гистограммы
             
             if action == 'BUY':
-                if macd_cross > 0 and prev_macd_cross <= 0:  # Bullish crossover
+                if macd_cross > 0 and prev_macd_cross <= 0 and macd_momentum > 0 and histogram_growing:
+                    macd_score = 4.0  # Максимальный балл за полное подтверждение
+                elif macd_cross > 0 and macd_momentum > 0 and histogram_growing:
+                    macd_score = 3.0
+                elif macd_cross > 0 and histogram_growing:
                     macd_score = 2.0
-                elif macd_cross > 0:  # Above signal line
+                elif macd_cross > 0:
                     macd_score = 1.0
+                else:
+                    macd_score = -1.0  # Штраф за противоречие
+                    
             elif action == 'SELL':
-                if macd_cross < 0 and prev_macd_cross >= 0:  # Bearish crossover
+                if macd_cross < 0 and prev_macd_cross >= 0 and macd_momentum < 0 and not histogram_growing:
+                    macd_score = 4.0  # Максимальный балл за полное подтверждение
+                elif macd_cross < 0 and macd_momentum < 0 and not histogram_growing:
+                    macd_score = 3.0
+                elif macd_cross < 0 and not histogram_growing:
                     macd_score = 2.0
-                elif macd_cross < 0:  # Below signal line
+                elif macd_cross < 0:
                     macd_score = 1.0
+                else:
+                    macd_score = -1.0  # Штраф за противоречие
         score += macd_score * WEIGHT_MACD
         
         # 3. Bollinger Bands анализ (вес 1.1)
@@ -498,10 +603,29 @@ def evaluate_signal_strength(df, symbol, action):
             elif action == 'SELL' and stoch_k >= 80:
                 score += 0.5
         
+        # НОВАЯ ЛОГИКА: Буст для SHORT сигналов (они работают лучше)
+        if action == 'SELL' and hasattr(globals(), 'SHORT_BOOST_MULTIPLIER'):
+            score *= SHORT_BOOST_MULTIPLIER
+        
+        # Штраф для LONG в нисходящем тренде
+        if action == 'BUY' and len(df) >= 10:
+            # Проверяем общий тренд за последние 10 свечей
+            price_trend = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
+            if price_trend < -0.02 and hasattr(globals(), 'LONG_PENALTY_IN_DOWNTREND'):  # Нисходящий тренд > 2%
+                score *= LONG_PENALTY_IN_DOWNTREND
+        
+        # Проверка минимальной активности рынка
+        if hasattr(globals(), 'MIN_MARKET_ACTIVITY_SCORE'):
+            # Простая оценка активности по объему и волатильности
+            market_activity = min(1.0, (vol_ratio if 'vol_ratio' in locals() else 1.0) * current_volatility * 50)
+            if market_activity < MIN_MARKET_ACTIVITY_SCORE:
+                score *= 0.8  # Штраф за низкую активность
+        
         # Адаптация к активным часам
         if is_active_hour:
             score *= (1 + (1 - ACTIVE_HOURS_MULTIPLIER))  # Небольшой бонус в активные часы
         
+        # КРИТИЧНО: возвращаем 0 если скор отрицательный
         return max(0, score), None
         
     except Exception as e:
