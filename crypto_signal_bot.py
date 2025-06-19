@@ -1278,13 +1278,13 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
         if 'volatility' in last:
             vol = last['volatility']
             if vol > HIGH_VOLATILITY_THRESHOLD:
-                # Высокая волатильность - увеличиваем TP для захвата большого движения, и сужаем SL для безопасности
-                tp_mult *= 1.2  # было 0.8
-                sl_mult *= 0.8  # было 1.2
+                # Высокая волатильность - расширяем и TP и SL для безопасности
+                tp_mult *= 1.1
+                sl_mult *= 1.1
             elif vol < LOW_VOLATILITY_THRESHOLD:
-                # Низкая волатильность - можем взять меньше прибыли, т.к. больших движений нет
-                tp_mult *= 0.9 # было 1.1
-                sl_mult *= 1.1 # было 0.9
+                # Низкая волатильность - сужаем и TP и SL
+                tp_mult *= 0.9
+                sl_mult *= 0.9
         
         # Учитываем импульс цены
         if 'momentum' in last:
@@ -1298,8 +1298,8 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
         tp_pct = max((atr * tp_mult) / price, TP_MIN)
         sl_pct = max((atr * sl_mult) / price, SL_MIN)
         
-        # Обеспечиваем минимальное соотношение R:R = 1.8
-        min_rr = 1.8
+        # Обеспечиваем минимальное соотношение R:R = 1.3 (реалистично для крипто)
+        min_rr = 1.3
         if tp_pct / sl_pct < min_rr:
             tp_pct = sl_pct * min_rr
         
