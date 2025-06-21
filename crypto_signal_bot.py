@@ -704,7 +704,7 @@ def check_signals(df, symbol):
     try:
         if df.empty or len(df) < MIN_15M_CANDLES:
             return []
-            
+        
         last = df.iloc[-1]
         prev = df.iloc[-2]
         signals = []
@@ -745,6 +745,23 @@ def check_signals(df, symbol):
         
         # 4. Базовая сила тренда
         if last['adx'] < min_adx:
+            return []
+        
+        # --- Новый фильтр: минимальная ширина BB ---
+        if 'bb_width' in last and last['bb_width'] < MIN_BB_WIDTH:
+            return []
+        
+        # --- Новый фильтр: отдельные условия для SHORT и LONG ---
+        # Для SHORT: ADX >= SHORT_MIN_ADX и RSI >= SHORT_MIN_RSI
+        # Для LONG:  ADX >= MIN_ADX и RSI <= LONG_MAX_RSI
+        
+        # Проверяем потенциальный SHORT
+        short_conditions = last['adx'] >= SHORT_MIN_ADX and last['rsi'] >= SHORT_MIN_RSI
+        # Проверяем потенциальный LONG
+        long_conditions = last['adx'] >= MIN_ADX and last['rsi'] <= LONG_MAX_RSI
+        
+        # Если ни одно из условий не выполняется — не даём сигнал
+        if not (short_conditions or long_conditions):
             return []
         
         # === ГЕНЕРАЦИЯ СИГНАЛОВ ===
