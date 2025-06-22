@@ -987,7 +987,11 @@ async def stats_command(update, context):
         text += '\n'.join(report)
     else:
         text += 'Нет завершённых сделок.'
-    await update.message.reply_text(text)
+    # Разбиваем длинное сообщение на части по 4000 символов (лимит Telegram)
+    max_len = 4000
+    parts = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+    for part in parts:
+        await update.message.reply_text(part)
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
 async def telegram_bot():
