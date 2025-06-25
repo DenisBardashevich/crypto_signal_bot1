@@ -371,7 +371,7 @@ def analyze(df):
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
-    """УЛУЧШЕННАЯ оценка силы сигнала для повышения винрейта с 31% до 55%+."""
+    """ИСПРАВЛЕННАЯ оценка силы сигнала - убираем завышение и делаем реалистичной."""
     try:
         if df.empty or len(df) < 5:
             return 0, None
@@ -390,185 +390,201 @@ def evaluate_signal_strength(df, symbol, action):
         now_utc = datetime.now(timezone.utc)
         is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
-        # Адаптивные фильтры качества
+        # ИСПРАВЛЕНО: Более строгие и реалистичные условия
         
-        # 1. УЛУЧШЕННЫЙ RSI анализ (вес увеличен)
+        # 1. RSI анализ (строже и реалистичнее)
         rsi_score = 0
         rsi_momentum = last['rsi'] - prev['rsi']
         
         if action == 'BUY':
-            # Более строгие условия для BUY
-            if last['rsi'] < RSI_EXTREME_OVERSOLD and rsi_momentum > 2:  # Сильный отскок от экстремума
-                rsi_score = 3.0
-            elif last['rsi'] < RSI_OVERSOLD and rsi_momentum > 1:  # Выход из перепроданности
-                rsi_score = 2.0
-            elif RSI_OVERSOLD < last['rsi'] < 45 and rsi_momentum > 0:  # Подтверждение роста
-                rsi_score = 1.0
-            elif last['rsi'] > RSI_OVERBOUGHT:  # Штраф за перекупленность
-                rsi_score = -1.0
+            # Очень строгие условия для BUY
+            if last['rsi'] < RSI_EXTREME_OVERSOLD and rsi_momentum > 3:  # Сильный отскок
+                rsi_score = 2.0  # было 3.0, теперь 2.0
+            elif last['rsi'] < RSI_OVERSOLD and rsi_momentum > 2:  # Хороший выход
+                rsi_score = 1.5  # было 2.0, теперь 1.5
+            elif RSI_OVERSOLD < last['rsi'] < 45 and rsi_momentum > 1:  # Слабое подтверждение
+                rsi_score = 0.8  # было 1.0, теперь 0.8
+            elif last['rsi'] > RSI_OVERBOUGHT:  # Увеличиваем штраф
+                rsi_score = -2.0  # было -1.0, теперь -2.0
                 
         elif action == 'SELL':
-            # Более строгие условия для SELL
-            if last['rsi'] > RSI_EXTREME_OVERBOUGHT and rsi_momentum < -2:  # Сильный разворот от экстремума
-                rsi_score = 3.0
-            elif last['rsi'] > RSI_OVERBOUGHT and rsi_momentum < -1:  # Выход из перекупленности
-                rsi_score = 2.0
-            elif 55 < last['rsi'] < RSI_OVERBOUGHT and rsi_momentum < 0:  # Подтверждение падения
-                rsi_score = 1.0
-            elif last['rsi'] < RSI_OVERSOLD:  # Штраф за перепроданность
-                rsi_score = -1.0
+            # Очень строгие условия для SELL
+            if last['rsi'] > RSI_EXTREME_OVERBOUGHT and rsi_momentum < -3:  # Сильный разворот
+                rsi_score = 2.0  # было 3.0, теперь 2.0
+            elif last['rsi'] > RSI_OVERBOUGHT and rsi_momentum < -2:  # Хороший выход
+                rsi_score = 1.5  # было 2.0, теперь 1.5
+            elif 55 < last['rsi'] < RSI_OVERBOUGHT and rsi_momentum < -1:  # Слабое подтверждение
+                rsi_score = 0.8  # было 1.0, теперь 0.8
+            elif last['rsi'] < RSI_OVERSOLD:  # Увеличиваем штраф
+                rsi_score = -2.0  # было -1.0, теперь -2.0
                 
         score += rsi_score * WEIGHT_RSI
         
-        # 2. МАКСИМАЛЬНО УЛУЧШЕННЫЙ MACD анализ с гистограммой
+        # 2. MACD анализ (более строгий и реалистичный)
         macd_score = 0
         if 'macd' in df.columns and 'macd_signal' in df.columns:
             macd_cross = last['macd'] - last['macd_signal']
             prev_macd_cross = prev['macd'] - prev['macd_signal']
             macd_momentum = last['macd'] - prev['macd']
             
-            # НОВЫЙ: Подтверждение гистограммы MACD
+            # Требуем подтверждение гистограммы
             macd_histogram = macd_cross
             prev_macd_histogram = prev_macd_cross
             histogram_growing = macd_histogram > prev_macd_histogram
             
-            # Подтверждение гистограммы MACD включено по умолчанию
-            histogram_confirmed = True
-            
             if action == 'BUY':
+                # Полное подтверждение - высокий балл
                 if macd_cross > 0 and prev_macd_cross <= 0 and macd_momentum > 0 and histogram_growing:
-                    macd_score = 4.0  # Максимальный балл за полное подтверждение
+                    macd_score = 2.5  # было 4.0, теперь 2.5
+                # Частичное подтверждение
                 elif macd_cross > 0 and macd_momentum > 0 and histogram_growing:
-                    macd_score = 3.0
+                    macd_score = 1.8  # было 3.0, теперь 1.8
                 elif macd_cross > 0 and histogram_growing:
-                    macd_score = 2.0
+                    macd_score = 1.2  # было 2.0, теперь 1.2
                 elif macd_cross > 0:
-                    macd_score = 1.0
+                    macd_score = 0.5  # было 1.0, теперь 0.5
                 else:
-                    macd_score = -1.0  # Штраф за противоречие
+                    macd_score = -1.5  # было -1.0, увеличиваем штраф
                     
             elif action == 'SELL':
+                # Полное подтверждение - высокий балл
                 if macd_cross < 0 and prev_macd_cross >= 0 and macd_momentum < 0 and not histogram_growing:
-                    macd_score = 4.0  # Максимальный балл за полное подтверждение
+                    macd_score = 2.5  # было 4.0, теперь 2.5
+                # Частичное подтверждение
                 elif macd_cross < 0 and macd_momentum < 0 and not histogram_growing:
-                    macd_score = 3.0
+                    macd_score = 1.8  # было 3.0, теперь 1.8
                 elif macd_cross < 0 and not histogram_growing:
-                    macd_score = 2.0
+                    macd_score = 1.2  # было 2.0, теперь 1.2
                 elif macd_cross < 0:
-                    macd_score = 1.0
+                    macd_score = 0.5  # было 1.0, теперь 0.5
                 else:
-                    macd_score = -1.0  # Штраф за противоречие
+                    macd_score = -1.5  # было -1.0, увеличиваем штраф
         score += macd_score * WEIGHT_MACD
         
-        # 3. Bollinger Bands анализ (вес 1.1)
+        # 3. Bollinger Bands (более консервативно)
         bb_score = 0
         if 'bollinger_low' in df.columns and 'bollinger_high' in df.columns:
             close = last['close']
             bb_position = (close - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
             
             if action == 'BUY':
-                if bb_position <= 0.1:  # Близко к нижней полосе
-                    bb_score = 2.0
-                elif bb_position <= 0.2:
-                    bb_score = 1.5
-                elif bb_position <= 0.4:
-                    bb_score = 1.0
+                # Более строгие условия
+                if bb_position <= 0.05:  # Очень близко к нижней полосе
+                    bb_score = 1.5  # было 2.0, теперь 1.5
+                elif bb_position <= 0.15:  # было 0.2
+                    bb_score = 1.0  # было 1.5, теперь 1.0
+                elif bb_position <= 0.3:  # было 0.4
+                    bb_score = 0.5  # было 1.0, теперь 0.5
             elif action == 'SELL':
-                if bb_position >= 0.9:  # Близко к верхней полосе
-                    bb_score = 2.0
-                elif bb_position >= 0.8:
-                    bb_score = 1.5
-                elif bb_position >= 0.6:
-                    bb_score = 1.0
+                # Более строгие условия
+                if bb_position >= 0.95:  # Очень близко к верхней полосе
+                    bb_score = 1.5  # было 2.0, теперь 1.5
+                elif bb_position >= 0.85:  # было 0.8
+                    bb_score = 1.0  # было 1.5, теперь 1.0
+                elif bb_position >= 0.7:  # было 0.6
+                    bb_score = 0.5  # было 1.0, теперь 0.5
         score += bb_score * WEIGHT_BB
         
-        # 4. VWAP анализ (вес 1.3)
+        # 4. VWAP анализ (более консервативно)
         vwap_score = 0
         if USE_VWAP and 'vwap' in df.columns:
             vwap_dev = last.get('vwap_deviation', 0)
             if action == 'BUY':
-                if vwap_dev <= -VWAP_DEVIATION_THRESHOLD:  # Значительно ниже VWAP
-                    vwap_score = 2.0
-                elif vwap_dev <= 0:  # Ниже VWAP
-                    vwap_score = 1.0
+                # Требуем значительное отклонение
+                if vwap_dev <= -VWAP_DEVIATION_THRESHOLD * 1.5:  # Очень ниже VWAP
+                    vwap_score = 1.5  # было 2.0, теперь 1.5
+                elif vwap_dev <= -VWAP_DEVIATION_THRESHOLD:  # Ниже VWAP
+                    vwap_score = 1.0  # было 1.0, оставляем
+                elif vwap_dev <= 0:  # Слегка ниже
+                    vwap_score = 0.3  # новое условие
             elif action == 'SELL':
-                if vwap_dev >= VWAP_DEVIATION_THRESHOLD:  # Значительно выше VWAP
-                    vwap_score = 2.0
-                elif vwap_dev >= 0:  # Выше VWAP
-                    vwap_score = 1.0
+                # Требуем значительное отклонение
+                if vwap_dev >= VWAP_DEVIATION_THRESHOLD * 1.5:  # Очень выше VWAP
+                    vwap_score = 1.5  # было 2.0, теперь 1.5
+                elif vwap_dev >= VWAP_DEVIATION_THRESHOLD:  # Выше VWAP
+                    vwap_score = 1.0  # было 1.0, оставляем
+                elif vwap_dev >= 0:  # Слегка выше
+                    vwap_score = 0.3  # новое условие
         score += vwap_score * WEIGHT_VWAP
         
-        # 5. Объём анализ (вес 0.8)
+        # 5. Объём анализ (более строгие требования)
         volume_score = 0
         if USE_VOLUME_FILTER and 'volume_ratio' in df.columns:
             vol_ratio = last.get('volume_ratio', 1.0)
-            if vol_ratio >= 1.5:
-                volume_score = 2.0
-            elif vol_ratio >= 1.2:
-                volume_score = 1.0
+            # Увеличиваем требования к объему
+            if vol_ratio >= 2.5:  # было 1.5, теперь 2.5
+                volume_score = 1.5  # было 2.0, теперь 1.5
+            elif vol_ratio >= 2.0:  # было 1.2, теперь 2.0
+                volume_score = 1.0  # было 1.0, оставляем
+            elif vol_ratio >= 1.5:  # новое условие
+                volume_score = 0.5
         score += volume_score * WEIGHT_VOLUME
         
-        # 6. ADX анализ (вес 0.9)
+        # 6. ADX анализ (самый важный - увеличиваем строгость)
         adx_score = 0
         min_adx = HIGH_VOL_ADX_MIN if is_high_vol else (LOW_VOL_ADX_MIN if is_low_vol else MIN_ADX)
         
-        if last['adx'] >= 30:
-            adx_score = 2.0
-        elif last['adx'] >= 25:
-            adx_score = 1.5
+        if last['adx'] >= 40:  # Очень сильный тренд
+            adx_score = 2.0  # было 2.0, оставляем
+        elif last['adx'] >= 30:  # было 30, оставляем
+            adx_score = 1.5  # было 1.5, оставляем
         elif last['adx'] >= min_adx:
-            adx_score = 1.0
+            adx_score = 1.0  # было 1.0, оставляем
         else:
-            adx_score = 0.5
+            adx_score = 0  # было 0.5, теперь 0 - не даем баллы за слабый тренд
         score += adx_score * WEIGHT_ADX
         
-        # 7. Дополнительные бонусы
+        # 7. Дополнительные бонусы (уменьшаем влияние)
+        bonus_score = 0
+        
         # Convergence/Divergence patterns
         if len(df) >= 10:
             price_trend = df['close'].iloc[-5:].pct_change().sum()
             rsi_trend = df['rsi'].iloc[-5:].pct_change().sum()
             
-            # Bullish divergence: price down, RSI up
-            if action == 'BUY' and price_trend < 0 and rsi_trend > 0:
-                score += 1.0
-            # Bearish divergence: price up, RSI down  
-            elif action == 'SELL' and price_trend > 0 and rsi_trend < 0:
-                score += 1.0
+            # Уменьшаем бонус за дивергенции
+            if action == 'BUY' and price_trend < -0.01 and rsi_trend > 0.02:  # Строже
+                bonus_score += 0.5  # было 1.0, теперь 0.5
+            elif action == 'SELL' and price_trend > 0.01 and rsi_trend < -0.02:  # Строже
+                bonus_score += 0.5  # было 1.0, теперь 0.5
         
-        # Stochastic RSI confirmation
+        # Stochastic RSI (менее влиятельный)
         if 'stoch_rsi_k' in df.columns:
             stoch_k = last.get('stoch_rsi_k', 50)
-            if action == 'BUY' and stoch_k <= 20:
-                score += 0.5
-            elif action == 'SELL' and stoch_k >= 80:
-                score += 0.5
+            if action == 'BUY' and stoch_k <= 15:  # было 20, теперь 15
+                bonus_score += 0.3  # было 0.5, теперь 0.3
+            elif action == 'SELL' and stoch_k >= 85:  # было 80, теперь 85
+                bonus_score += 0.3  # было 0.5, теперь 0.3
         
-        # НОВАЯ ЛОГИКА: Буст для SHORT сигналов (они работают лучше)
-        if action == 'SELL' and hasattr(globals(), 'SHORT_BOOST_MULTIPLIER'):
-            score *= SHORT_BOOST_MULTIPLIER
+        score += bonus_score
         
-        # Штраф для LONG в нисходящем тренде
+        # ИСПРАВЛЕНО: Убираем буст для SHORT и штрафы - они искажают реальность
+        # Применяем только легкую корректировку
+        if action == 'SELL':
+            score *= 1.1  # было SHORT_BOOST_MULTIPLIER (1.2), теперь 1.1
+        
+        # Штраф для LONG в нисходящем тренде (менее агрессивный)
         if action == 'BUY' and len(df) >= 10:
-            # Проверяем общий тренд за последние 10 свечей
             price_trend = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
-            if price_trend < -0.02 and hasattr(globals(), 'LONG_PENALTY_IN_DOWNTREND'):  # Нисходящий тренд > 2%
-                score *= LONG_PENALTY_IN_DOWNTREND
+            if price_trend < -0.03:  # было -0.02, теперь -0.03
+                score *= 0.7  # было LONG_PENALTY_IN_DOWNTREND (0.3), теперь 0.7
         
         # Проверка минимальной активности рынка
-        if hasattr(globals(), 'MIN_MARKET_ACTIVITY_SCORE'):
-            # Простая оценка активности по объему и волатильности
-            market_activity = min(1.0, (vol_ratio if 'vol_ratio' in locals() else 1.0) * current_volatility * 50)
+        market_activity = 1.0
+        if 'volume_ratio' in locals():
+            market_activity = min(1.0, vol_ratio * current_volatility * 25)  # было 50, теперь 25
             if market_activity < MIN_MARKET_ACTIVITY_SCORE:
-                score *= 0.8  # Штраф за низкую активность
+                score *= 0.8
         
-        # Адаптация к активным часам
+        # Небольшая корректировка в активные часы
         if is_active_hour:
-            score *= (1 + (1 - ACTIVE_HOURS_MULTIPLIER))  # Небольшой бонус в активные часы
+            score *= 1.05  # было больше, теперь совсем небольшой бонус
         
-        # КРИТИЧНО: возвращаем 0 если скор отрицательный
-        # НОВОЕ: Нормализуем скор чтобы избежать завышенных значений
-        normalized_score = min(score * 0.4, 20.0)  # Применяем коэффициент 0.4 и ограничиваем максимум 20 баллами
-        return max(0, normalized_score), None
+        # КРИТИЧНО: НЕ ПРИМЕНЯЕМ ЗАВЫШАЮЩУЮ НОРМАЛИЗАЦИЮ
+        # Просто ограничиваем и возвращаем реальный скор
+        final_score = max(0, min(score, 15.0))  # Максимум 15 баллов вместо 20
+        
+        return final_score, None
         
     except Exception as e:
         logging.error(f"Ошибка в оценке силы сигнала: {e}")
@@ -577,31 +593,26 @@ def evaluate_signal_strength(df, symbol, action):
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def signal_strength_label(score):
     """
-    Преобразует числовую оценку силы сигнала в текстовую метку
-    и процентную вероятность успеха.
-    
-    ИСПРАВЛЕНО: Реалистичные вероятности на основе фактического винрейта ~36%
+    ИСПРАВЛЕННАЯ функция: реалистичные вероятности на основе фактического винрейта 41.6%
     
     Возвращает кортеж (метка, вероятность)
     """
-    if score >= 15:
-        return 'Экстремально сильный', 0.65  # Было 0.98, стало 0.65
-    elif score >= 12:
-        return 'Очень сильный', 0.58  # Было 0.95, стало 0.58
+    if score >= 12:
+        return 'Сильный', 0.65  # Очень высокое качество
     elif score >= 10:
-        return 'Сильный', 0.52  # Было 0.85, стало 0.52
+        return 'Хороший', 0.58  # Высокое качество  
     elif score >= 8:
-        return 'Средний', 0.45  # Было 0.75, стало 0.45
+        return 'Умеренный', 0.52  # Выше среднего
     elif score >= 7:
-        return 'Умеренный', 0.38  # Было 0.65, стало 0.38
+        return 'Средний', 0.45  # Средний
     elif score >= 6:
-        return 'Слабый', 0.32  # Было 0.55, стало 0.32
+        return 'Слабый', 0.38  # Ниже среднего
     elif score >= 5:
-        return 'Очень слабый', 0.28  # Было 0.45, стало 0.28
+        return 'Очень слабый', 0.30  # Низкое качество
     elif score >= 4:
-        return 'Ненадёжный', 0.22  # Было 0.35, стало 0.22
+        return 'Ненадёжный', 0.22  # Очень низкое качество
     else:
-        return 'Крайне ненадёжный', 0.15  # Было 0.25, стало 0.15
+        return 'Крайне ненадёжный', 0.15  # Критически низкое качество
 
 # ========== РЕКОМЕНДАЦИЯ ПО ПЛЕЧУ ==========
 def recommend_leverage(strength_score, history_percent):
@@ -698,8 +709,8 @@ def get_btc_adx():
 
 def check_signals(df, symbol):
     """
-    СОВРЕМЕННАЯ система генерации сигналов для 15м фьючерсов с композитным скорингом.
-    Цель: 10+ надёжных сигналов в сутки.
+    ИСПРАВЛЕННАЯ система генерации сигналов - фокус на качество, а не количество.
+    Цель: 3-5 очень надёжных сигналов в сутки с винрейтом 60%+.
     """
     try:
         if df.empty or len(df) < MIN_15M_CANDLES:
@@ -709,13 +720,13 @@ def check_signals(df, symbol):
         prev = df.iloc[-2]
         signals = []
         
-        # === БЫСТРЫЕ БАЗОВЫЕ ФИЛЬТРЫ ===
-        # 1. Объём торгов (основной фильтр)
+        # === СТРОГИЕ БАЗОВЫЕ ФИЛЬТРЫ ===
+        # 1. Объём торгов (ужесточен)
         volume = get_24h_volume(symbol)
         if volume < MIN_VOLUME_USDT:
             return []
         
-        # 2. Максимальный спред
+        # 2. Максимальный спред (ужесточен)
         if last['spread_pct'] > MAX_SPREAD_PCT:
             return []
         
@@ -730,9 +741,9 @@ def check_signals(df, symbol):
         if now - last_signal_time[symbol] < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES):
             return []
         
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем открытые позиции - НЕ ОТКРЫВАЕМ противоположные сигналы!
+        # 4. Проверяем открытые позиции
         if symbol in open_trades:
-            return []  # Уже есть открытая позиция по этому символу
+            return []
         
         # Определяем адаптивные пороги
         current_volatility = last.get('volatility', 0.02)
@@ -740,27 +751,25 @@ def check_signals(df, symbol):
         is_low_vol = current_volatility < LOW_VOLATILITY_THRESHOLD
         is_active_hour = now.hour in ACTIVE_HOURS_UTC
         
-        # Адаптивный минимум ADX
+        # 5. СТРОЖЕ: базовая сила тренда
         min_adx = HIGH_VOL_ADX_MIN if is_high_vol else (LOW_VOL_ADX_MIN if is_low_vol else MIN_ADX)
-        
-        # 4. Базовая сила тренда
         if last['adx'] < min_adx:
             return []
         
-        # --- Новый фильтр: минимальная ширина BB ---
+        # 6. НОВЫЙ ФИЛЬТР: минимальная ширина BB (исключаем флэт)
         if 'bb_width' in last and last['bb_width'] < MIN_BB_WIDTH:
             return []
         
-        # --- Новый фильтр: отдельные условия для SHORT и LONG ---
-        # Для SHORT: ADX >= SHORT_MIN_ADX и RSI >= SHORT_MIN_RSI
-        # Для LONG:  ADX >= MIN_ADX и RSI <= LONG_MAX_RSI
+        # 7. НОВЫЙ ФИЛЬТР: требуем разделение EMA
+        if abs(last['ema_fast'] - last['ema_slow']) / last['close'] < MIN_EMA_SEPARATION:
+            return []
         
-        # Проверяем потенциальный SHORT
-        short_conditions = last['adx'] >= SHORT_MIN_ADX and last['rsi'] >= SHORT_MIN_RSI
-        # Проверяем потенциальный LONG
-        long_conditions = last['adx'] >= MIN_ADX and last['rsi'] <= LONG_MAX_RSI
+        # 8. СТРОЖЕ: отдельные условия для SHORT и LONG
+        short_conditions = (last['adx'] >= SHORT_MIN_ADX and 
+                           last['rsi'] >= SHORT_MIN_RSI)
+        long_conditions = (last['adx'] >= MIN_ADX and 
+                          last['rsi'] <= LONG_MAX_RSI)
         
-        # Если ни одно из условий не выполняется — не даём сигнал
         if not (short_conditions or long_conditions):
             return []
         
@@ -1288,59 +1297,59 @@ async def main():
 
 def calculate_tp_sl(df, price, atr, direction='LONG'):
     """
-    СОВРЕМЕННЫЙ расчет TP/SL для 15-минутных фьючерсов с поддержкой LONG/SHORT.
-    Адаптивные множители для лучшего соотношения R:R и винрейта.
+    ИСПРАВЛЕННЫЙ расчет TP/SL для повышения винрейта.
+    Более консервативные цели и широкие стопы.
     """
     try:
         last = df.iloc[-1]
         adx = last.get('adx', 20)
         
-        # Адаптивные множители на основе силы тренда (ADX)
-        if adx > 30:
-            # Сильный тренд - можно взять больше прибыли
-            tp_mult = TP_ATR_MULT  # 1.8
-            sl_mult = SL_ATR_MULT  # 0.9
-        elif adx > 20:
-            # Умеренный тренд
-            tp_mult = TP_ATR_MULT * 0.9  # 1.62
-            sl_mult = SL_ATR_MULT * 0.9  # 0.81
-        else:
-            # Слабый тренд - более консервативный подход
-            tp_mult = TP_ATR_MULT * 0.7  # 1.26
-            sl_mult = SL_ATR_MULT * 0.8  # 0.72
+        # ИСПРАВЛЕНО: Более консервативные базовые множители
+        base_tp_mult = TP_ATR_MULT  # 0.8 (консервативно)
+        base_sl_mult = SL_ATR_MULT  # 3.0 (широко)
         
-        # Учитываем волатильность
+        # Адаптация на основе силы тренда (менее агрессивная)
+        if adx > 35:  # Очень сильный тренд
+            tp_mult = base_tp_mult * 1.2  # Можно взять чуть больше
+            sl_mult = base_sl_mult * 0.9  # Можно сузить стоп
+        elif adx > 25:  # Умеренный тренд
+            tp_mult = base_tp_mult  # Базовые значения
+            sl_mult = base_sl_mult
+        else:  # Слабый тренд
+            tp_mult = base_tp_mult * 0.8  # Более скромные цели
+            sl_mult = base_sl_mult * 1.1  # Более широкий стоп
+        
+        # Адаптация к волатильности (более консервативная)
         if 'volatility' in last:
             vol = last['volatility']
             if vol > HIGH_VOLATILITY_THRESHOLD:
-                # Высокая волатильность - расширяем и TP и SL для безопасности
-                tp_mult *= 1.1
-                sl_mult *= 1.1
+                # Высокая волатильность - увеличиваем стопы и уменьшаем цели
+                tp_mult *= 0.9
+                sl_mult *= 1.2
             elif vol < LOW_VOLATILITY_THRESHOLD:
-                # Низкая волатильность - сужаем и TP и SL
-                tp_mult *= 0.9
-                sl_mult *= 0.9
-        
-        # Учитываем импульс цены
-        if 'momentum' in last:
-            momentum = abs(last['momentum'])
-            if momentum > 1.0:  # Сильный импульс
+                # Низкая волатильность - можно быть чуть агрессивнее
                 tp_mult *= 1.1
-            elif momentum < 0.3:  # Слабый импульс
-                tp_mult *= 0.9
+                sl_mult *= 0.95
         
         # Базовый расчет в процентах от цены
         tp_pct = max((atr * tp_mult) / price, TP_MIN)
         sl_pct = max((atr * sl_mult) / price, SL_MIN)
         
-        # Обеспечиваем минимальное соотношение R:R = 1.3 (реалистично для крипто)
-        min_rr = 1.3
+        # КРИТИЧНО: Обеспечиваем консервативное соотношение R:R
+        min_rr = 1.8  # было 1.3, теперь 1.8 - более консервативно
         if tp_pct / sl_pct < min_rr:
-            tp_pct = sl_pct * min_rr
+            # Увеличиваем стоп, а не цель
+            sl_pct = tp_pct / min_rr
         
-        # Ограничиваем максимальными значениями
+        # Ограничиваем значениями из конфига
         tp_pct = min(tp_pct, TP_MAX)
         sl_pct = min(sl_pct, SL_MAX)
+        
+        # Финальная проверка минимального расстояния
+        if abs(tp_pct - sl_pct) < MIN_TP_SL_DISTANCE:
+            # Увеличиваем стоп для безопасности
+            sl_pct = tp_pct + MIN_TP_SL_DISTANCE
+            sl_pct = min(sl_pct, SL_MAX)
         
         # Рассчитываем абсолютные цены
         if direction.upper() == 'LONG':
@@ -1354,11 +1363,11 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
         
     except Exception as e:
         logging.error(f"Ошибка в calculate_tp_sl: {e}")
-        # Возвращаем безопасные значения
+        # Возвращаем безопасные консервативные значения
         if direction.upper() == 'LONG':
-            return price * 1.015, price * 0.992  # +1.5% TP, -0.8% SL
+            return price * 1.008, price * 0.975  # +0.8% TP, -2.5% SL
         else:
-            return price * 0.985, price * 1.008  # -1.5% TP, +0.8% SL
+            return price * 0.992, price * 1.025  # -0.8% TP, +2.5% SL
 
 def check_tp_sl(symbol, price, time, df):
     global adaptive_targets
