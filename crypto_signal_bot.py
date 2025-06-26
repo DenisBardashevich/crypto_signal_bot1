@@ -988,8 +988,9 @@ async def send_daily_report():
         text += 'Нет завершённых сделок.'
     await send_telegram_message(text)
 
-# ========== ОБРАБОТЧИК КОМАНДЫ /stats ==========
+# ========== ОБРАБОТЧИКИ КОМАНД ТЕЛЕГРАМ БОТА ==========
 async def stats_command(update, context):
+    """Показать статистику портфеля"""
     report, win, loss = simple_stats()
     text = '📊 Статистика по виртуальным сделкам:\n'
     if report:
@@ -1002,10 +1003,194 @@ async def stats_command(update, context):
     for part in parts:
         await update.message.reply_text(part)
 
+async def del_command(update, context):
+    """Очистить весь портфель (сброс к начальному состоянию)"""
+    global virtual_portfolio, open_trades, adaptive_targets
+    
+    # Подсчитываем статистику перед удалением
+    report, win, loss = simple_stats()
+    total_trades = win + loss
+    
+    # Очищаем портфель
+    virtual_portfolio.clear()
+    open_trades.clear()
+    adaptive_targets = {}
+    virtual_portfolio['open_trades'] = {}
+    
+    # Сохраняем пустой портфель
+    save_portfolio()
+    
+    text = f"🗑 Портфель полностью очищен!\n\n"
+    text += f"📊 Последняя статистика была:\n"
+    text += f"• Завершённых сделок: {total_trades}\n"
+    text += f"• Удачных: {win}\n"
+    text += f"• Неудачных: {loss}\n"
+    if total_trades > 0:
+        winrate = (win / total_trades) * 100
+        text += f"• Винрейт: {winrate:.1f}%"
+    
+    await update.message.reply_text(text)
+
+async def open_positions_command(update, context):
+    """Показать открытые позиции"""
+    if not open_trades:
+        await update.message.reply_text("📭 Нет открытых позиций")
+        return
+    
+    text = "📈 Открытые позиции:\n\n"
+    for symbol, trade in open_trades.items():
+        side = trade['side'].upper()
+        entry_price = trade['entry_price']
+        time_str = trade['time']
+        score = trade.get('score', 'N/A')
+        
+        # Получаем текущую цену
+        try:
+            df = get_ohlcv(symbol)
+            if not df.empty:
+                current_price = df['close'].iloc[-1]
+                # Расчет текущего P&L
+                if side == 'LONG':
+                    pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                else:
+                    pnl_pct = ((entry_price - current_price) / entry_price) * 100
+                
+                text += f"🔹 {symbol}\n"
+                text += f"   Направление: {side}\n"
+                text += f"   Вход: {entry_price:.6f}\n"
+                text += f"   Текущая: {current_price:.6f}\n"
+                text += f"   P&L: {pnl_pct:+.2f}%\n"
+                text += f"   Время входа: {time_str}\n"
+                text += f"   Сила: {score}\n\n"
+            else:
+                text += f"🔹 {symbol} ({side}) - ошибка получения цены\n\n"
+        except Exception as e:
+            text += f"🔹 {symbol} ({side}) - ошибка: {str(e)[:50]}\n\n"
+    
+    # Разбиваем длинное сообщение
+    max_len = 4000
+    parts = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+    for part in parts:
+        await update.message.reply_text(part)
+
+async def close_position_command(update, context):
+    """Принудительно закрыть позицию по символу"""
+    if not context.args:
+        await update.message.reply_text("❗️ Укажите символ для закрытия: /close BTCUSDT")
+        return
+    
+    symbol_arg = context.args[0].upper()
+    # Ищем символ в открытых позициях
+    found_symbol = None
+    for symbol in open_trades.keys():
+        if symbol_arg in symbol.replace('/', '').replace(':', ''):
+            found_symbol = symbol
+            break
+    
+    if not found_symbol:
+        await update.message.reply_text(f"❗️ Позиция {symbol_arg} не найдена в открытых позициях")
+        return
+    
+    try:
+        # Получаем текущую цену
+        df = get_ohlcv(found_symbol)
+        if df.empty:
+            await update.message.reply_text(f"❗️ Не удалось получить цену для {found_symbol}")
+            return
+        
+        current_price = df['close'].iloc[-1]
+        current_time = df['timestamp'].iloc[-1]
+        
+        trade = open_trades[found_symbol]
+        side = trade['side']
+        entry_price = trade['entry_price']
+        score = trade.get('score')
+        
+        # Расчет P&L
+        if side == 'long':
+            pnl_pct = ((current_price - entry_price) / entry_price) * 100
+        else:
+            pnl_pct = ((entry_price - current_price) / entry_price) * 100
+        
+        # Записываем закрытие
+        record_trade(found_symbol, 'CLOSE', current_price, current_time, side, score)
+        close_trade(found_symbol)
+        
+        # Очистка данных
+        if found_symbol in adaptive_targets:
+            del adaptive_targets[found_symbol]
+        
+        result = "УДАЧНО" if pnl_pct > 0 else "НЕУДАЧНО"
+        text = f"✅ Позиция принудительно закрыта:\n"
+        text += f"🔹 {found_symbol} {side.upper()}\n"
+        text += f"   Вход: {entry_price:.6f}\n"
+        text += f"   Выход: {current_price:.6f}\n"
+        text += f"   P&L: {pnl_pct:+.2f}%\n"
+        text += f"   Результат: {result}"
+        
+        await update.message.reply_text(text)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❗️ Ошибка при закрытии позиции: {str(e)}")
+
+async def help_command(update, context):
+    """Показать список доступных команд"""
+    text = "🤖 Доступные команды:\n\n"
+    text += "/stats - 📊 Статистика портфеля\n"
+    text += "/positions - 📈 Открытые позиции\n"
+    text += "/close <символ> - ❌ Закрыть позицию\n"
+    text += "/del - 🗑 Очистить весь портфель\n"
+    text += "/status - ⚡️ Статус бота\n"
+    text += "/help - ❓ Показать эту справку\n\n"
+    text += "Примеры:\n"
+    text += "• /close BTCUSDT - закрыть позицию по BTC\n"
+    text += "• /close BTC - поиск по частичному совпадению"
+    
+    await update.message.reply_text(text)
+
+async def status_command(update, context):
+    """Показать текущий статус бота"""
+    text = "⚡️ Статус крипто-бота:\n\n"
+    text += f"🔍 Отслеживается монет: {len(SYMBOLS)}\n"
+    text += f"📈 Открытых позиций: {len(open_trades)}\n"
+    
+    # Показываем последнюю активность
+    if virtual_portfolio:
+        total_trades = 0
+        for symbol, trades in virtual_portfolio.items():
+            if symbol != 'open_trades':
+                total_trades += len(trades)
+        text += f"📊 Всего записей сделок: {total_trades}\n"
+    
+    # Статус соединения с биржей
+    try:
+        test_symbol = SYMBOLS[0] if SYMBOLS else 'BTC/USDT:USDT'
+        df = get_ohlcv(test_symbol)
+        if not df.empty:
+            last_update = df['timestamp'].iloc[-1].strftime('%H:%M:%S')
+            text += f"🌐 Биржа: ✅ Подключено (обновлено {last_update})\n"
+        else:
+            text += f"🌐 Биржа: ❌ Проблемы с получением данных\n"
+    except:
+        text += f"🌐 Биржа: ❌ Ошибка подключения\n"
+    
+    text += f"💻 Время работы: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    
+    await update.message.reply_text(text)
+
 # ========== ОСНОВНОЙ ЦИКЛ ==========
 async def telegram_bot():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # Добавляем обработчики команд
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("del", del_command))
+    app.add_handler(CommandHandler("positions", open_positions_command))
+    app.add_handler(CommandHandler("close", close_position_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("start", help_command))  # /start показывает справку
+    
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
