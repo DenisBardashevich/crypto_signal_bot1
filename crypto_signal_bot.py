@@ -1523,12 +1523,15 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
         # КРИТИЧНО: Обеспечиваем консервативное соотношение R:R
         min_rr = 1.8  # было 1.3, теперь 1.8 - более консервативно
         if tp_pct / sl_pct < min_rr:
-            # Увеличиваем стоп, а не цель
+            # Уменьшаем стоп для достижения минимального R:R
             sl_pct = tp_pct / min_rr
+            # Но не меньше минимального значения
+            sl_pct = max(sl_pct, SL_MIN)
         
         # Ограничиваем значениями из конфига
         tp_pct = min(tp_pct, TP_MAX)
-        sl_pct = min(sl_pct, SL_MAX)
+        sl_pct = max(sl_pct, SL_MIN)  # Не меньше минимального
+        sl_pct = min(sl_pct, SL_MAX)  # Не больше максимального
         
         # Финальная проверка минимального расстояния
         if abs(tp_pct - sl_pct) < MIN_TP_SL_DISTANCE:
