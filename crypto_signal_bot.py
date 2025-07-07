@@ -872,7 +872,6 @@ def check_signals(df, symbol):
             
             # Рассчитываем TP/SL
             tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'])
-            rr_ratio = calculate_rr_ratio(strongest_score)
             
             # Рекомендуем плечо
             leverage = recommend_leverage(strongest_score, win_prob * 100)
@@ -881,13 +880,16 @@ def check_signals(df, symbol):
             tp_pct = ((tp_price - last['close']) / last['close']) * 100
             sl_pct = ((last['close'] - sl_price) / last['close']) * 100
             
+            # Рассчитываем реальное соотношение R:R
+            real_rr = tp_pct / sl_pct if sl_pct > 0 else 0
+            
             # Составляем сообщение
             signal = f"🟢 LONG {symbol}\n"
             signal += f"Цена: {last['close']:.6f}\n"
             signal += f"Сила: {strength_label} ({strongest_score:.1f})\n"
             signal += f"Вероятность: {win_prob:.0%}\n"
             signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
-            signal += f"R:R = 1:{rr_ratio:.1f}\n"
+            signal += f"R:R = 1:{real_rr:.1f}\n"
             signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
             
             # Добавляем детали триггеров
@@ -911,7 +913,6 @@ def check_signals(df, symbol):
             
             # Рассчитываем TP/SL
             tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], 'SHORT')
-            rr_ratio = calculate_rr_ratio(strongest_score)
             
             # Рекомендуем плечо
             leverage = recommend_leverage(strongest_score, win_prob * 100)
@@ -920,13 +921,16 @@ def check_signals(df, symbol):
             tp_pct = ((last['close'] - tp_price) / last['close']) * 100
             sl_pct = ((sl_price - last['close']) / last['close']) * 100
             
+            # Рассчитываем реальное соотношение R:R
+            real_rr = tp_pct / sl_pct if sl_pct > 0 else 0
+            
             # Составляем сообщение
             signal = f"🔴 SHORT {symbol}\n"
             signal += f"Цена: {last['close']:.6f}\n"
             signal += f"Сила: {strength_label} ({strongest_score:.1f})\n"
             signal += f"Вероятность: {win_prob:.0%}\n"
             signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
-            signal += f"R:R = 1:{rr_ratio:.1f}\n"
+            signal += f"R:R = 1:{real_rr:.1f}\n"
             signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
             
             # Добавляем детали триггеров
@@ -950,22 +954,7 @@ def check_signals(df, symbol):
         logging.error(f"Ошибка в check_signals для {symbol}: {e}")
         return []
 
-# Добавляем новую функцию для расчета соотношения риск/доходность на основе score
-def calculate_rr_ratio(score):
-    """
-    Рассчитывает рекомендуемое соотношение риск/доходность на основе score
-    Возвращает значение для отображения в формате "1:X" где X - это TP/SL
-    """
-    if score >= 6:
-        return 4.0  # Для экстремально сильных сигналов
-    elif score >= 5:
-        return 3.5  # Для очень сильных сигналов
-    elif score >= 4.5:
-        return 3.0  # Для сильных сигналов
-    elif score >= 4.2:  # Адаптируем под новый минимальный порог (70%)
-        return 2.5  # Для умеренных сигналов
-    else:
-        return 2.0  # Минимальное соотношение
+# Функция calculate_rr_ratio удалена - теперь используется реальное соотношение TP/SL
 
 # ========== ОТПРАВКА В TELEGRAM ==========
 async def send_telegram_message(text):
