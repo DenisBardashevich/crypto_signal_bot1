@@ -889,7 +889,7 @@ def check_signals(df, symbol):
             signal += f"Сила: {strength_label} ({strongest_score:.1f})\n"
             signal += f"Вероятность: {win_prob:.0%}\n"
             signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
-            signal += f"R:R = 1:{real_rr:.1f}\n"
+            signal += f"R:R = {real_rr:.2f}:1\n"
             signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
             
             # Добавляем детали триггеров
@@ -930,7 +930,7 @@ def check_signals(df, symbol):
             signal += f"Сила: {strength_label} ({strongest_score:.1f})\n"
             signal += f"Вероятность: {win_prob:.0%}\n"
             signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
-            signal += f"R:R = 1:{real_rr:.1f}\n"
+            signal += f"R:R = {real_rr:.2f}:1\n"
             signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
             
             # Добавляем детали триггеров
@@ -1517,16 +1517,11 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
             # Но не меньше минимального значения
             sl_pct = max(sl_pct, SL_MIN)
         
-        # Ограничиваем значениями из конфига
-        tp_pct = min(tp_pct, TP_MAX)
-        sl_pct = max(sl_pct, SL_MIN)  # Не меньше минимального
-        sl_pct = min(sl_pct, SL_MAX)  # Не больше максимального
-        
-        # Финальная проверка минимального расстояния
-        if abs(tp_pct - sl_pct) < MIN_TP_SL_DISTANCE:
-            # Увеличиваем стоп для безопасности
-            sl_pct = tp_pct + MIN_TP_SL_DISTANCE
-            sl_pct = min(sl_pct, SL_MAX)
+        # Ограничиваем значениями из конфига (как для TP, так и для SL)
+        tp_pct = max(tp_pct, TP_MIN)  # Не меньше минимального TP
+        tp_pct = min(tp_pct, TP_MAX)  # Не больше максимального TP
+        sl_pct = max(sl_pct, SL_MIN)  # Не меньше минимального SL
+        sl_pct = min(sl_pct, SL_MAX)  # Не больше максимального SL
         
         # Рассчитываем абсолютные цены
         if direction.upper() == 'LONG':
