@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ИСПРАВЛЕННАЯ версия оптимизатора без проблемных фильтров
-Исключены: Volatility Filter, EMA Separation Filter, Momentum Filter
+УЛУЧШЕННАЯ версия оптимизатора с расширенным поисковым пространством
+Используются только фильтры из config.py и crypto_signal_bot.py
+Исправлены расчеты и логика
+ИСПРАВЛЕНО: MIN_TP_SL_DISTANCE убран из оптимизации (используется статичное значение)
 """
 
 import ccxt
 import pandas as pd
 import numpy as np
+import os
 from datetime import datetime, timedelta
 from config import *
 from crypto_signal_bot import analyze, evaluate_signal_strength, SYMBOLS
@@ -15,7 +18,6 @@ import logging
 import random
 import multiprocessing as mp
 from functools import partial
-import re
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -24,100 +26,111 @@ EXCHANGE = ccxt.bybit({
     'options': {'defaultType': 'swap'}
 })
 
-# --- УЛУЧШЕННОЕ ПОИСКОВОЕ ПРОСТРАНСТВО (БЕЗ ПРОБЛЕМНЫХ ФИЛЬТРОВ) ---
-fixed_search_space = {
+# --- РАСШИРЕННОЕ ПОИСКОВОЕ ПРОСТРАНСТВО ---
+search_space = {
     # === ОСНОВНЫЕ ФИЛЬТРЫ ===
-    'min_score': [2.5, 3.0, 3.5, 4.0, 4.5],
-    'min_adx': [8, 10, 12, 14, 16, 18],
-    'short_min_adx': [8, 10, 12, 14, 16],
-    'short_min_rsi': [35, 40, 45, 50, 55],
-    'long_max_rsi': [60, 65, 70, 75, 80],
-    'rsi_min': [10, 15, 20, 25, 30],
-    'rsi_max': [70, 75, 80, 85, 90],
+    'min_score': [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0],
+    'min_adx': [8, 10, 12, 14, 16, 18, 20, 22],
+    'short_min_adx': [8, 10, 12, 14, 16, 18, 20],
+    'short_min_rsi': [30, 35, 40, 45, 50, 55, 60],
+    'long_max_rsi': [55, 60, 65, 70, 75, 80, 85],
+    'rsi_min': [8, 10, 12, 15, 18, 20, 25, 30],
+    'rsi_max': [65, 70, 75, 80, 85, 90, 95],
     
     # === TP/SL МУЛЬТИПЛИКАТОРЫ ===
-    'tp_mult': [1.2, 1.4, 1.6, 1.8, 2.0, 2.2],
-    'sl_mult': [1.4, 1.6, 1.8, 2.0, 2.2, 2.4],
+    'tp_mult': [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.5],
+    'sl_mult': [1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.8],
     
     # === ОБЪЕМНЫЕ ФИЛЬТРЫ ===
-    'min_volume': [700_000, 900_000],
-    'max_spread': [0.008, 0.01, 0.012, 0.015, 0.018],
-    'min_bb_width': [0.005, 0.008, 0.01, 0.012, 0.015],
+    'min_volume': [100, 200, 300, 500, 800, 1000, 1500, 2000],  # ИСПРАВЛЕНО: данные в тысячах
+    'max_spread': [0.005, 0.008, 0.01, 0.012, 0.015, 0.018, 0.02],
+    'min_bb_width': [0.003, 0.005, 0.008, 0.01, 0.012, 0.015, 0.02],
     
     # === RSI ФИЛЬТРЫ ===
-    'rsi_extreme_oversold': [8, 10, 12, 15, 18],
-    'rsi_extreme_overbought': [82, 85, 88, 90, 92],
+    'rsi_extreme_oversold': [5, 8, 10, 12, 15, 18, 20],
+    'rsi_extreme_overbought': [80, 82, 85, 88, 90, 92, 95],
     
-    # === CANDLE ФИЛЬТРЫ (ОСЛАБЛЕННЫЕ) ===
-    'min_candle_body_pct': [0.40, 0.50, 0.60, 0.70, 0.80],
-    'max_wick_to_body_ratio': [2.0, 2.5, 3.0, 3.5, 4.0],
+    # === CANDLE ФИЛЬТРЫ ===
+    'min_candle_body_pct': [0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90],
+    'max_wick_to_body_ratio': [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0],
     
     # === ВРЕМЕННЫЕ ФИЛЬТРЫ ===
-    'signal_cooldown_minutes': [15, 20, 25, 30, 35],
-    'min_triggers_active_hours': [0.8, 1.0, 1.2, 1.5, 1.8],
-    'min_triggers_inactive_hours': [1.2, 1.5, 1.8, 2.0, 2.2],
+    'signal_cooldown_minutes': [10, 15, 20, 25, 30, 35, 40],
+    'min_triggers_active_hours': [0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0],
+    'min_triggers_inactive_hours': [1.0, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5],
     
-    # === ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ===
-    'bb_squeeze_threshold': [0.03, 0.05, 0.07, 0.10],
-    'macd_signal_window': [7, 9, 11, 13],
-    'stoch_rsi_k': [3, 5, 7],
-    'stoch_rsi_d': [3, 5, 7],
-    'stoch_rsi_length': [10, 12, 14, 16],
-    'stoch_rsi_smooth': [2, 3, 4],
-    
-    # === НОВЫЕ ФИЛЬТРЫ ИЗ CONFIG.PY ===
-    'min_volume_ma_ratio': [0.6, 0.8, 1.0, 1.2, 1.5],
-    'min_volume_consistency': [0.5, 0.6, 0.7, 0.8, 0.9],
-    'max_rsi_volatility': [8, 10, 12, 15, 18],
-    'require_macd_histogram': [False, True],  # True только для очень строгих настроек
+    # === ФИЛЬТРЫ ИЗ CONFIG.PY ===
+    'min_volume_ma_ratio': [0.4, 0.6, 0.8, 1.0, 1.2, 1.5, 2.0],
+    'min_volume_consistency': [0.3, 0.5, 0.6, 0.7, 0.8, 0.9],
+    'max_rsi_volatility': [5, 8, 10, 12, 15, 18, 20],
+    'require_macd_histogram': [False, True],
     
     # === ВЕСА СИСТЕМЫ ===
-    'weight_rsi': [1.0, 1.2, 1.5, 1.8, 2.0],
-    'weight_macd': [1.2, 1.5, 1.8, 2.0, 2.2],
-    'weight_bb': [0.8, 1.0, 1.2, 1.4, 1.6],
-    'weight_vwap': [1.0, 1.2, 1.4, 1.6, 1.8],
-    'weight_volume': [1.5, 1.8, 2.0, 2.2, 2.5],
-    'weight_adx': [2.0, 2.5, 3.0, 3.5, 4.0],
+    'weight_rsi': [0.8, 1.0, 1.2, 1.5, 1.8, 2.0, 2.5],
+    'weight_macd': [1.0, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5],
+    'weight_bb': [0.5, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0],
+    'weight_vwap': [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0],
+    'weight_volume': [1.0, 1.5, 1.8, 2.0, 2.2, 2.5, 3.0],
+    'weight_adx': [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0],
     
     # === SHORT/LONG НАСТРОЙКИ ===
-    'short_boost_multiplier': [1.1, 1.2, 1.3, 1.4, 1.5],
-    'long_penalty_in_downtrend': [0.10, 0.12, 0.15, 0.18, 0.20],
+    'short_boost_multiplier': [1.0, 1.1, 1.2, 1.3, 1.4, 1.5],
+    'long_penalty_in_downtrend': [0.05, 0.10, 0.12, 0.15, 0.18, 0.20],
     
-    # === МУЛЬТИТАЙМФРЕЙМ ===
-    'mtf_confluence_weight': [1.2, 1.5, 1.8, 2.0, 2.2],
-    # === ДОБАВЛЕННЫЕ КЛЮЧЕВЫЕ ПАРАМЕТРЫ ===
-    'RSI_WINDOW': [10, 12, 14, 16, 18],
-    'MA_FAST': [10, 16, 22, 28],
-    'MA_SLOW': [34, 42, 52, 62],
-    'ATR_WINDOW': [10, 14, 18, 22],
-    'TRAIL_ATR_MULT': [1.5, 2.0, 2.5, 3.0],
-    'TP_MIN': [0.006, 0.008, 0.010, 0.012, 0.015, 0.018, 0.020],
-    'SL_MIN': [0.010, 0.015, 0.020, 0.025, 0.030, 0.035],
-    'BB_WINDOW': [14, 20, 24],
-    'BB_STD_DEV': [1.5, 2.0, 2.5],
-    'MACD_FAST': [8, 12, 16],
-    'MACD_SLOW': [20, 26, 34],
-    'MACD_SIGNAL': [7, 9, 11],
-    'STOCH_RSI_K': [3, 5, 7],
-    'STOCH_RSI_D': [3, 5, 7],
-    'STOCH_RSI_LENGTH': [10, 14, 16],
-    'STOCH_RSI_SMOOTH': [2, 3, 4],
-    'MIN_TP_SL_DISTANCE': [0.008, 0.010, 0.012, 0.015],
+    # === ИНДИКАТОРНЫЕ ПАРАМЕТРЫ ===
+    'RSI_WINDOW': [8, 10, 12, 14, 16, 18, 20],
+    'MA_FAST': [8, 12, 16, 20, 24, 28, 32],
+    'MA_SLOW': [24, 32, 40, 48, 56, 64, 72],
+    'ATR_WINDOW': [8, 12, 16, 20, 24, 28],
+    'TRAIL_ATR_MULT': [1.0, 1.5, 2.0, 2.5, 3.0, 3.5],
+    'TP_MIN': [0.005, 0.008, 0.010, 0.012, 0.015, 0.018, 0.020, 0.025],
+    'SL_MIN': [0.008, 0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040],
+    'BB_WINDOW': [12, 16, 20, 24, 28, 32],
+    'BB_STD_DEV': [1.2, 1.5, 1.8, 2.0, 2.2, 2.5],
+    'MACD_FAST': [6, 8, 10, 12, 14, 16, 18],
+    'MACD_SLOW': [16, 20, 24, 28, 32, 36, 40],
+    'MACD_SIGNAL': [5, 7, 9, 11, 13, 15],
+    'STOCH_RSI_K': [2, 3, 4, 5, 6, 7, 8],
+    'STOCH_RSI_D': [2, 3, 4, 5, 6, 7, 8],
+    'STOCH_RSI_LENGTH': [8, 10, 12, 14, 16, 18, 20],
+    'STOCH_RSI_SMOOTH': [1, 2, 3, 4, 5],
+    # MIN_TP_SL_DISTANCE убран из оптимизации - используется статичное значение из config.py
+    
+    # === ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ИЗ CONFIG.PY ===
+    'BB_SQUEEZE_THRESHOLD': [0.03, 0.05, 0.07, 0.10],
+    'MACD_SIGNAL_WINDOW': [7, 9, 11, 13],
 }
 
 def get_historical_data(symbol, hours_back=72):
-    candles_needed = int(hours_back * 60 / 15) + 100
+    """Загружает исторические данные из CSV файлов (кэш)"""
     try:
-        ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=candles_needed)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+        # Формируем имя файла
+        filename = f"data/{symbol.replace('/', '').replace(':', '')}_15m.csv"
+        
+        if not os.path.exists(filename):
+            logging.warning(f"Файл данных не найден: {filename}")
+            logging.warning(f"Сначала запустите download_ohlcv.py для загрузки данных")
+            return pd.DataFrame()
+        
+        # Читаем данные из CSV
+        df = pd.read_csv(filename)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # Ограничиваем количество свечей если нужно
+        if hours_back < 72:
+            candles_needed = int(hours_back * 60 / 15) + 50
+            if len(df) > candles_needed:
+                df = df.tail(candles_needed)
+        
+        logging.info(f"Загружено {len(df)} свечей для {symbol} из {filename}")
         return df
+        
     except Exception as e:
-        logging.warning(f"Ошибка загрузки {symbol}: {e}")
+        logging.warning(f"Ошибка чтения данных {symbol}: {e}")
         return pd.DataFrame()
 
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ simulate_signals (БЕЗ ПРОБЛЕМНЫХ ФИЛЬТРОВ) ---
-def simulate_signals_fixed(df, symbol, params, active_hours_utc):
+def simulate_signals(df, symbol, params, active_hours_utc):
+    """Симуляция сигналов с расширенными фильтрами"""
     if df.empty or len(df) < MIN_15M_CANDLES + 50:
         return []
     
@@ -148,31 +161,10 @@ def simulate_signals_fixed(df, symbol, params, active_hours_utc):
     signal_cooldown_minutes = params['signal_cooldown_minutes']
     min_triggers_active_hours = params['min_triggers_active_hours']
     min_triggers_inactive_hours = params['min_triggers_inactive_hours']
-    
-    # Новые фильтры
     min_volume_ma_ratio = params['min_volume_ma_ratio']
     min_volume_consistency = params['min_volume_consistency']
     max_rsi_volatility = params['max_rsi_volatility']
     require_macd_histogram = params['require_macd_histogram']
-    
-    # Добавляем параметры для индикаторов
-    RSI_WINDOW = params['RSI_WINDOW']
-    MA_FAST = params['MA_FAST']
-    MA_SLOW = params['MA_SLOW']
-    ATR_WINDOW = params['ATR_WINDOW']
-    TRAIL_ATR_MULT = params['TRAIL_ATR_MULT']
-    TP_MIN = params['TP_MIN']
-    SL_MIN = params['SL_MIN']
-    BB_WINDOW = params['BB_WINDOW']
-    BB_STD_DEV = params['BB_STD_DEV']
-    MACD_FAST = params['MACD_FAST']
-    MACD_SLOW = params['MACD_SLOW']
-    MACD_SIGNAL = params['MACD_SIGNAL']
-    STOCH_RSI_K = params['STOCH_RSI_K']
-    STOCH_RSI_D = params['STOCH_RSI_D']
-    STOCH_RSI_LENGTH = params['STOCH_RSI_LENGTH']
-    STOCH_RSI_SMOOTH = params['STOCH_RSI_SMOOTH']
-    MIN_TP_SL_DISTANCE = params['MIN_TP_SL_DISTANCE']
     
     for i in range(MIN_15M_CANDLES, len(df_analyzed) - 20):
         current_df = df_analyzed.iloc[:i+1].copy()
@@ -189,7 +181,7 @@ def simulate_signals_fixed(df, symbol, params, active_hours_utc):
         if last_signal_time and (now - last_signal_time).total_seconds() < signal_cooldown_minutes * 60:
             continue
             
-        # Базовые фильтры (ИСКЛЮЧЕНЫ ПРОБЛЕМНЫЕ)
+        # Базовые фильтры
         if last['spread_pct'] > max_spread:
             continue
             
@@ -203,9 +195,11 @@ def simulate_signals_fixed(df, symbol, params, active_hours_utc):
         if last['rsi'] < rsi_extreme_oversold or last['rsi'] > rsi_extreme_overbought:
             continue
             
-        # Объем
+        # Объем - ИСПРАВЛЕНО: данные в тысячах, поэтому делим на 1000
         volume = last.get('volume', 1_000_000)
-        if volume < min_volume:
+        # Конвертируем в миллионы для сравнения с min_volume
+        volume_in_millions = volume / 1000
+        if volume_in_millions < min_volume:
             continue
             
         # BB width
@@ -214,7 +208,7 @@ def simulate_signals_fixed(df, symbol, params, active_hours_utc):
             if bb_width < min_bb_width:
                 continue
                 
-        # Candle body (ОСЛАБЛЕННЫЙ)
+        # Candle body
         candle_body = abs(last['close'] - last['open'])
         candle_range = last['high'] - last['low']
         if candle_range > 0:
@@ -251,8 +245,6 @@ def simulate_signals_fixed(df, symbol, params, active_hours_utc):
             rsi_change = abs(last['rsi'] - current_df['rsi'].iloc[i-1])
             if rsi_change > max_rsi_volatility:
                 continue
-                
-        # ИСКЛЮЧЕНЫ: Volatility Filter, EMA Separation Filter, Momentum Filter
                 
         # Триггеры
         buy_triggers = 0
@@ -375,8 +367,8 @@ def simulate_signals_fixed(df, symbol, params, active_hours_utc):
                 
     return signals
 
-def test_single_params_fixed(params, hours_back, max_symbols, active_hours_utc):
-    """Тестирует один набор параметров (исправленная версия)"""
+def test_single_params(params, hours_back, max_symbols, active_hours_utc):
+    """Тестирует один набор параметров"""
     all_signals = []
     mon_stats = {}
     
@@ -385,7 +377,7 @@ def test_single_params_fixed(params, hours_back, max_symbols, active_hours_utc):
         if df.empty:
             continue
             
-        signals = simulate_signals_fixed(df, symbol, params, active_hours_utc)
+        signals = simulate_signals(df, symbol, params, active_hours_utc)
         all_signals.extend(signals)
         
         tp_signals = [s for s in signals if s['result'] == 'tp']
@@ -428,27 +420,32 @@ def test_single_params_fixed(params, hours_back, max_symbols, active_hours_utc):
         'good_symbols': good_symbols
     }
 
-def optimize_filters_fixed():
-    """Улучшенная оптимизация без проблемных фильтров"""
+def optimize_filters():
+    """Улучшенная оптимизация с расширенным поисковым пространством"""
     hours_back = 96
     max_symbols = 20
     active_hours_utc = [8,9,10,13,15,16,17,19]
-    min_signals_per_day = 10  # Увеличено с 5 до 10
-    N_TRIALS = 500
+    min_signals_per_day = 8
+    N_TRIALS = 15000
     
-    print(f"🚀 ЗАПУСК УЛУЧШЕННОЙ ОПТИМИЗАЦИИ")
+    print(f"🚀 ЗАПУСК УЛУЧШЕННОЙ ОПТИМИЗАЦИИ С РАСШИРЕННЫМ ПОИСКОВЫМ ПРОСТРАНСТВОМ")
     print(f"Количество попыток: {N_TRIALS}")
-    print(f"Оптимизируем {len(fixed_search_space)} параметров")
-    print(f"ДОБАВЛЕНЫ новые фильтры из config.py:")
-    print(f"  ✅ Volume MA Ratio")
-    print(f"  ✅ Volume Consistency")
-    print(f"  ✅ RSI Volatility")
-    print(f"  ✅ Wick to Body Ratio")
-    print(f"  ✅ MACD Histogram (опционально)")
-    print(f"ИСКЛЮЧЕНЫ проблемные фильтры:")
-    print(f"  ❌ Volatility Filter (1.4% прохождения)")
-    print(f"  ❌ EMA Separation Filter (12.7% прохождения)")
-    print(f"  ❌ Momentum Filter (0.8% прохождения)")
+    print(f"Оптимизируем {len(search_space)} параметров")
+    print(f"ИСПОЛЬЗУЕМЫЕ ФИЛЬТРЫ ИЗ CONFIG.PY:")
+    print(f"  ✅ RSI фильтры (min/max/extreme)")
+    print(f"  ✅ ADX фильтры (min/short_min)")
+    print(f"  ✅ Volume фильтры (min/ma_ratio/consistency)")
+    print(f"  ✅ Bollinger Bands (width)")
+    print(f"  ✅ Candle фильтры (body/wick)")
+    print(f"  ✅ MACD фильтры (histogram)")
+    print(f"  ✅ VWAP фильтры")
+    print(f"  ✅ Временные фильтры (cooldown/triggers)")
+    print(f"  ✅ TP/SL мультипликаторы")
+    print(f"  ✅ Веса системы (RSI/MACD/BB/VWAP/Volume/ADX)")
+    print(f"  ✅ BB Squeeze Threshold")
+    print(f"  ✅ MACD Signal Window")
+    print(f"  ✅ Stochastic RSI параметры")
+    print(f"  ⚠️  MIN_TP_SL_DISTANCE - статичное значение из config.py (не оптимизируется)")
     print(f"Минимум сигналов/день: {min_signals_per_day}")
     
     cpu_count = mp.cpu_count()
@@ -459,11 +456,11 @@ def optimize_filters_fixed():
     
     all_params = []
     for _ in range(N_TRIALS):
-        params = {k: random.choice(v) for k, v in fixed_search_space.items()}
+        params = {k: random.choice(v) for k, v in search_space.items()}
         all_params.append(params)
         
     with mp.Pool(processes=processes_to_use) as pool:
-        test_func = partial(test_single_params_fixed, hours_back=hours_back, max_symbols=max_symbols, active_hours_utc=active_hours_utc)
+        test_func = partial(test_single_params, hours_back=hours_back, max_symbols=max_symbols, active_hours_utc=active_hours_utc)
         results = pool.map(test_func, all_params)
     
     # Анализируем результаты
@@ -476,11 +473,11 @@ def optimize_filters_fixed():
             
             # Улучшенные условия для вашей задачи
             conditions_met = (
-                result['winrate'] >= 60 and  # Увеличено с 45 до 60
-                result['tp_sl_count_ratio'] >= 1.5 and  # Увеличено с 1.2 до 1.5
-                result['tp_sl_profit_ratio'] >= 1.5 and  # Увеличено с 1.2 до 1.5
+                result['winrate'] >= 60 and
+                result['tp_sl_count_ratio'] >= 1.4 and
+                result['tp_sl_profit_ratio'] >= 1.4 and
                 result['signals_per_day'] >= min_signals_per_day and
-                result['signals_per_day'] <= 130  # Максимум 130 сигналов в день
+                result['signals_per_day'] <= 150
             )
             
             if conditions_met:
@@ -494,6 +491,7 @@ def optimize_filters_fixed():
     if all_results:
         best_by_winrate = max(all_results, key=lambda x: x['winrate'])
         best_by_signals = max(all_results, key=lambda x: x['signals_per_day'])
+        best_by_profit_ratio = max(all_results, key=lambda x: x['tp_sl_profit_ratio'])
         
         print(f"\n🏆 ЛУЧШИЕ НАЙДЕННЫЕ РЕЗУЛЬТАТЫ:")
         
@@ -511,20 +509,28 @@ def optimize_filters_fixed():
         print(f"  TP/SL (кол-во): {best_by_signals['tp_sl_count_ratio']:.2f}")
         print(f"  TP/SL (прибыль): {best_by_signals['tp_sl_profit_ratio']:.2f}")
         
+        print(f"\n🥉 ЛУЧШИЙ ПО ПРОФИТ ФАКТОРУ ({best_by_profit_ratio['tp_sl_profit_ratio']:.2f}):")
+        print(f"  Параметры: {best_by_profit_ratio['params']}")
+        print(f"  TP: {best_by_profit_ratio['tp_count']}, SL: {best_by_profit_ratio['sl_count']}")
+        print(f"  Winrate: {best_by_profit_ratio['winrate']:.1f}%")
+        print(f"  TP/SL (кол-во): {best_by_profit_ratio['tp_sl_count_ratio']:.2f}")
+        print(f"  Сигналов/день: {best_by_profit_ratio['signals_per_day']:.1f}")
+        
         # Сохраняем лучшие результаты
         best_results = {
             'perfect_results': perfect_results,
             'best_by_winrate': best_by_winrate,
             'best_by_signals': best_by_signals,
+            'best_by_profit_ratio': best_by_profit_ratio,
             'all_results_count': len(all_results),
             'perfect_results_count': len(perfect_results)
         }
         
-        with open('best_params_fixed.json', 'w', encoding='utf-8') as f:
+        with open('best_params_enhanced.json', 'w', encoding='utf-8') as f:
             import json
             json.dump(best_results, f, ensure_ascii=False, indent=2)
         
-        print(f"\n💾 Результаты сохранены в best_params_fixed.json")
+        print(f"\n💾 Результаты сохранены в best_params_enhanced.json")
         
         if perfect_results:
             print(f"\n✅ НАЙДЕНО {len(perfect_results)} ИДЕАЛЬНЫХ КОМБИНАЦИЙ!")
@@ -534,7 +540,7 @@ def optimize_filters_fixed():
             print(f"  Winrate: {best_perfect['winrate']:.1f}%, Сигналов/день: {best_perfect['signals_per_day']:.1f}")
         else:
             print(f"\n💡 РЕКОМЕНДАЦИИ ДЛЯ УЛУЧШЕНИЯ:")
-            print(f"  - Увеличьте N_TRIALS до 1000-2000")
+            print(f"  - Увеличьте N_TRIALS до 20000-30000")
             print(f"  - Или еще больше ослабьте условия")
             print(f"  - Или добавьте больше символов")
     else:
@@ -542,4 +548,4 @@ def optimize_filters_fixed():
         print("💡 Возможно, нужно еще больше ослабить параметры")
 
 if __name__ == '__main__':
-    optimize_filters_fixed() 
+    optimize_filters() 
