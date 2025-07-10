@@ -304,10 +304,10 @@ def analyze(df):
         df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=MA_FAST)  # 9
         df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=MA_SLOW)  # 21
         
-        # MACD с быстрыми настройками для 15м
-        df['macd'] = ta.trend.macd_diff(df['close'])
-        df['macd_signal'] = ta.trend.macd_signal(df['close'])
-        df['macd_line'] = ta.trend.macd(df['close'])
+        # MACD с оптимизированными настройками
+        df['macd'] = ta.trend.macd_diff(df['close'], window_fast=MACD_FAST, window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
+        df['macd_signal'] = ta.trend.macd_signal(df['close'], window_fast=MACD_FAST, window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
+        df['macd_line'] = ta.trend.macd(df['close'], window_fast=MACD_FAST, window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
         
         # RSI с оптимизированным окном
         df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)  # 9
@@ -558,16 +558,15 @@ def evaluate_signal_strength(df, symbol, action):
         
         score += bonus_score
         
-        # ИСПРАВЛЕНО: Убираем буст для SHORT и штрафы - они искажают реальность
-        # Применяем только легкую корректировку
+        # Применяем корректировки для SHORT/LONG из конфигурации
         if action == 'SELL':
-            score *= 1.1  # было SHORT_BOOST_MULTIPLIER (1.2), теперь 1.1
+            score *= SHORT_BOOST_MULTIPLIER
         
-        # Штраф для LONG в нисходящем тренде (менее агрессивный)
+        # Штраф для LONG в нисходящем тренде
         if action == 'BUY' and len(df) >= 10:
             price_trend = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
             if price_trend < -0.03:  # было -0.02, теперь -0.03
-                score *= 0.7  # было LONG_PENALTY_IN_DOWNTREND (0.3), теперь 0.7
+                score *= LONG_PENALTY_IN_DOWNTREND
         
         # Проверка минимальной активности рынка
         market_activity = 1.0
