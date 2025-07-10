@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-УЛУЧШЕННАЯ версия оптимизатора с расширенным поисковым пространством
+УЛУЧШЕННАЯ версия оптимизатора с OPTUNA для умной оптимизации
 Используются только фильтры из config.py и crypto_signal_bot.py
 Исправлены расчеты и логика
-ИСПРАВЛЕНО: MIN_TP_SL_DISTANCE убран из оптимизации (используется статичное значение)
+ИСПРАВЛЕНО: MIN_TP_SL_DISTANCE добавлен в оптимизацию
+НОВОЕ: Optuna для интеллектуального поиска параметров
 """
 
 import ccxt
@@ -18,6 +19,11 @@ import logging
 import random
 import multiprocessing as mp
 from functools import partial
+import glob
+import optuna
+import plotly
+import json
+from typing import Dict, Any
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -26,86 +32,114 @@ EXCHANGE = ccxt.bybit({
     'options': {'defaultType': 'swap'}
 })
 
-# --- РАСШИРЕННОЕ ПОИСКОВОЕ ПРОСТРАНСТВО ---
-search_space = {
-    # === ОСНОВНЫЕ ФИЛЬТРЫ ===
-    'min_score': [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0],
-    'min_adx': [8, 10, 12, 14, 16, 18, 20, 22],
-    'short_min_adx': [8, 10, 12, 14, 16, 18, 20],
-    'short_min_rsi': [30, 35, 40, 45, 50, 55, 60],
-    'long_max_rsi': [55, 60, 65, 70, 75, 80, 85],
-    'rsi_min': [8, 10, 12, 15, 18, 20, 25, 30],
-    'rsi_max': [65, 70, 75, 80, 85, 90, 95],
-    
-    # === TP/SL МУЛЬТИПЛИКАТОРЫ ===
-    'tp_mult': [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.5],
-    'sl_mult': [1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.8],
-    
-    # === ОБЪЕМНЫЕ ФИЛЬТРЫ ===
-    'min_volume': [100, 200, 300, 500, 800, 1000, 1500, 2000],  # ИСПРАВЛЕНО: данные в тысячах
-    'max_spread': [0.005, 0.008, 0.01, 0.012, 0.015, 0.018, 0.02],
-    'min_bb_width': [0.003, 0.005, 0.008, 0.01, 0.012, 0.015, 0.02],
-    
-    # === RSI ФИЛЬТРЫ ===
-    'rsi_extreme_oversold': [5, 8, 10, 12, 15, 18, 20],
-    'rsi_extreme_overbought': [80, 82, 85, 88, 90, 92, 95],
-    
-    # === CANDLE ФИЛЬТРЫ ===
-    'min_candle_body_pct': [0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90],
-    'max_wick_to_body_ratio': [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0],
-    
-    # === ВРЕМЕННЫЕ ФИЛЬТРЫ ===
-    'signal_cooldown_minutes': [10, 15, 20, 25, 30, 35, 40],
-    'min_triggers_active_hours': [0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0],
-    'min_triggers_inactive_hours': [1.0, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5],
-    
-    # === ФИЛЬТРЫ ИЗ CONFIG.PY ===
-    'min_volume_ma_ratio': [0.4, 0.6, 0.8, 1.0, 1.2, 1.5, 2.0],
-    'min_volume_consistency': [0.3, 0.5, 0.6, 0.7, 0.8, 0.9],
-    'max_rsi_volatility': [5, 8, 10, 12, 15, 18, 20],
-    'require_macd_histogram': [False, True],
-    
-    # === ВЕСА СИСТЕМЫ ===
-    'weight_rsi': [0.8, 1.0, 1.2, 1.5, 1.8, 2.0, 2.5],
-    'weight_macd': [1.0, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5],
-    'weight_bb': [0.5, 0.8, 1.0, 1.2, 1.4, 1.6, 2.0],
-    'weight_vwap': [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0],
-    'weight_volume': [1.0, 1.5, 1.8, 2.0, 2.2, 2.5, 3.0],
-    'weight_adx': [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0],
-    
-    # === SHORT/LONG НАСТРОЙКИ ===
-    'short_boost_multiplier': [1.0, 1.1, 1.2, 1.3, 1.4, 1.5],
-    'long_penalty_in_downtrend': [0.05, 0.10, 0.12, 0.15, 0.18, 0.20],
-    
-    # === ИНДИКАТОРНЫЕ ПАРАМЕТРЫ ===
-    'RSI_WINDOW': [8, 10, 12, 14, 16, 18, 20],
-    'MA_FAST': [8, 12, 16, 20, 24, 28, 32],
-    'MA_SLOW': [24, 32, 40, 48, 56, 64, 72],
-    'ATR_WINDOW': [8, 12, 16, 20, 24, 28],
-    'TRAIL_ATR_MULT': [1.0, 1.5, 2.0, 2.5, 3.0, 3.5],
-    'TP_MIN': [0.005, 0.008, 0.010, 0.012, 0.015, 0.018, 0.020, 0.025],
-    'SL_MIN': [0.008, 0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040],
-    'BB_WINDOW': [12, 16, 20, 24, 28, 32],
-    'BB_STD_DEV': [1.2, 1.5, 1.8, 2.0, 2.2, 2.5],
-    'MACD_FAST': [6, 8, 10, 12, 14, 16, 18],
-    'MACD_SLOW': [16, 20, 24, 28, 32, 36, 40],
-    'MACD_SIGNAL': [5, 7, 9, 11, 13, 15],
-    'STOCH_RSI_K': [2, 3, 4, 5, 6, 7, 8],
-    'STOCH_RSI_D': [2, 3, 4, 5, 6, 7, 8],
-    'STOCH_RSI_LENGTH': [8, 10, 12, 14, 16, 18, 20],
-    'STOCH_RSI_SMOOTH': [1, 2, 3, 4, 5],
-    # MIN_TP_SL_DISTANCE убран из оптимизации - используется статичное значение из config.py
-    
-    # === ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ИЗ CONFIG.PY ===
-    'BB_SQUEEZE_THRESHOLD': [0.03, 0.05, 0.07, 0.10],
-    'MACD_SIGNAL_WINDOW': [7, 9, 11, 13],
-}
+# --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ OPTUNA ---
+GLOBAL_HOURS_BACK = 96
+GLOBAL_ACTIVE_HOURS_UTC = list(range(6, 24))
+GLOBAL_MIN_SIGNALS_PER_DAY = 12
+GLOBAL_ALL_SYMBOLS = []
+
+# --- РАСШИРЕННОЕ ПОИСКОВОЕ ПРОСТРАНСТВО ДЛЯ OPTUNA ---
+
+def get_all_symbols_from_data():
+    files = glob.glob('data/*_15m.csv')
+    symbols = []
+    for f in files:
+        base = os.path.basename(f).replace('_15m.csv', '')
+        symbols.append(base)
+    return symbols
+
+def suggest_parameters(trial: optuna.Trial) -> Dict[str, Any]:
+    """Функция для генерации параметров с помощью Optuna
+    РАСШИРЕННОЕ ПОИСКОВОЕ ПРОСТРАНСТВО для важных параметров"""
+    return {
+        # === ОСНОВНЫЕ ФИЛЬТРЫ ===
+        'min_score': trial.suggest_float('min_score', 2.5, 7.0, step=0.5),  # РАСШИРЕНО: больше диапазон
+        'min_adx': trial.suggest_int('min_adx', 6, 26, step=2),              # РАСШИРЕНО: 6-26
+        'short_min_adx': trial.suggest_int('short_min_adx', 6, 24, step=2),   # РАСШИРЕНО: 6-24
+        'short_min_rsi': trial.suggest_int('short_min_rsi', 25, 65, step=5),  # РАСШИРЕНО: 25-65
+        'long_max_rsi': trial.suggest_int('long_max_rsi', 50, 90, step=5),    # РАСШИРЕНО: 50-90
+        'rsi_min': trial.suggest_int('rsi_min', 5, 35, step=1),               # РАСШИРЕНО: шаг 1, больше диапазон
+        'rsi_max': trial.suggest_int('rsi_max', 60, 98, step=1),              # РАСШИРЕНО: шаг 1, больше диапазон
+        
+        # === TP/SL МУЛЬТИПЛИКАТОРЫ ===
+        'tp_mult': trial.suggest_float('tp_mult', 0.8, 3.0, step=0.1),       # РАСШИРЕНО: 0.8-3.0, шаг 0.1
+        'sl_mult': trial.suggest_float('sl_mult', 1.0, 3.2, step=0.1),       # РАСШИРЕНО: шаг 0.1
+        
+        # === ОБЪЕМНЫЕ ФИЛЬТРЫ ===
+        'min_volume': trial.suggest_categorical('min_volume', [100, 300, 500, 700, 1000, 1500]),  # РАСШИРЕНО: больше вариантов
+        'max_spread': trial.suggest_float('max_spread', 0.003, 0.025, step=0.001),  # РАСШИРЕНО: шаг 0.001
+        'min_bb_width': trial.suggest_float('min_bb_width', 0.001, 0.025, step=0.001),  # РАСШИРЕНО: шаг 0.001
+        
+        # === RSI ФИЛЬТРЫ ===
+        'rsi_extreme_oversold': trial.suggest_int('rsi_extreme_oversold', 3, 25, step=1),    # РАСШИРЕНО: шаг 1
+        'rsi_extreme_overbought': trial.suggest_int('rsi_extreme_overbought', 75, 97, step=1),  # РАСШИРЕНО: шаг 1
+        
+        # === CANDLE ФИЛЬТРЫ ===
+        'min_candle_body_pct': trial.suggest_float('min_candle_body_pct', 0.20, 0.95, step=0.05),  # РАСШИРЕНО: шаг 0.05
+        'max_wick_to_body_ratio': trial.suggest_float('max_wick_to_body_ratio', 1.0, 6.0, step=0.25),  # РАСШИРЕНО: больше диапазон
+        
+        # === ВРЕМЕННЫЕ ФИЛЬТРЫ (КРИТИЧЕСКИ ВАЖНЫЕ!) ===
+        # 🔥 MIN_TRIGGERS_ACTIVE_HOURS - 21.8% важности!
+        'min_triggers_active_hours': trial.suggest_float('min_triggers_active_hours', 0.3, 2.5, step=0.05),  # РАСШИРЕНО: мелкий шаг!
+        'min_triggers_inactive_hours': trial.suggest_float('min_triggers_inactive_hours', 0.8, 3.0, step=0.1),  # РАСШИРЕНО
+        'signal_cooldown_minutes': trial.suggest_int('signal_cooldown_minutes', 5, 49, step=2),  # РАСШИРЕНО: 5-49 (исправлено для деления на step)
+        
+        # === ФИЛЬТРЫ ИЗ CONFIG.PY ===
+        'min_volume_ma_ratio': trial.suggest_float('min_volume_ma_ratio', 0.2, 2.5, step=0.1),  # РАСШИРЕНО
+        'min_volume_consistency': trial.suggest_float('min_volume_consistency', 0.2, 0.95, step=0.05),  # РАСШИРЕНО: шаг 0.05
+        'max_rsi_volatility': trial.suggest_int('max_rsi_volatility', 3, 25, step=1),  # РАСШИРЕНО: шаг 1
+        'require_macd_histogram': trial.suggest_categorical('require_macd_histogram', [False, True]),
+        
+        # === ВЕСА СИСТЕМЫ ===
+        'weight_rsi': trial.suggest_float('weight_rsi', 0.5, 3.0, step=0.1),        # РАСШИРЕНО: шаг 0.1
+        'weight_macd': trial.suggest_float('weight_macd', 0.8, 3.0, step=0.1),      # РАСШИРЕНО: шаг 0.1
+        'weight_bb': trial.suggest_float('weight_bb', 0.3, 2.5, step=0.1),          # РАСШИРЕНО: шаг 0.1
+        'weight_vwap': trial.suggest_float('weight_vwap', 0.5, 2.5, step=0.1),      # РАСШИРЕНО: шаг 0.1
+        'weight_volume': trial.suggest_float('weight_volume', 0.8, 3.5, step=0.1),  # РАСШИРЕНО: шаг 0.1
+        'weight_adx': trial.suggest_float('weight_adx', 1.0, 6.0, step=0.2),        # РАСШИРЕНО
+        
+        # === SHORT/LONG НАСТРОЙКИ ===
+        'short_boost_multiplier': trial.suggest_float('short_boost_multiplier', 0.8, 2.0, step=0.05),  # РАСШИРЕНО: шаг 0.05
+        'long_penalty_in_downtrend': trial.suggest_float('long_penalty_in_downtrend', 0.02, 0.25, step=0.01),  # РАСШИРЕНО: шаг 0.01
+        
+        # === ИНДИКАТОРНЫЕ ПАРАМЕТРЫ ===
+        'RSI_WINDOW': trial.suggest_int('RSI_WINDOW', 6, 24, step=1),     # РАСШИРЕНО: шаг 1
+        'MA_FAST': trial.suggest_int('MA_FAST', 6, 40, step=2),           # РАСШИРЕНО
+        'MA_SLOW': trial.suggest_int('MA_SLOW', 20, 80, step=4),          # РАСШИРЕНО
+        'ATR_WINDOW': trial.suggest_int('ATR_WINDOW', 6, 32, step=2),     # РАСШИРЕНО: шаг 2
+        'TRAIL_ATR_MULT': trial.suggest_float('TRAIL_ATR_MULT', 0.8, 4.0, step=0.2),  # РАСШИРЕНО
+        'TP_MIN': trial.suggest_float('TP_MIN', 0.003, 0.035, step=0.001),  # РАСШИРЕНО: шаг 0.001
+        'SL_MIN': trial.suggest_float('SL_MIN', 0.005, 0.050, step=0.001),  # РАСШИРЕНО: шаг 0.001
+        'BB_WINDOW': trial.suggest_int('BB_WINDOW', 8, 36, step=2),        # РАСШИРЕНО: шаг 2
+        'BB_STD_DEV': trial.suggest_float('BB_STD_DEV', 1.0, 3.0, step=0.1),  # РАСШИРЕНО: шаг 0.1
+        'MACD_FAST': trial.suggest_int('MACD_FAST', 4, 20, step=1),        # РАСШИРЕНО: шаг 1
+        'MACD_SLOW': trial.suggest_int('MACD_SLOW', 12, 44, step=2),       # РАСШИРЕНО: шаг 2 (исправлено для деления на step)
+        'MACD_SIGNAL': trial.suggest_int('MACD_SIGNAL', 3, 18, step=1),    # РАСШИРЕНО: шаг 1
+        'STOCH_RSI_K': trial.suggest_int('STOCH_RSI_K', 1, 10),            # РАСШИРЕНО
+        'STOCH_RSI_D': trial.suggest_int('STOCH_RSI_D', 1, 10),            # РАСШИРЕНО
+        'STOCH_RSI_LENGTH': trial.suggest_int('STOCH_RSI_LENGTH', 6, 24, step=1),  # РАСШИРЕНО: шаг 1
+        'STOCH_RSI_SMOOTH': trial.suggest_int('STOCH_RSI_SMOOTH', 1, 8),   # РАСШИРЕНО
+        
+        # === MIN_TP_SL_DISTANCE ===
+        'min_tp_sl_distance': trial.suggest_float('min_tp_sl_distance', 0.003, 0.015, step=0.0005),  # РАСШИРЕНО: шаг 0.0005
+        
+        # === ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ИЗ CONFIG.PY ===
+        # 🔥 BB_SQUEEZE_THRESHOLD - 14.8% важности!
+        'BB_SQUEEZE_THRESHOLD': trial.suggest_float('BB_SQUEEZE_THRESHOLD', 0.02, 0.12, step=0.005),  # РАСШИРЕНО: мелкий шаг!
+        'MACD_SIGNAL_WINDOW': trial.suggest_int('MACD_SIGNAL_WINDOW', 5, 20, step=1),  # РАСШИРЕНО: шаг 1
+        
+        # === НОВЫЕ ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ ДЛЯ УГЛУБЛЕННОГО ПОИСКА ===
+        'volatility_filter_strength': trial.suggest_float('volatility_filter_strength', 0.5, 2.0, step=0.1),  # НОВЫЙ
+        'trend_strength_multiplier': trial.suggest_float('trend_strength_multiplier', 0.8, 1.5, step=0.05),   # НОВЫЙ
+        'volume_spike_sensitivity': trial.suggest_float('volume_spike_sensitivity', 1.5, 3.5, step=0.1),      # НОВЫЙ
+        'divergence_weight': trial.suggest_float('divergence_weight', 0.5, 2.0, step=0.1),                    # НОВЫЙ
+    }
 
 def get_historical_data(symbol, hours_back=72):
     """Загружает исторические данные из CSV файлов (кэш)"""
     try:
         # Формируем имя файла
-        filename = f"data/{symbol.replace('/', '').replace(':', '')}_15m.csv"
+        filename = f"data/{symbol}_15m.csv"
         
         if not os.path.exists(filename):
             logging.warning(f"Файл данных не найден: {filename}")
@@ -165,6 +199,7 @@ def simulate_signals(df, symbol, params, active_hours_utc):
     min_volume_consistency = params['min_volume_consistency']
     max_rsi_volatility = params['max_rsi_volatility']
     require_macd_histogram = params['require_macd_histogram']
+    min_tp_sl_distance = params['min_tp_sl_distance']
     
     for i in range(MIN_15M_CANDLES, len(df_analyzed) - 20):
         current_df = df_analyzed.iloc[:i+1].copy()
@@ -195,11 +230,10 @@ def simulate_signals(df, symbol, params, active_hours_utc):
         if last['rsi'] < rsi_extreme_oversold or last['rsi'] > rsi_extreme_overbought:
             continue
             
-        # Объем - ИСПРАВЛЕНО: данные в тысячах, поэтому делим на 1000
+        # Объем - данные уже в миллионах USDT
         volume = last.get('volume', 1_000_000)
-        # Конвертируем в миллионы для сравнения с min_volume
-        volume_in_millions = volume / 1000
-        if volume_in_millions < min_volume:
+        # Сравниваем напрямую с min_volume (уже в миллионах)
+        if volume < min_volume:
             continue
             
         # BB width
@@ -268,14 +302,7 @@ def simulate_signals(df, symbol, params, active_hours_utc):
             if last['macd'] < last['macd_signal']:
                 sell_triggers += 0.5
                 
-        # MACD Histogram фильтр (если включен)
-        if require_macd_histogram and 'macd_hist' in current_df.columns and i > 0:
-            current_hist = last['macd_hist']
-            prev_hist = current_df['macd_hist'].iloc[i-1]
-            if signal_type == 'BUY' and not (current_hist > 0 and prev_hist <= 0):
-                continue
-            elif signal_type == 'SELL' and not (current_hist < 0 and prev_hist >= 0):
-                continue
+        # MACD Histogram фильтр будет применен позже после определения signal_type
                 
         # Bollinger Bands
         if 'bollinger_low' in current_df.columns:
@@ -301,6 +328,15 @@ def simulate_signals(df, symbol, params, active_hours_utc):
             signal_type = 'BUY'
         elif sell_triggers >= min_triggers and last['rsi'] >= rsi_min and last['rsi'] <= rsi_max:
             signal_type = 'SELL'
+            
+        # MACD Histogram фильтр (если включен)
+        if signal_type and require_macd_histogram and 'macd_hist' in current_df.columns and i > 0:
+            current_hist = last['macd_hist']
+            prev_hist = current_df['macd_hist'].iloc[i-1]
+            if signal_type == 'BUY' and not (current_hist > 0 and prev_hist <= 0):
+                continue
+            elif signal_type == 'SELL' and not (current_hist < 0 and prev_hist >= 0):
+                continue
             
         # Дополнительные условия для short/long
         if signal_type == 'SELL' and last['adx'] < short_min_adx:
@@ -329,6 +365,11 @@ def simulate_signals(df, symbol, params, active_hours_utc):
                         else:
                             tp_price = entry_price - tp_distance
                             sl_price = entry_price + sl_distance
+                        
+                        # Проверка минимального расстояния между TP и SL
+                        tp_sl_distance = abs(tp_price - sl_price) / entry_price
+                        if tp_sl_distance < min_tp_sl_distance:
+                            continue
                             
                         result = None
                         for idx, candle in future_data.iterrows():
@@ -367,16 +408,21 @@ def simulate_signals(df, symbol, params, active_hours_utc):
                 
     return signals
 
-def test_single_params(params, hours_back, max_symbols, active_hours_utc):
+def test_single_params(params, hours_back=None, active_hours_utc=None):
     """Тестирует один набор параметров"""
+    if hours_back is None:
+        hours_back = GLOBAL_HOURS_BACK
+    if active_hours_utc is None:
+        active_hours_utc = GLOBAL_ACTIVE_HOURS_UTC
+        
     all_signals = []
     mon_stats = {}
     
-    for symbol in SYMBOLS[:max_symbols]:
+    for symbol in GLOBAL_ALL_SYMBOLS:
         df = get_historical_data(symbol, hours_back)
         if df.empty:
             continue
-            
+        
         signals = simulate_signals(df, symbol, params, active_hours_utc)
         all_signals.extend(signals)
         
@@ -420,132 +466,264 @@ def test_single_params(params, hours_back, max_symbols, active_hours_utc):
         'good_symbols': good_symbols
     }
 
-def optimize_filters():
-    """Улучшенная оптимизация с расширенным поисковым пространством"""
-    hours_back = 96
-    max_symbols = 20
-    active_hours_utc = [8,9,10,13,15,16,17,19]
-    min_signals_per_day = 8
-    N_TRIALS = 15000
-    
-    print(f"🚀 ЗАПУСК УЛУЧШЕННОЙ ОПТИМИЗАЦИИ С РАСШИРЕННЫМ ПОИСКОВЫМ ПРОСТРАНСТВОМ")
-    print(f"Количество попыток: {N_TRIALS}")
-    print(f"Оптимизируем {len(search_space)} параметров")
-    print(f"ИСПОЛЬЗУЕМЫЕ ФИЛЬТРЫ ИЗ CONFIG.PY:")
-    print(f"  ✅ RSI фильтры (min/max/extreme)")
-    print(f"  ✅ ADX фильтры (min/short_min)")
-    print(f"  ✅ Volume фильтры (min/ma_ratio/consistency)")
-    print(f"  ✅ Bollinger Bands (width)")
-    print(f"  ✅ Candle фильтры (body/wick)")
-    print(f"  ✅ MACD фильтры (histogram)")
-    print(f"  ✅ VWAP фильтры")
-    print(f"  ✅ Временные фильтры (cooldown/triggers)")
-    print(f"  ✅ TP/SL мультипликаторы")
-    print(f"  ✅ Веса системы (RSI/MACD/BB/VWAP/Volume/ADX)")
-    print(f"  ✅ BB Squeeze Threshold")
-    print(f"  ✅ MACD Signal Window")
-    print(f"  ✅ Stochastic RSI параметры")
-    print(f"  ⚠️  MIN_TP_SL_DISTANCE - статичное значение из config.py (не оптимизируется)")
-    print(f"Минимум сигналов/день: {min_signals_per_day}")
-    
-    cpu_count = mp.cpu_count()
-    processes_to_use = max(1, (cpu_count * 7) // 10)
+def objective(trial: optuna.Trial) -> float:
+    """Целевая функция для Optuna - оптимизируем комплексную метрику"""
+    try:
+        # Получаем параметры от Optuna
+        params = suggest_parameters(trial)
+        
+        # Тестируем параметры
+        result = test_single_params(params)
+        
+        # Если нет сигналов - возвращаем плохую оценку
+        if result['signals'] == 0 or result['signals_per_day'] < GLOBAL_MIN_SIGNALS_PER_DAY:
+            return 0.0
+            
+        # Комплексная метрика учитывающая:
+        # - Winrate (60% от общей оценки)
+        # - TP/SL count ratio (20% от общей оценки) 
+        # - TP/SL profit ratio (20% от общей оценки)
+        # Плюс штрафы за слишком много/мало сигналов
+        
+        winrate_score = min(result['winrate'] / 100.0, 1.0)  # 0-1
+        count_ratio_score = min(result['tp_sl_count_ratio'] / 2.0, 1.0)  # 0-1 (цель 2.0)
+        profit_ratio_score = min(result['tp_sl_profit_ratio'] / 2.0, 1.0)  # 0-1 (цель 2.0)
+        
+        # Штраф за слишком много сигналов (более 150/день)
+        signal_penalty = 1.0
+        if result['signals_per_day'] > 150:
+            signal_penalty = 0.5
+        elif result['signals_per_day'] > 100:
+            signal_penalty = 0.8
+            
+        # Комплексная оценка
+        score = (winrate_score * 0.6 + count_ratio_score * 0.2 + profit_ratio_score * 0.2) * signal_penalty
+        
+        # Дополнительная проверка на минимальные требования
+        if (result['winrate'] >= 60 and 
+            result['tp_sl_count_ratio'] >= 1.4 and 
+            result['tp_sl_profit_ratio'] >= 1.4 and
+            result['signals_per_day'] <= 150):
+            score *= 1.2  # Бонус за выполнение всех условий
+            
+        return score
+        
+    except Exception as e:
+        logging.error(f"Ошибка в objective: {e}")
+        return 0.0
 
-    print(f"Используем {processes_to_use} из {cpu_count} ядер")
-    print("="*60)
-    
-    all_params = []
-    for _ in range(N_TRIALS):
-        params = {k: random.choice(v) for k, v in search_space.items()}
-        all_params.append(params)
+def save_optuna_results(study: optuna.Study, filename: str = 'optuna_results.json'):
+    """Сохраняет результаты оптимизации Optuna"""
+    try:
+        best_trial = study.best_trial
+        best_params_result = test_single_params(best_trial.params)
         
-    with mp.Pool(processes=processes_to_use) as pool:
-        test_func = partial(test_single_params, hours_back=hours_back, max_symbols=max_symbols, active_hours_utc=active_hours_utc)
-        results = pool.map(test_func, all_params)
-    
-    # Анализируем результаты
-    all_results = []
-    perfect_results = []
-    
-    for result in results:
-        if result['signals'] > 0:
-            all_results.append(result)
-            
-            # Улучшенные условия для вашей задачи
-            conditions_met = (
-                result['winrate'] >= 60 and
-                result['tp_sl_count_ratio'] >= 1.4 and
-                result['tp_sl_profit_ratio'] >= 1.4 and
-                result['signals_per_day'] >= min_signals_per_day and
-                result['signals_per_day'] <= 150
-            )
-            
-            if conditions_met:
-                perfect_results.append(result)
-    
-    print(f"\n📊 АНАЛИЗ РЕЗУЛЬТАТОВ:")
-    print(f"Всего протестировано: {len(results)}")
-    print(f"Результатов с сигналами: {len(all_results)}")
-    print(f"Идеальных результатов: {len(perfect_results)}")
-    
-    if all_results:
-        best_by_winrate = max(all_results, key=lambda x: x['winrate'])
-        best_by_signals = max(all_results, key=lambda x: x['signals_per_day'])
-        best_by_profit_ratio = max(all_results, key=lambda x: x['tp_sl_profit_ratio'])
-        
-        print(f"\n🏆 ЛУЧШИЕ НАЙДЕННЫЕ РЕЗУЛЬТАТЫ:")
-        
-        print(f"\n🥇 ЛУЧШИЙ ПО WINRATE ({best_by_winrate['winrate']:.1f}%):")
-        print(f"  Параметры: {best_by_winrate['params']}")
-        print(f"  TP: {best_by_winrate['tp_count']}, SL: {best_by_winrate['sl_count']}")
-        print(f"  TP/SL (кол-во): {best_by_winrate['tp_sl_count_ratio']:.2f}")
-        print(f"  TP/SL (прибыль): {best_by_winrate['tp_sl_profit_ratio']:.2f}")
-        print(f"  Сигналов/день: {best_by_winrate['signals_per_day']:.1f}")
-        
-        print(f"\n🥈 ЛУЧШИЙ ПО КОЛИЧЕСТВУ СИГНАЛОВ ({best_by_signals['signals_per_day']:.1f}/день):")
-        print(f"  Параметры: {best_by_signals['params']}")
-        print(f"  TP: {best_by_signals['tp_count']}, SL: {best_by_signals['sl_count']}")
-        print(f"  Winrate: {best_by_signals['winrate']:.1f}%")
-        print(f"  TP/SL (кол-во): {best_by_signals['tp_sl_count_ratio']:.2f}")
-        print(f"  TP/SL (прибыль): {best_by_signals['tp_sl_profit_ratio']:.2f}")
-        
-        print(f"\n🥉 ЛУЧШИЙ ПО ПРОФИТ ФАКТОРУ ({best_by_profit_ratio['tp_sl_profit_ratio']:.2f}):")
-        print(f"  Параметры: {best_by_profit_ratio['params']}")
-        print(f"  TP: {best_by_profit_ratio['tp_count']}, SL: {best_by_profit_ratio['sl_count']}")
-        print(f"  Winrate: {best_by_profit_ratio['winrate']:.1f}%")
-        print(f"  TP/SL (кол-во): {best_by_profit_ratio['tp_sl_count_ratio']:.2f}")
-        print(f"  Сигналов/день: {best_by_profit_ratio['signals_per_day']:.1f}")
-        
-        # Сохраняем лучшие результаты
-        best_results = {
-            'perfect_results': perfect_results,
-            'best_by_winrate': best_by_winrate,
-            'best_by_signals': best_by_signals,
-            'best_by_profit_ratio': best_by_profit_ratio,
-            'all_results_count': len(all_results),
-            'perfect_results_count': len(perfect_results)
+        results = {
+            'best_trial': {
+                'params': best_trial.params,
+                'value': best_trial.value,
+                'number': best_trial.number
+            },
+            'best_result': best_params_result,
+            'study_stats': {
+                'n_trials': len(study.trials),
+                'best_value': study.best_value,
+                'direction': study.direction.name
+            },
+            'top_trials': []
         }
         
-        with open('best_params_enhanced.json', 'w', encoding='utf-8') as f:
-            import json
-            json.dump(best_results, f, ensure_ascii=False, indent=2)
+        # Топ-10 лучших попыток
+        sorted_trials = sorted(study.trials, key=lambda t: t.value if t.value else 0, reverse=True)
+        for trial in sorted_trials[:10]:
+            if trial.value:
+                trial_result = test_single_params(trial.params)
+                results['top_trials'].append({
+                    'trial_number': trial.number,
+                    'value': trial.value,
+                    'params': trial.params,
+                    'result': trial_result
+                })
         
-        print(f"\n💾 Результаты сохранены в best_params_enhanced.json")
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=2, default=str)
+            
+        print(f"✅ Результаты Optuna сохранены в {filename}")
         
-        if perfect_results:
-            print(f"\n✅ НАЙДЕНО {len(perfect_results)} ИДЕАЛЬНЫХ КОМБИНАЦИЙ!")
-            best_perfect = max(perfect_results, key=lambda x: x['winrate'])
-            print(f"🏆 ЛУЧШАЯ ИДЕАЛЬНАЯ КОМБИНАЦИЯ:")
-            print(f"  Параметры: {best_perfect['params']}")
-            print(f"  Winrate: {best_perfect['winrate']:.1f}%, Сигналов/день: {best_perfect['signals_per_day']:.1f}")
+    except Exception as e:
+        logging.error(f"Ошибка сохранения результатов Optuna: {e}")
+
+def create_optuna_visualizations(study: optuna.Study):
+    """Создает визуализации результатов Optuna"""
+    try:
+        import optuna.visualization as vis
+        
+        # История оптимизации
+        fig1 = vis.plot_optimization_history(study)
+        fig1.write_html("optuna_history.html")
+        
+        # Важность параметров
+        fig2 = vis.plot_param_importances(study)
+        fig2.write_html("optuna_param_importance.html")
+        
+        # Срезы параметров
+        fig3 = vis.plot_slice(study)
+        fig3.write_html("optuna_slice.html")
+        
+        # Параллельные координаты
+        fig4 = vis.plot_parallel_coordinate(study)
+        fig4.write_html("optuna_parallel_coordinate.html")
+        
+        print("📊 Визуализации Optuna созданы:")
+        print("  - optuna_history.html")
+        print("  - optuna_param_importance.html") 
+        print("  - optuna_slice.html")
+        print("  - optuna_parallel_coordinate.html")
+        
+    except Exception as e:
+        logging.error(f"Ошибка создания визуализации: {e}")
+        print("⚠️  Визуализации не созданы из-за ошибки")
+
+def optimize_filters():
+    """НОВАЯ ОПТИМИЗАЦИЯ С OPTUNA - умный поиск параметров"""
+    global GLOBAL_ALL_SYMBOLS, GLOBAL_HOURS_BACK, GLOBAL_ACTIVE_HOURS_UTC, GLOBAL_MIN_SIGNALS_PER_DAY
+    
+    # Настройки оптимизации
+    GLOBAL_HOURS_BACK = 96
+    GLOBAL_ACTIVE_HOURS_UTC = list(range(6, 24))  # 6:00 до 23:59 UTC
+    GLOBAL_MIN_SIGNALS_PER_DAY = 12
+    N_TRIALS = 5000  # Начинаем с меньшего количества для тестирования
+    
+    # Загружаем символы
+    GLOBAL_ALL_SYMBOLS = get_all_symbols_from_data()
+    
+    print("🚀 ЗАПУСК УМНОЙ ОПТИМИЗАЦИИ С OPTUNA")
+    print("="*60)
+    print(f"🎯 Алгоритм: TPE (Tree-structured Parzen Estimator)")
+    print(f"📊 Количество попыток: {N_TRIALS}")
+    print(f"⏰ Временной период: {GLOBAL_HOURS_BACK} часов назад")
+    print(f"🕐 Активные часы UTC: {GLOBAL_ACTIVE_HOURS_UTC[0]}:00 - {GLOBAL_ACTIVE_HOURS_UTC[-1]}:59")
+    print(f"📈 Минимум сигналов/день: {GLOBAL_MIN_SIGNALS_PER_DAY}")
+    print(f"💱 Количество торговых пар: {len(GLOBAL_ALL_SYMBOLS)}")
+    print("\n🔧 ОПТИМИЗИРУЕМЫЕ ПАРАМЕТРЫ:")
+    print("  ✅ Основные фильтры (min_score, ADX, RSI)")
+    print("  ✅ TP/SL мультипликаторы") 
+    print("  ✅ Объемные фильтры (volume, spread, BB width)")
+    print("  ✅ RSI экстремальные значения")
+    print("  ✅ Candle фильтры (body, wick)")
+    print("  ✅ Временные фильтры (cooldown, triggers)")
+    print("  ✅ Веса системы оценок")
+    print("  ✅ Индикаторные параметры")
+    print("  ✅ MIN_TP_SL_DISTANCE")
+    print("  ✅ BB Squeeze, MACD Signal Window")
+    print("  ✅ Stochastic RSI параметры")
+    print("\n📊 ЦЕЛЕВАЯ ФУНКЦИЯ:")
+    print("  🎯 60% - Winrate")
+    print("  📈 20% - TP/SL Count Ratio")
+    print("  💰 20% - TP/SL Profit Ratio")
+    print("  ⚡ Штрафы за слишком много сигналов")
+    print("  🏆 Бонус за выполнение всех условий")
+    print("="*60)
+    
+    # Создаем study Optuna
+    study = optuna.create_study(
+        direction='maximize',
+        sampler=optuna.samplers.TPESampler(seed=42),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=50, n_warmup_steps=10)
+    )
+    
+    print("🔥 НАЧИНАЕМ ОПТИМИЗАЦИЮ...")
+    try:
+        # Запускаем оптимизацию
+        study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=True)
+        
+        print("\n🏁 ОПТИМИЗАЦИЯ ЗАВЕРШЕНА!")
+        print("="*60)
+        
+        # Анализируем результаты
+        print(f"📊 СТАТИСТИКА OPTUNA:")
+        print(f"  🔢 Всего попыток: {len(study.trials)}")
+        print(f"  🏆 Лучшая оценка: {study.best_value:.4f}")
+        print(f"  📈 Лучшая попытка: #{study.best_trial.number}")
+        
+        # Получаем подробные результаты лучших параметров
+        best_result = test_single_params(study.best_trial.params)
+        
+        print(f"\n🥇 ЛУЧШИЕ НАЙДЕННЫЕ ПАРАМЕТРЫ:")
+        print(f"  📊 Winrate: {best_result['winrate']:.1f}%")
+        print(f"  📈 TP/SL Count Ratio: {best_result['tp_sl_count_ratio']:.2f}")
+        print(f"  💰 TP/SL Profit Ratio: {best_result['tp_sl_profit_ratio']:.2f}")
+        print(f"  ⚡ Сигналов/день: {best_result['signals_per_day']:.1f}")
+        print(f"  🎯 TP: {best_result['tp_count']}, SL: {best_result['sl_count']}")
+        print(f"  💱 Хороших монет: {len(best_result['good_symbols'])}")
+        
+        # Проверяем идеальные условия
+        is_perfect = (
+            best_result['winrate'] >= 60 and
+            best_result['tp_sl_count_ratio'] >= 1.4 and
+            best_result['tp_sl_profit_ratio'] >= 1.4 and
+            best_result['signals_per_day'] >= GLOBAL_MIN_SIGNALS_PER_DAY and
+            best_result['signals_per_day'] <= 150
+        )
+        
+        if is_perfect:
+            print("\n🌟 НАЙДЕНЫ ИДЕАЛЬНЫЕ ПАРАМЕТРЫ! ✨")
         else:
+            print(f"\n💡 УСЛОВИЯ НЕ ПОЛНОСТЬЮ ВЫПОЛНЕНЫ:")
+            if best_result['winrate'] < 60:
+                print(f"  ❌ Winrate {best_result['winrate']:.1f}% < 60%")
+            if best_result['tp_sl_count_ratio'] < 1.4:
+                print(f"  ❌ TP/SL Count Ratio {best_result['tp_sl_count_ratio']:.2f} < 1.4")
+            if best_result['tp_sl_profit_ratio'] < 1.4:
+                print(f"  ❌ TP/SL Profit Ratio {best_result['tp_sl_profit_ratio']:.2f} < 1.4")
+            if best_result['signals_per_day'] < GLOBAL_MIN_SIGNALS_PER_DAY:
+                print(f"  ❌ Сигналов/день {best_result['signals_per_day']:.1f} < {GLOBAL_MIN_SIGNALS_PER_DAY}")
+            if best_result['signals_per_day'] > 150:
+                print(f"  ❌ Сигналов/день {best_result['signals_per_day']:.1f} > 150")
+        
+        # Сохраняем результаты
+        save_optuna_results(study, 'optuna_results.json')
+        
+        # Создаем визуализации
+        print("\n📊 Создаем визуализации...")
+        create_optuna_visualizations(study)
+        
+        # Выводим лучшие параметры
+        print(f"\n🔧 ЛУЧШИЕ ПАРАМЕТРЫ:")
+        for key, value in study.best_trial.params.items():
+            print(f"  {key}: {value}")
+            
+        # Анализ важности параметров
+        try:
+            importance = optuna.importance.get_param_importances(study)
+            print(f"\n🎯 ТОП-10 САМЫХ ВАЖНЫХ ПАРАМЕТРОВ:")
+            for i, (param, imp) in enumerate(sorted(importance.items(), key=lambda x: x[1], reverse=True)[:10]):
+                print(f"  {i+1:2d}. {param}: {imp:.4f}")
+        except:
+            print("⚠️  Анализ важности параметров недоступен")
+            
+        print(f"\n🎉 ОПТИМИЗАЦИЯ ЗАВЕРШЕНА УСПЕШНО!")
+        print(f"📁 Файлы созданы:")
+        print(f"  - optuna_results.json (результаты)")
+        print(f"  - optuna_*.html (визуализации)")
+        
+        # Рекомендации по улучшению
+        if not is_perfect:
             print(f"\n💡 РЕКОМЕНДАЦИИ ДЛЯ УЛУЧШЕНИЯ:")
-            print(f"  - Увеличьте N_TRIALS до 20000-30000")
-            print(f"  - Или еще больше ослабьте условия")
-            print(f"  - Или добавьте больше символов")
-    else:
-        print("❌ Не найдено ни одного результата с сигналами!")
-        print("💡 Возможно, нужно еще больше ослабить параметры")
+            print(f"  - Увеличьте N_TRIALS до 1000-2000")
+            print(f"  - Попробуйте другие samplers (CmaEsSampler, RandomSampler)")
+            print(f"  - Настройте pruner для более агрессивной обрезки")
+            print(f"  - Измените веса в целевой функции")
+            
+    except Exception as e:
+        logging.error(f"Ошибка оптимизации: {e}")
+        print(f"❌ Ошибка во время оптимизации: {e}")
+        
+    except KeyboardInterrupt:
+        print(f"\n⏹️  Оптимизация прервана пользователем")
+        if len(study.trials) > 0:
+            print(f"💾 Сохраняем результаты {len(study.trials)} попыток...")
+            save_optuna_results(study, 'optuna_results_interrupted.json')
 
 if __name__ == '__main__':
     optimize_filters() 
