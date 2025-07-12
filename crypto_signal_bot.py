@@ -299,15 +299,22 @@ def analyze(df):
     try:
         if df.empty or len(df) < MA_SLOW:
             return pd.DataFrame()
-            
+        
         # EMA с обновленными периодами
         df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=MA_FAST)  # 9
         df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=MA_SLOW)  # 21
         
-        # MACD с оптимизированными настройками
-        df['macd'] = ta.trend.macd_diff(df['close'], window_fast=MACD_FAST, window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
-        df['macd_signal'] = ta.trend.macd_signal(df['close'], window_fast=MACD_FAST, window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
-        df['macd_line'] = ta.trend.macd(df['close'], window_fast=MACD_FAST, window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
+        # MACD через класс ta.trend.MACD (используем правильные параметры как в оптимизаторе)
+        macd_obj = ta.trend.MACD(
+            close=df['close'],
+            window_slow=MACD_SLOW,
+            window_fast=MACD_FAST,
+            window_sign=MACD_SIGNAL
+        )
+        df['macd_line'] = macd_obj.macd()
+        df['macd_signal'] = macd_obj.macd_signal()
+        df['macd'] = macd_obj.macd_diff()  # гистограмма
+        df['macd_hist'] = macd_obj.macd_diff()  # для совместимости с оптимизатором
         
         # RSI с оптимизированным окном
         df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)  # 9
@@ -338,10 +345,10 @@ def analyze(df):
             df['vwap'] = df['vwap_numerator'] / df['vwap_denominator']
             df['vwap_deviation'] = (df['close'] - df['vwap']) / df['vwap']
         
-        # Объём с улучшенной фильтрацией
+        # Объём с улучшенной фильтрацией (как в оптимизаторе)
         if USE_VOLUME_FILTER:
-            df['volume_ema'] = ta.trend.ema_indicator(df['volume'], window=20)
-            df['volume_ratio'] = df['volume'] / df['volume_ema']
+            df['volume_ma'] = df['volume'].rolling(window=20).mean()
+            df['volume_ratio'] = df['volume'] / df['volume_ma']
         
         # Волатильность за последние периоды
         df['volatility'] = df['close'].rolling(window=VOLATILITY_LOOKBACK).std() / df['close'].rolling(window=VOLATILITY_LOOKBACK).mean()
@@ -362,7 +369,7 @@ def analyze(df):
         
         if len(df) < 2:
             return pd.DataFrame()
-            
+        
         return df
         
     except Exception as e:
@@ -708,8 +715,8 @@ def get_btc_adx():
 
 def check_signals(df, symbol):
     """
-    ИСПРАВЛЕННАЯ система генерации сигналов - фокус на качество, а не количество.
-    Цель: 3-5 очень надёжных сигналов в сутки с винрейтом 60%+.
+    СИНХРОНИЗИРОВАННАЯ с оптимизатором система генерации сигналов.
+    Использует точно такую же логику как в optimizer_bot_fixed.py
     """
     try:
         if df.empty or len(df) < MIN_15M_CANDLES:
@@ -719,13 +726,13 @@ def check_signals(df, symbol):
         prev = df.iloc[-2]
         signals = []
         
-        # === СТРОГИЕ БАЗОВЫЕ ФИЛЬТРЫ ===
-        # 1. Объём торгов (ужесточен)
-        volume = get_24h_volume(symbol)
+        # === БАЗОВЫЕ ФИЛЬТРЫ (как в оптимизаторе) ===
+        # 1. Объём торгов (как в оптимизаторе - используем данные из DataFrame)
+        volume = last.get('volume', 1_000_000)  # данные уже в миллионах USDT
         if volume < MIN_VOLUME_USDT:
             return []
         
-        # 2. Максимальный спред (ужесточен)
+        # 2. Максимальный спред
         if last['spread_pct'] > MAX_SPREAD_PCT:
             return []
         
@@ -744,208 +751,195 @@ def check_signals(df, symbol):
         if symbol in open_trades:
             return []
         
-        # Определяем адаптивные пороги
-        current_volatility = last.get('volatility', 0.02)
-        is_high_vol = current_volatility > HIGH_VOLATILITY_THRESHOLD
-        is_low_vol = current_volatility < LOW_VOLATILITY_THRESHOLD
-        is_active_hour = now.hour in ACTIVE_HOURS_UTC
-        
-        # 5. СТРОЖЕ: базовая сила тренда
-        min_adx = HIGH_VOL_ADX_MIN if is_high_vol else (LOW_VOL_ADX_MIN if is_low_vol else MIN_ADX)
-        if last['adx'] < min_adx:
+        # 5. Временные фильтры (как в оптимизаторе)
+        hour_utc = now.hour
+        if hour_utc not in ACTIVE_HOURS_UTC:
             return []
         
-        # 6. НОВЫЙ ФИЛЬТР: минимальная ширина BB (исключаем флэт)
-        if 'bb_width' in last and last['bb_width'] < MIN_BB_WIDTH:
+        # 6. Базовые фильтры ADX и RSI (как в оптимизаторе)
+        if last['adx'] < MIN_ADX:
             return []
         
-        # 7. НОВЫЙ ФИЛЬТР: требуем разделение EMA
-        if abs(last['ema_fast'] - last['ema_slow']) / last['close'] < MIN_EMA_SEPARATION:
+        if last['rsi'] < RSI_MIN or last['rsi'] > RSI_MAX:
             return []
         
-        # 8. СТРОЖЕ: отдельные условия для SHORT и LONG
-        short_conditions = (last['adx'] >= SHORT_MIN_ADX and 
-                           last['rsi'] >= SHORT_MIN_RSI)
-        long_conditions = (last['adx'] >= MIN_ADX and 
-                          last['rsi'] <= LONG_MAX_RSI)
-        
-        if not (short_conditions or long_conditions):
+        # 7. RSI экстремальные значения (как в оптимизаторе)
+        if last['rsi'] < RSI_EXTREME_OVERSOLD or last['rsi'] > RSI_EXTREME_OVERBOUGHT:
             return []
         
-        # === ГЕНЕРАЦИЯ СИГНАЛОВ ===
+        # 8. BB width фильтр (как в оптимизаторе)
+        if 'bollinger_high' in last and 'bollinger_low' in last:
+            bb_width = (last['bollinger_high'] - last['bollinger_low']) / last['close']
+            if bb_width < MIN_BB_WIDTH:
+                return []
         
-        # === СИГНАЛ НА ПОКУПКУ ===
+        # 9. Candle body фильтр (как в оптимизаторе)
+        candle_body = abs(last['close'] - last['open'])
+        candle_range = last['high'] - last['low']
+        if candle_range > 0:
+            body_pct = candle_body / candle_range
+            if body_pct < MIN_CANDLE_BODY_PCT:
+                return []
+        
+        # 10. Wick ratio фильтр (как в оптимизаторе)
+        if candle_body > 0:
+            wick_ratio = candle_range / candle_body
+            if wick_ratio > MAX_WICK_TO_BODY_RATIO:
+                return []
+        
+        # 11. Volume MA ratio фильтр (как в оптимизаторе)
+        if 'volume_ma' in df.columns:
+            volume_ma = last.get('volume_ma', 0)
+            if volume_ma > 0:
+                volume_ratio = last['volume'] / volume_ma
+                if volume_ratio < MIN_VOLUME_MA_RATIO:
+                    return []
+        
+        # 12. Volume consistency фильтр (как в оптимизаторе)
+        if len(df) >= 5:
+            recent_volumes = df['volume'].iloc[-5:]
+            volume_std = recent_volumes.std()
+            volume_mean = recent_volumes.mean()
+            if volume_mean > 0:
+                volume_cv = volume_std / volume_mean
+                if volume_cv > (1 - MIN_VOLUME_CONSISTENCY):
+                    return []
+        
+        # 13. RSI volatility фильтр (как в оптимизаторе)
+        if len(df) > 1:
+            rsi_change = abs(last['rsi'] - df['rsi'].iloc[-2])
+            if rsi_change > MAX_RSI_VOLATILITY:
+                return []
+        
+        # === ТРИГГЕРЫ (точно как в оптимизаторе) ===
         buy_triggers = 0
-        
-        # Триггер 1: EMA кроссовер (главный)
-        if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-            buy_triggers += 1
-        
-        # Триггер 2: Цена выше EMA (быстрой) - менее строгий
-        elif last['close'] > last['ema_fast'] and last['close'] > prev['close']:
-            buy_triggers += 0.5
-        
-        # Триггер 3: MACD бычий
-        if 'macd' in df.columns and 'macd_signal' in df.columns:
-            if last['macd'] > last['macd_signal']:
-                buy_triggers += 0.5
-            # Кроссовер MACD - дополнительный бонус
-            if prev['macd'] <= prev['macd_signal'] and last['macd'] > last['macd_signal']:
-                buy_triggers += 0.5
-        
-        # Триггер 4: Bollinger Bands
-        if 'bollinger_low' in df.columns:
-            bb_position = (last['close'] - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
-            if bb_position <= 0.3:  # В нижней части диапазона
-                buy_triggers += 0.5
-        
-        # Триггер 5: VWAP
-        if USE_VWAP and 'vwap' in df.columns:
-            vwap_dev = last.get('vwap_deviation', 0)
-            if vwap_dev <= 0 and vwap_dev >= -VWAP_DEVIATION_THRESHOLD * 2:  # Ниже VWAP но не критично
-                buy_triggers += 0.3
-        
-        # Определяем эффективный минимальный скор
-        effective_min_score = MIN_COMPOSITE_SCORE  # ВОЗВРАЩЕНО: используем фиксированный скор для надежности
-        if is_active_hour:
-            effective_min_score *= ACTIVE_HOURS_MULTIPLIER
-        
-        # Проверяем достаточность триггеров для BUY - смягчаем пороги
-        min_triggers = MIN_TRIGGERS_ACTIVE_HOURS if is_active_hour else MIN_TRIGGERS_INACTIVE_HOURS
-        
-        # === СИГНАЛ НА ПРОДАЖУ ===
         sell_triggers = 0
         
-        # Триггер 1: EMA кроссовер (главный)
+        # EMA кроссовер
+        if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+            buy_triggers += 1
+        elif last['close'] > last['ema_fast'] and last['close'] > prev['close']:
+            buy_triggers += 0.5
+            
         if prev['ema_fast'] >= prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
             sell_triggers += 1
-        
-        # Триггер 2: Цена ниже EMA (быстрой) - менее строгий
         elif last['close'] < last['ema_fast'] and last['close'] < prev['close']:
             sell_triggers += 0.5
-        
-        # Триггер 3: MACD медвежий
-        if 'macd' in df.columns and 'macd_signal' in df.columns:
+            
+        # MACD
+        if 'macd' in df.columns:
+            if last['macd'] > last['macd_signal']:
+                buy_triggers += 0.5
             if last['macd'] < last['macd_signal']:
                 sell_triggers += 0.5
-            # Кроссовер MACD - дополнительный бонус
-            if prev['macd'] >= prev['macd_signal'] and last['macd'] < last['macd_signal']:
-                sell_triggers += 0.5
-        
-        # Триггер 4: Bollinger Bands
-        if 'bollinger_high' in df.columns:
+                
+        # Bollinger Bands
+        if 'bollinger_low' in df.columns:
             bb_position = (last['close'] - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
-            if bb_position >= 0.7:  # В верхней части диапазона
+            if bb_position <= 0.3:
+                buy_triggers += 0.5
+            if bb_position >= 0.7:
                 sell_triggers += 0.5
-        
-        # Триггер 5: VWAP
+                
+        # VWAP
         if USE_VWAP and 'vwap' in df.columns:
             vwap_dev = last.get('vwap_deviation', 0)
-            if vwap_dev >= 0 and vwap_dev <= VWAP_DEVIATION_THRESHOLD * 2:  # Выше VWAP но не критично
+            if vwap_dev <= 0 and vwap_dev >= -VWAP_DEVIATION_THRESHOLD * 2:
+                buy_triggers += 0.3
+            if vwap_dev >= 0 and vwap_dev <= VWAP_DEVIATION_THRESHOLD * 2:
                 sell_triggers += 0.3
+                
+        # Минимальные триггеры (как в оптимизаторе)
+        min_triggers = MIN_TRIGGERS_ACTIVE_HOURS if hour_utc in ACTIVE_HOURS_UTC else MIN_TRIGGERS_INACTIVE_HOURS
         
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Генерируем ТОЛЬКО ОДИН тип сигнала (сильнейший)
-        strongest_signal = None
-        strongest_score = 0
+        # === ОПРЕДЕЛЕНИЕ ТИПА СИГНАЛА (как в оптимизаторе) ===
+        signal_type = None
+        if buy_triggers >= min_triggers and last['rsi'] <= RSI_MAX and last['rsi'] >= RSI_MIN:
+            signal_type = 'BUY'
+        elif sell_triggers >= min_triggers and last['rsi'] >= RSI_MIN and last['rsi'] <= RSI_MAX:
+            signal_type = 'SELL'
         
-        # Проверяем BUY сигнал
-        if buy_triggers >= min_triggers and last['rsi'] <= 85:
-            buy_score, buy_pattern = evaluate_signal_strength(df, symbol, 'BUY')
-            if buy_score >= effective_min_score:
-                strongest_signal = 'BUY'
-                strongest_score = buy_score
+        # MACD Histogram фильтр (как в оптимизаторе)
+        if signal_type and REQUIRE_MACD_HISTOGRAM_CONFIRMATION and 'macd_hist' in df.columns and len(df) > 1:
+            current_hist = last['macd_hist']
+            prev_hist = df['macd_hist'].iloc[-2]
+            if signal_type == 'BUY' and not (current_hist > 0 and prev_hist <= 0):
+                return []
+            elif signal_type == 'SELL' and not (current_hist < 0 and prev_hist >= 0):
+                return []
         
-        # Проверяем SELL сигнал
-        if sell_triggers >= min_triggers and last['rsi'] >= 15:
-            sell_score, sell_pattern = evaluate_signal_strength(df, symbol, 'SELL')
-            if sell_score >= effective_min_score:
-                # Выбираем сильнейший сигнал
-                if sell_score > strongest_score:
-                    strongest_signal = 'SELL'
-                    strongest_score = sell_score
+        # Дополнительные условия для short/long (как в оптимизаторе)
+        if signal_type == 'SELL' and last['adx'] < SHORT_MIN_ADX:
+            return []
+        if signal_type == 'SELL' and last['rsi'] < SHORT_MIN_RSI:
+            return []
+        if signal_type == 'BUY' and last['rsi'] > LONG_MAX_RSI:
+            return []
         
-        # Генерируем только один сигнал (сильнейший)
-        if strongest_signal == 'BUY':
-            # Получаем метку силы
-            strength_label, win_prob = signal_strength_label(strongest_score)
-            
-            # Рассчитываем TP/SL
-            tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'])
-            
-            # Рекомендуем плечо
-            leverage = recommend_leverage(strongest_score, win_prob * 100)
-            
-            # Рассчитываем проценты для TP/SL
-            tp_pct = ((tp_price - last['close']) / last['close']) * 100
-            sl_pct = ((last['close'] - sl_price) / last['close']) * 100
-            
-            # Рассчитываем реальное соотношение R:R
-            real_rr = tp_pct / sl_pct if sl_pct > 0 else 0
-            
-            # Составляем сообщение
-            signal = f"🟢 LONG {symbol}\n"
-            signal += f"Цена: {last['close']:.6f}\n"
-            signal += f"Сила: {strength_label} ({strongest_score:.1f})\n"
-            signal += f"Вероятность: {win_prob:.0%}\n"
-            signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
-            signal += f"R:R = {real_rr:.2f}:1\n"
-            signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
-            
-            # Добавляем детали триггеров
-            signal += f"Триггеры: {buy_triggers:.1f}"
-            if USE_VWAP and 'vwap' in df.columns:
-                signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
-            if 'bb_width' in df.columns:
-                signal += f" | BB: {last['bb_width']*100:.1f}%"
-            
-            signals.append(signal)
-            
-            # Открываем виртуальную сделку
-            open_trade(symbol, last['close'], now, 'long', last['atr'], strongest_score)
-            record_trade(symbol, 'OPEN', last['close'], now, 'long', strongest_score)
-            
-            last_signal_time[symbol] = now
-        
-        elif strongest_signal == 'SELL':
-            # Получаем метку силы
-            strength_label, win_prob = signal_strength_label(strongest_score)
-            
-            # Рассчитываем TP/SL
-            tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], 'SHORT')
-            
-            # Рекомендуем плечо
-            leverage = recommend_leverage(strongest_score, win_prob * 100)
-            
-            # Рассчитываем проценты для TP/SL для SHORT
-            tp_pct = ((last['close'] - tp_price) / last['close']) * 100
-            sl_pct = ((sl_price - last['close']) / last['close']) * 100
-            
-            # Рассчитываем реальное соотношение R:R
-            real_rr = tp_pct / sl_pct if sl_pct > 0 else 0
-            
-            # Составляем сообщение
-            signal = f"🔴 SHORT {symbol}\n"
-            signal += f"Цена: {last['close']:.6f}\n"
-            signal += f"Сила: {strength_label} ({strongest_score:.1f})\n"
-            signal += f"Вероятность: {win_prob:.0%}\n"
-            signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
-            signal += f"R:R = {real_rr:.2f}:1\n"
-            signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
-            
-            # Добавляем детали триггеров
-            signal += f"Триггеры: {sell_triggers:.1f}"
-            if USE_VWAP and 'vwap' in df.columns:
-                signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
-            if 'bb_width' in df.columns:
-                signal += f" | BB: {last['bb_width']*100:.1f}%"
-            
-            signals.append(signal)
-            
-            # Открываем виртуальную сделку
-            open_trade(symbol, last['close'], now, 'short', last['atr'], strongest_score)
-            record_trade(symbol, 'OPEN', last['close'], now, 'short', strongest_score)
-            
-            last_signal_time[symbol] = now
+        # === ГЕНЕРАЦИЯ СИГНАЛА ===
+        if signal_type:
+            try:
+                score, pattern = evaluate_signal_strength(df, symbol, signal_type)
+                if score >= MIN_COMPOSITE_SCORE:
+                    # Получаем метку силы
+                    strength_label, win_prob = signal_strength_label(score)
+                    
+                    # Рассчитываем TP/SL
+                    direction = 'SHORT' if signal_type == 'SELL' else 'LONG'
+                    tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], direction)
+                    
+                    # Проверка минимального расстояния между TP и SL (как в оптимизаторе)
+                    tp_sl_distance = abs(tp_price - sl_price) / last['close']
+                    if tp_sl_distance < MIN_TP_SL_DISTANCE:
+                        return []
+                    
+                    # Рекомендуем плечо
+                    leverage = recommend_leverage(score, win_prob * 100)
+                    
+                    # Рассчитываем проценты для TP/SL
+                    if signal_type == 'BUY':
+                        tp_pct = ((tp_price - last['close']) / last['close']) * 100
+                        sl_pct = ((last['close'] - sl_price) / last['close']) * 100
+                        side = 'long'
+                        signal_emoji = "🟢 LONG"
+                    else:
+                        tp_pct = ((last['close'] - tp_price) / last['close']) * 100
+                        sl_pct = ((sl_price - last['close']) / last['close']) * 100
+                        side = 'short'
+                        signal_emoji = "🔴 SHORT"
+                    
+                    # Рассчитываем реальное соотношение R:R
+                    real_rr = tp_pct / sl_pct if sl_pct > 0 else 0
+                    
+                    # Составляем сообщение
+                    signal = f"{signal_emoji} {symbol}\n"
+                    signal += f"Цена: {last['close']:.6f}\n"
+                    signal += f"Сила: {strength_label} ({score:.1f})\n"
+                    signal += f"Вероятность: {win_prob:.0%}\n"
+                    signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
+                    signal += f"R:R = {real_rr:.2f}:1\n"
+                    signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
+                    
+                    # Добавляем детали триггеров
+                    triggers = buy_triggers if signal_type == 'BUY' else sell_triggers
+                    signal += f"Триггеры: {triggers:.1f}"
+                    if USE_VWAP and 'vwap' in df.columns:
+                        signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
+                    if 'bb_width' in df.columns:
+                        bb_width = (last['bollinger_high'] - last['bollinger_low']) / last['close']
+                        signal += f" | BB: {bb_width*100:.1f}%"
+                    
+                    signals.append(signal)
+                    
+                    # Открываем виртуальную сделку
+                    open_trade(symbol, last['close'], now, side, last['atr'], score)
+                    record_trade(symbol, 'OPEN', last['close'], now, side, score)
+                    
+                    last_signal_time[symbol] = now
+                    
+            except Exception as e:
+                logging.error(f"Ошибка оценки сигнала {symbol}: {e}")
+                return []
         
         return signals
         
