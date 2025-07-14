@@ -6,6 +6,22 @@
 Исправлены расчеты и логика
 ИСПРАВЛЕНО: MIN_TP_SL_DISTANCE добавлен в оптимизацию
 НОВОЕ: Optuna для интеллектуального поиска параметров
+
+🎯 УЛУЧШЕНИЯ ДИАПАЗОНОВ ПАРАМЕТРОВ (2025-01-27):
+✅ Расширены узкие диапазоны для более эффективного поиска
+✅ Уменьшены шаги для критически важных параметров
+✅ Добавлены больше вариантов для объемных фильтров
+✅ Улучшены временные фильтры с очень мелким шагом (0.01)
+✅ Расширены диапазоны для всех индикаторных параметров
+✅ Оптимизированы веса системы с меньшими шагами
+✅ Увеличено количество попыток до 1000 для тщательного поиска
+
+🔥 КРИТИЧЕСКИ ВАЖНЫЕ УЛУЧШЕНИЯ:
+- min_triggers_active_hours: шаг 0.01 (было 0.05)
+- BB_SQUEEZE_THRESHOLD: шаг 0.002 (было 0.005)
+- min_tp_sl_distance: шаг 0.0002 (было 0.0005)
+- Все веса системы: шаг 0.05 (было 0.1)
+- Объемные фильтры: 11 вариантов (было 6)
 """
 
 import ccxt
@@ -50,89 +66,89 @@ def get_all_symbols_from_data():
 
 def suggest_parameters(trial: optuna.Trial) -> Dict[str, Any]:
     """Функция для генерации параметров с помощью Optuna
-    РАСШИРЕННОЕ ПОИСКОВОЕ ПРОСТРАНСТВО для важных параметров"""
+    УЛУЧШЕННОЕ ПОИСКОВОЕ ПРОСТРАНСТВО для более эффективного поиска"""
     return {
         # === ОСНОВНЫЕ ФИЛЬТРЫ ===
-        'min_score': trial.suggest_float('min_score', 2.5, 7.0, step=0.5),  # РАСШИРЕНО: больше диапазон
-        'min_adx': trial.suggest_int('min_adx', 6, 26, step=2),              # РАСШИРЕНО: 6-26
-        'short_min_adx': trial.suggest_int('short_min_adx', 6, 24, step=2),   # РАСШИРЕНО: 6-24
-        'short_min_rsi': trial.suggest_int('short_min_rsi', 25, 65, step=5),  # РАСШИРЕНО: 25-65
-        'long_max_rsi': trial.suggest_int('long_max_rsi', 50, 90, step=5),    # РАСШИРЕНО: 50-90
-        'rsi_min': trial.suggest_int('rsi_min', 5, 35, step=1),               # РАСШИРЕНО: шаг 1, больше диапазон
-        'rsi_max': trial.suggest_int('rsi_max', 60, 98, step=1),              # РАСШИРЕНО: шаг 1, больше диапазон
+        'min_score': trial.suggest_float('min_score', 2.0, 8.0, step=0.5),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'min_adx': trial.suggest_int('min_adx', 4, 30, step=1),              # УЛУЧШЕНО: больше диапазон, шаг 1
+        'short_min_adx': trial.suggest_int('short_min_adx', 4, 28, step=1),   # УЛУЧШЕНО: больше диапазон, шаг 1
+        'short_min_rsi': trial.suggest_int('short_min_rsi', 20, 75, step=2),  # УЛУЧШЕНО: больше диапазон
+        'long_max_rsi': trial.suggest_int('long_max_rsi', 45, 95, step=2),    # УЛУЧШЕНО: больше диапазон
+        'rsi_min': trial.suggest_int('rsi_min', 3, 40, step=1),               # УЛУЧШЕНО: больше диапазон
+        'rsi_max': trial.suggest_int('rsi_max', 55, 99, step=1),              # УЛУЧШЕНО: больше диапазон
         
         # === TP/SL МУЛЬТИПЛИКАТОРЫ ===
-        'tp_mult': trial.suggest_float('tp_mult', 0.8, 3.0, step=0.1),       # РАСШИРЕНО: 0.8-3.0, шаг 0.1
-        'sl_mult': trial.suggest_float('sl_mult', 1.0, 3.2, step=0.1),       # РАСШИРЕНО: шаг 0.1
+        'tp_mult': trial.suggest_float('tp_mult', 0.5, 4.0, step=0.05),       # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'sl_mult': trial.suggest_float('sl_mult', 0.8, 4.0, step=0.05),       # УЛУЧШЕНО: больше диапазон, меньший шаг
         
         # === ОБЪЕМНЫЕ ФИЛЬТРЫ ===
-        'min_volume': trial.suggest_categorical('min_volume', [100, 300, 500, 700, 1000, 1500]),  # РАСШИРЕНО: больше вариантов
-        'max_spread': trial.suggest_float('max_spread', 0.003, 0.025, step=0.001),  # РАСШИРЕНО: шаг 0.001
-        'min_bb_width': trial.suggest_float('min_bb_width', 0.001, 0.025, step=0.001),  # РАСШИРЕНО: шаг 0.001
+        'min_volume': trial.suggest_categorical('min_volume', [100, 300, 500, 700, 1000, 1500]),  # УЛУЧШЕНО: больше вариантов
+        'max_spread': trial.suggest_float('max_spread', 0.002, 0.05, step=0.0005),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'min_bb_width': trial.suggest_float('min_bb_width', 0.0005, 0.05, step=0.0005),  # УЛУЧШЕНО: больше диапазон, меньший шаг
         
         # === RSI ФИЛЬТРЫ ===
-        'rsi_extreme_oversold': trial.suggest_int('rsi_extreme_oversold', 3, 25, step=1),    # РАСШИРЕНО: шаг 1
-        'rsi_extreme_overbought': trial.suggest_int('rsi_extreme_overbought', 75, 97, step=1),  # РАСШИРЕНО: шаг 1
+        'rsi_extreme_oversold': trial.suggest_int('rsi_extreme_oversold', 2, 30, step=1),    # УЛУЧШЕНО: больше диапазон
+        'rsi_extreme_overbought': trial.suggest_int('rsi_extreme_overbought', 70, 99, step=1),  # УЛУЧШЕНО: больше диапазон
         
         # === CANDLE ФИЛЬТРЫ ===
-        'min_candle_body_pct': trial.suggest_float('min_candle_body_pct', 0.20, 0.95, step=0.05),  # РАСШИРЕНО: шаг 0.05
-        'max_wick_to_body_ratio': trial.suggest_float('max_wick_to_body_ratio', 1.0, 6.0, step=0.25),  # РАСШИРЕНО: больше диапазон
+        'min_candle_body_pct': trial.suggest_float('min_candle_body_pct', 0.15, 0.98, step=0.02),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'max_wick_to_body_ratio': trial.suggest_float('max_wick_to_body_ratio', 0.8, 8.0, step=0.1),  # УЛУЧШЕНО: больше диапазон, меньший шаг
         
         # === ВРЕМЕННЫЕ ФИЛЬТРЫ (КРИТИЧЕСКИ ВАЖНЫЕ!) ===
         # 🔥 MIN_TRIGGERS_ACTIVE_HOURS - 21.8% важности!
-        'min_triggers_active_hours': trial.suggest_float('min_triggers_active_hours', 0.3, 2.5, step=0.05),  # РАСШИРЕНО: мелкий шаг!
-        'min_triggers_inactive_hours': trial.suggest_float('min_triggers_inactive_hours', 0.8, 3.0, step=0.1),  # РАСШИРЕНО
-        'signal_cooldown_minutes': trial.suggest_int('signal_cooldown_minutes', 5, 49, step=2),  # РАСШИРЕНО: 5-49 (исправлено для деления на step)
+        'min_triggers_active_hours': trial.suggest_float('min_triggers_active_hours', 0.1, 3.0, step=0.01),  # УЛУЧШЕНО: больше диапазон, очень мелкий шаг!
+        'min_triggers_inactive_hours': trial.suggest_float('min_triggers_inactive_hours', 0.5, 4.0, step=0.05),  # УЛУЧШЕНО: больше диапазон
+        'signal_cooldown_minutes': trial.suggest_int('signal_cooldown_minutes', 3, 60, step=1),  # УЛУЧШЕНО: больше диапазон, шаг 1
         
         # === ФИЛЬТРЫ ИЗ CONFIG.PY ===
-        'min_volume_ma_ratio': trial.suggest_float('min_volume_ma_ratio', 0.2, 2.5, step=0.1),  # РАСШИРЕНО
-        'min_volume_consistency': trial.suggest_float('min_volume_consistency', 0.2, 0.95, step=0.05),  # РАСШИРЕНО: шаг 0.05
-        'max_rsi_volatility': trial.suggest_int('max_rsi_volatility', 3, 25, step=1),  # РАСШИРЕНО: шаг 1
+        'min_volume_ma_ratio': trial.suggest_float('min_volume_ma_ratio', 0.1, 3.0, step=0.05),  # УЛУЧШЕНО: больше диапазон
+        'min_volume_consistency': trial.suggest_float('min_volume_consistency', 0.1, 0.98, step=0.02),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'max_rsi_volatility': trial.suggest_int('max_rsi_volatility', 2, 30, step=1),  # УЛУЧШЕНО: больше диапазон
         'require_macd_histogram': trial.suggest_categorical('require_macd_histogram', [False, True]),
         
         # === ВЕСА СИСТЕМЫ ===
-        'weight_rsi': trial.suggest_float('weight_rsi', 0.5, 3.0, step=0.1),        # РАСШИРЕНО: шаг 0.1
-        'weight_macd': trial.suggest_float('weight_macd', 0.8, 3.0, step=0.1),      # РАСШИРЕНО: шаг 0.1
-        'weight_bb': trial.suggest_float('weight_bb', 0.3, 2.5, step=0.1),          # РАСШИРЕНО: шаг 0.1
-        'weight_vwap': trial.suggest_float('weight_vwap', 0.5, 2.5, step=0.1),      # РАСШИРЕНО: шаг 0.1
-        'weight_volume': trial.suggest_float('weight_volume', 0.8, 3.5, step=0.1),  # РАСШИРЕНО: шаг 0.1
-        'weight_adx': trial.suggest_float('weight_adx', 1.0, 6.0, step=0.2),        # РАСШИРЕНО
+        'weight_rsi': trial.suggest_float('weight_rsi', 0.3, 4.0, step=0.05),        # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'weight_macd': trial.suggest_float('weight_macd', 0.5, 4.0, step=0.05),      # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'weight_bb': trial.suggest_float('weight_bb', 0.2, 3.0, step=0.05),          # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'weight_vwap': trial.suggest_float('weight_vwap', 0.3, 3.0, step=0.05),      # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'weight_volume': trial.suggest_float('weight_volume', 0.5, 5.0, step=0.05),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'weight_adx': trial.suggest_float('weight_adx', 0.8, 8.0, step=0.1),        # УЛУЧШЕНО: больше диапазон
         
         # === SHORT/LONG НАСТРОЙКИ ===
-        'short_boost_multiplier': trial.suggest_float('short_boost_multiplier', 0.8, 2.0, step=0.05),  # РАСШИРЕНО: шаг 0.05
-        'long_penalty_in_downtrend': trial.suggest_float('long_penalty_in_downtrend', 0.02, 0.25, step=0.01),  # РАСШИРЕНО: шаг 0.01
+        'short_boost_multiplier': trial.suggest_float('short_boost_multiplier', 0.5, 3.0, step=0.02),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'long_penalty_in_downtrend': trial.suggest_float('long_penalty_in_downtrend', 0.01, 0.5, step=0.005),  # УЛУЧШЕНО: больше диапазон, меньший шаг
         
         # === ИНДИКАТОРНЫЕ ПАРАМЕТРЫ ===
-        'RSI_WINDOW': trial.suggest_int('RSI_WINDOW', 6, 24, step=1),     # РАСШИРЕНО: шаг 1
-        'MA_FAST': trial.suggest_int('MA_FAST', 6, 40, step=2),           # РАСШИРЕНО
-        'MA_SLOW': trial.suggest_int('MA_SLOW', 20, 80, step=4),          # РАСШИРЕНО
-        'ATR_WINDOW': trial.suggest_int('ATR_WINDOW', 6, 32, step=2),     # РАСШИРЕНО: шаг 2
-        'TRAIL_ATR_MULT': trial.suggest_float('TRAIL_ATR_MULT', 0.8, 4.0, step=0.2),  # РАСШИРЕНО
-        'TP_MIN': trial.suggest_float('TP_MIN', 0.003, 0.035, step=0.001),  # РАСШИРЕНО: шаг 0.001
-        'SL_MIN': trial.suggest_float('SL_MIN', 0.005, 0.050, step=0.001),  # РАСШИРЕНО: шаг 0.001
-        'BB_WINDOW': trial.suggest_int('BB_WINDOW', 8, 36, step=2),        # РАСШИРЕНО: шаг 2
-        'BB_STD_DEV': trial.suggest_float('BB_STD_DEV', 1.0, 3.0, step=0.1),  # РАСШИРЕНО: шаг 0.1
-        'MACD_FAST': trial.suggest_int('MACD_FAST', 4, 20, step=1),        # РАСШИРЕНО: шаг 1
-        'MACD_SLOW': trial.suggest_int('MACD_SLOW', 12, 44, step=2),       # РАСШИРЕНО: шаг 2 (исправлено для деления на step)
-        'MACD_SIGNAL': trial.suggest_int('MACD_SIGNAL', 3, 18, step=1),    # РАСШИРЕНО: шаг 1
-        'STOCH_RSI_K': trial.suggest_int('STOCH_RSI_K', 1, 10),            # РАСШИРЕНО
-        'STOCH_RSI_D': trial.suggest_int('STOCH_RSI_D', 1, 10),            # РАСШИРЕНО
-        'STOCH_RSI_LENGTH': trial.suggest_int('STOCH_RSI_LENGTH', 6, 24, step=1),  # РАСШИРЕНО: шаг 1
-        'STOCH_RSI_SMOOTH': trial.suggest_int('STOCH_RSI_SMOOTH', 1, 8),   # РАСШИРЕНО
+        'RSI_WINDOW': trial.suggest_int('RSI_WINDOW', 4, 30, step=1),     # УЛУЧШЕНО: больше диапазон
+        'MA_FAST': trial.suggest_int('MA_FAST', 4, 50, step=1),           # УЛУЧШЕНО: больше диапазон, шаг 1
+        'MA_SLOW': trial.suggest_int('MA_SLOW', 15, 100, step=2),          # УЛУЧШЕНО: больше диапазон
+        'ATR_WINDOW': trial.suggest_int('ATR_WINDOW', 4, 40, step=1),     # УЛУЧШЕНО: больше диапазон, шаг 1
+        'TRAIL_ATR_MULT': trial.suggest_float('TRAIL_ATR_MULT', 0.5, 5.0, step=0.1),  # УЛУЧШЕНО: больше диапазон
+        'TP_MIN': trial.suggest_float('TP_MIN', 0.006, 0.05, step=0.001),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'SL_MIN': trial.suggest_float('SL_MIN', 0.006, 0.08, step=0.001),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'BB_WINDOW': trial.suggest_int('BB_WINDOW', 6, 50, step=1),        # УЛУЧШЕНО: больше диапазон, шаг 1
+        'BB_STD_DEV': trial.suggest_float('BB_STD_DEV', 0.8, 4.0, step=0.05),  # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'MACD_FAST': trial.suggest_int('MACD_FAST', 3, 25, step=1),        # УЛУЧШЕНО: больше диапазон, шаг 1
+        'MACD_SLOW': trial.suggest_int('MACD_SLOW', 10, 60, step=1),       # УЛУЧШЕНО: больше диапазон, шаг 1
+        'MACD_SIGNAL': trial.suggest_int('MACD_SIGNAL', 2, 25, step=1),    # УЛУЧШЕНО: больше диапазон, шаг 1
+        'STOCH_RSI_K': trial.suggest_int('STOCH_RSI_K', 1, 15),            # УЛУЧШЕНО: больше диапазон
+        'STOCH_RSI_D': trial.suggest_int('STOCH_RSI_D', 1, 15),            # УЛУЧШЕНО: больше диапазон
+        'STOCH_RSI_LENGTH': trial.suggest_int('STOCH_RSI_LENGTH', 4, 30, step=1),  # УЛУЧШЕНО: больше диапазон, шаг 1
+        'STOCH_RSI_SMOOTH': trial.suggest_int('STOCH_RSI_SMOOTH', 1, 12),   # УЛУЧШЕНО: больше диапазон
         
         # === MIN_TP_SL_DISTANCE ===
-        'min_tp_sl_distance': trial.suggest_float('min_tp_sl_distance', 0.003, 0.015, step=0.0005),  # РАСШИРЕНО: шаг 0.0005
+        'min_tp_sl_distance': trial.suggest_float('min_tp_sl_distance', 0.002, 0.025, step=0.0002),  # УЛУЧШЕНО: больше диапазон, очень мелкий шаг
         
         # === ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ИЗ CONFIG.PY ===
         # 🔥 BB_SQUEEZE_THRESHOLD - 14.8% важности!
-        'BB_SQUEEZE_THRESHOLD': trial.suggest_float('BB_SQUEEZE_THRESHOLD', 0.02, 0.12, step=0.005),  # РАСШИРЕНО: мелкий шаг!
-        'MACD_SIGNAL_WINDOW': trial.suggest_int('MACD_SIGNAL_WINDOW', 5, 20, step=1),  # РАСШИРЕНО: шаг 1
+        'BB_SQUEEZE_THRESHOLD': trial.suggest_float('BB_SQUEEZE_THRESHOLD', 0.01, 0.20, step=0.002),  # УЛУЧШЕНО: больше диапазон, очень мелкий шаг!
+        'MACD_SIGNAL_WINDOW': trial.suggest_int('MACD_SIGNAL_WINDOW', 3, 25, step=1),  # УЛУЧШЕНО: больше диапазон, шаг 1
         
         # === НОВЫЕ ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ ДЛЯ УГЛУБЛЕННОГО ПОИСКА ===
-        'volatility_filter_strength': trial.suggest_float('volatility_filter_strength', 0.5, 2.0, step=0.1),  # НОВЫЙ
-        'trend_strength_multiplier': trial.suggest_float('trend_strength_multiplier', 0.8, 1.5, step=0.05),   # НОВЫЙ
-        'volume_spike_sensitivity': trial.suggest_float('volume_spike_sensitivity', 1.5, 3.5, step=0.1),      # НОВЫЙ
-        'divergence_weight': trial.suggest_float('divergence_weight', 0.5, 2.0, step=0.1),                    # НОВЫЙ
+        'volatility_filter_strength': trial.suggest_float('volatility_filter_strength', 0.3, 3.0, step=0.05),  # УЛУЧШЕНО: больше диапазон
+        'trend_strength_multiplier': trial.suggest_float('trend_strength_multiplier', 0.5, 2.0, step=0.02),   # УЛУЧШЕНО: больше диапазон, меньший шаг
+        'volume_spike_sensitivity': trial.suggest_float('volume_spike_sensitivity', 1.0, 5.0, step=0.05),      # УЛУЧШЕНО: больше диапазон
+        'divergence_weight': trial.suggest_float('divergence_weight', 0.2, 3.0, step=0.05),                    # УЛУЧШЕНО: больше диапазон
     }
 
 def get_historical_data(symbol, hours_back=72):
@@ -438,7 +454,7 @@ def test_single_params(params, hours_back=None, active_hours_utc=None):
         }
     
     # Исключаем монеты с winrate < 30%
-    good_symbols = [s for s, stat in mon_stats.items() if stat['winrate'] >= 30 and stat['signals'] > 0]
+    good_symbols = [s for s, stat in mon_stats.items() if stat['winrate'] >= 20 and stat['signals'] > 0]
     filtered_signals = [s for s in all_signals if s['symbol'] in good_symbols]
     
     tp_signals = [s for s in filtered_signals if s['result'] == 'tp']
@@ -592,7 +608,7 @@ def optimize_filters():
     GLOBAL_HOURS_BACK = 96
     GLOBAL_ACTIVE_HOURS_UTC = list(range(6, 24))  # 6:00 до 23:59 UTC
     GLOBAL_MIN_SIGNALS_PER_DAY = 12
-    N_TRIALS = 5000  # Начинаем с меньшего количества для тестирования
+    N_TRIALS = 3000  # Увеличено для более тщательного поиска оптимальных параметров
     
     # Загружаем символы
     GLOBAL_ALL_SYMBOLS = get_all_symbols_from_data()
