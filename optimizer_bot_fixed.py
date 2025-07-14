@@ -66,89 +66,62 @@ def get_all_symbols_from_data():
 
 def suggest_parameters(trial: optuna.Trial) -> Dict[str, Any]:
     """Функция для генерации параметров с помощью Optuna
-    УЛУЧШЕННОЕ ПОИСКОВОЕ ПРОСТРАНСТВО для более эффективного поиска"""
+    Теперь возвращает только CAPS-ключи для полной совместимости с config.py"""
     return {
-        # === ОСНОВНЫЕ ФИЛЬТРЫ ===
-        'min_score': trial.suggest_float('min_score', 2.0, 8.0, step=0.5),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'min_adx': trial.suggest_int('min_adx', 4, 30, step=1),              # УЛУЧШЕНО: больше диапазон, шаг 1
-        'short_min_adx': trial.suggest_int('short_min_adx', 4, 28, step=1),   # УЛУЧШЕНО: больше диапазон, шаг 1
-        'short_min_rsi': trial.suggest_int('short_min_rsi', 20, 75, step=2),  # УЛУЧШЕНО: больше диапазон
-        'long_max_rsi': trial.suggest_int('long_max_rsi', 45, 95, step=2),    # УЛУЧШЕНО: больше диапазон
-        'rsi_min': trial.suggest_int('rsi_min', 3, 40, step=1),               # УЛУЧШЕНО: больше диапазон
-        'rsi_max': trial.suggest_int('rsi_max', 55, 99, step=1),              # УЛУЧШЕНО: больше диапазон
-        
-        # === TP/SL МУЛЬТИПЛИКАТОРЫ ===
-        'tp_mult': trial.suggest_float('tp_mult', 0.5, 4.0, step=0.05),       # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'sl_mult': trial.suggest_float('sl_mult', 0.8, 4.0, step=0.05),       # УЛУЧШЕНО: больше диапазон, меньший шаг
-        
-        # === ОБЪЕМНЫЕ ФИЛЬТРЫ ===
-        'min_volume': trial.suggest_categorical('min_volume', [100, 300, 500, 700, 1000, 1500]),  # УЛУЧШЕНО: больше вариантов
-        'max_spread': trial.suggest_float('max_spread', 0.002, 0.05, step=0.0005),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'min_bb_width': trial.suggest_float('min_bb_width', 0.0005, 0.05, step=0.0005),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        
-        # === RSI ФИЛЬТРЫ ===
-        'rsi_extreme_oversold': trial.suggest_int('rsi_extreme_oversold', 2, 30, step=1),    # УЛУЧШЕНО: больше диапазон
-        'rsi_extreme_overbought': trial.suggest_int('rsi_extreme_overbought', 70, 99, step=1),  # УЛУЧШЕНО: больше диапазон
-        
-        # === CANDLE ФИЛЬТРЫ ===
-        'min_candle_body_pct': trial.suggest_float('min_candle_body_pct', 0.15, 0.98, step=0.02),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'max_wick_to_body_ratio': trial.suggest_float('max_wick_to_body_ratio', 0.8, 8.0, step=0.1),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        
-        # === ВРЕМЕННЫЕ ФИЛЬТРЫ (КРИТИЧЕСКИ ВАЖНЫЕ!) ===
-        # 🔥 MIN_TRIGGERS_ACTIVE_HOURS - 21.8% важности!
-        'min_triggers_active_hours': trial.suggest_float('min_triggers_active_hours', 0.1, 3.0, step=0.01),  # УЛУЧШЕНО: больше диапазон, очень мелкий шаг!
-        'min_triggers_inactive_hours': trial.suggest_float('min_triggers_inactive_hours', 0.5, 4.0, step=0.05),  # УЛУЧШЕНО: больше диапазон
-        'signal_cooldown_minutes': trial.suggest_int('signal_cooldown_minutes', 3, 60, step=1),  # УЛУЧШЕНО: больше диапазон, шаг 1
-        
-        # === ФИЛЬТРЫ ИЗ CONFIG.PY ===
-        'min_volume_ma_ratio': trial.suggest_float('min_volume_ma_ratio', 0.1, 3.0, step=0.05),  # УЛУЧШЕНО: больше диапазон
-        'min_volume_consistency': trial.suggest_float('min_volume_consistency', 0.1, 0.98, step=0.02),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'max_rsi_volatility': trial.suggest_int('max_rsi_volatility', 2, 30, step=1),  # УЛУЧШЕНО: больше диапазон
-        'require_macd_histogram': trial.suggest_categorical('require_macd_histogram', [False, True]),
-        
-        # === ВЕСА СИСТЕМЫ ===
-        'weight_rsi': trial.suggest_float('weight_rsi', 0.3, 4.0, step=0.05),        # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'weight_macd': trial.suggest_float('weight_macd', 0.5, 4.0, step=0.05),      # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'weight_bb': trial.suggest_float('weight_bb', 0.2, 3.0, step=0.05),          # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'weight_vwap': trial.suggest_float('weight_vwap', 0.3, 3.0, step=0.05),      # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'weight_volume': trial.suggest_float('weight_volume', 0.5, 5.0, step=0.05),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'weight_adx': trial.suggest_float('weight_adx', 0.8, 8.0, step=0.1),        # УЛУЧШЕНО: больше диапазон
-        
-        # === SHORT/LONG НАСТРОЙКИ ===
-        'short_boost_multiplier': trial.suggest_float('short_boost_multiplier', 0.5, 3.0, step=0.02),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'long_penalty_in_downtrend': trial.suggest_float('long_penalty_in_downtrend', 0.01, 0.5, step=0.005),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        
-        # === ИНДИКАТОРНЫЕ ПАРАМЕТРЫ ===
-        'RSI_WINDOW': trial.suggest_int('RSI_WINDOW', 4, 30, step=1),     # УЛУЧШЕНО: больше диапазон
-        'MA_FAST': trial.suggest_int('MA_FAST', 4, 50, step=1),           # УЛУЧШЕНО: больше диапазон, шаг 1
-        'MA_SLOW': trial.suggest_int('MA_SLOW', 15, 100, step=2),          # УЛУЧШЕНО: больше диапазон
-        'ATR_WINDOW': trial.suggest_int('ATR_WINDOW', 4, 40, step=1),     # УЛУЧШЕНО: больше диапазон, шаг 1
-        'TRAIL_ATR_MULT': trial.suggest_float('TRAIL_ATR_MULT', 0.5, 5.0, step=0.1),  # УЛУЧШЕНО: больше диапазон
-        'TP_MIN': trial.suggest_float('TP_MIN', 0.006, 0.05, step=0.001),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'SL_MIN': trial.suggest_float('SL_MIN', 0.006, 0.08, step=0.001),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'BB_WINDOW': trial.suggest_int('BB_WINDOW', 6, 50, step=1),        # УЛУЧШЕНО: больше диапазон, шаг 1
-        'BB_STD_DEV': trial.suggest_float('BB_STD_DEV', 0.8, 4.0, step=0.05),  # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'MACD_FAST': trial.suggest_int('MACD_FAST', 3, 25, step=1),        # УЛУЧШЕНО: больше диапазон, шаг 1
-        'MACD_SLOW': trial.suggest_int('MACD_SLOW', 10, 60, step=1),       # УЛУЧШЕНО: больше диапазон, шаг 1
-        'MACD_SIGNAL': trial.suggest_int('MACD_SIGNAL', 2, 25, step=1),    # УЛУЧШЕНО: больше диапазон, шаг 1
-        'STOCH_RSI_K': trial.suggest_int('STOCH_RSI_K', 1, 15),            # УЛУЧШЕНО: больше диапазон
-        'STOCH_RSI_D': trial.suggest_int('STOCH_RSI_D', 1, 15),            # УЛУЧШЕНО: больше диапазон
-        'STOCH_RSI_LENGTH': trial.suggest_int('STOCH_RSI_LENGTH', 4, 30, step=1),  # УЛУЧШЕНО: больше диапазон, шаг 1
-        'STOCH_RSI_SMOOTH': trial.suggest_int('STOCH_RSI_SMOOTH', 1, 12),   # УЛУЧШЕНО: больше диапазон
-        
-        # === MIN_TP_SL_DISTANCE ===
-        'min_tp_sl_distance': trial.suggest_float('min_tp_sl_distance', 0.002, 0.025, step=0.0002),  # УЛУЧШЕНО: больше диапазон, очень мелкий шаг
-        
-        # === ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ИЗ CONFIG.PY ===
-        # 🔥 BB_SQUEEZE_THRESHOLD - 14.8% важности!
-        'BB_SQUEEZE_THRESHOLD': trial.suggest_float('BB_SQUEEZE_THRESHOLD', 0.01, 0.20, step=0.002),  # УЛУЧШЕНО: больше диапазон, очень мелкий шаг!
-        'MACD_SIGNAL_WINDOW': trial.suggest_int('MACD_SIGNAL_WINDOW', 3, 25, step=1),  # УЛУЧШЕНО: больше диапазон, шаг 1
-        
-        # === НОВЫЕ ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ ДЛЯ УГЛУБЛЕННОГО ПОИСКА ===
-        'volatility_filter_strength': trial.suggest_float('volatility_filter_strength', 0.3, 3.0, step=0.05),  # УЛУЧШЕНО: больше диапазон
-        'trend_strength_multiplier': trial.suggest_float('trend_strength_multiplier', 0.5, 2.0, step=0.02),   # УЛУЧШЕНО: больше диапазон, меньший шаг
-        'volume_spike_sensitivity': trial.suggest_float('volume_spike_sensitivity', 1.0, 5.0, step=0.05),      # УЛУЧШЕНО: больше диапазон
-        'divergence_weight': trial.suggest_float('divergence_weight', 0.2, 3.0, step=0.05),                    # УЛУЧШЕНО: больше диапазон
+        'MIN_SCORE': trial.suggest_float('MIN_SCORE', 2.0, 8.0, step=0.5),
+        'MIN_ADX': trial.suggest_int('MIN_ADX', 4, 30, step=1),
+        'SHORT_MIN_ADX': trial.suggest_int('SHORT_MIN_ADX', 4, 28, step=1),
+        'SHORT_MIN_RSI': trial.suggest_int('SHORT_MIN_RSI', 20, 75, step=2),
+        'LONG_MAX_RSI': trial.suggest_int('LONG_MAX_RSI', 45, 95, step=2),
+        'RSI_MIN': trial.suggest_int('RSI_MIN', 3, 40, step=1),
+        'RSI_MAX': trial.suggest_int('RSI_MAX', 55, 99, step=1),
+        'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.5, 4.0, step=0.05),
+        'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 0.8, 4.0, step=0.05),
+        'MIN_VOLUME_USDT': trial.suggest_categorical('MIN_VOLUME_USDT', [100, 300, 500, 700, 1000, 1500]),
+        'MAX_SPREAD_PCT': trial.suggest_float('MAX_SPREAD_PCT', 0.002, 0.05, step=0.0005),
+        'MIN_BB_WIDTH': trial.suggest_float('MIN_BB_WIDTH', 0.0005, 0.05, step=0.0005),
+        'RSI_EXTREME_OVERSOLD': trial.suggest_int('RSI_EXTREME_OVERSOLD', 2, 30, step=1),
+        'RSI_EXTREME_OVERBOUGHT': trial.suggest_int('RSI_EXTREME_OVERBOUGHT', 70, 99, step=1),
+        'MIN_CANDLE_BODY_PCT': trial.suggest_float('MIN_CANDLE_BODY_PCT', 0.15, 0.98, step=0.02),
+        'MAX_WICK_TO_BODY_RATIO': trial.suggest_float('MAX_WICK_TO_BODY_RATIO', 0.8, 8.0, step=0.1),
+        'MIN_TRIGGERS_ACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0.1, 3.0, step=0.01),
+        'MIN_TRIGGERS_INACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_INACTIVE_HOURS', 0.5, 4.0, step=0.05),
+        'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 3, 60, step=1),
+        'MIN_VOLUME_MA_RATIO': trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.1, 3.0, step=0.05),
+        'MIN_VOLUME_CONSISTENCY': trial.suggest_float('MIN_VOLUME_CONSISTENCY', 0.1, 0.98, step=0.02),
+        'MAX_RSI_VOLATILITY': trial.suggest_int('MAX_RSI_VOLATILITY', 2, 30, step=1),
+        'REQUIRE_MACD_HISTOGRAM_CONFIRMATION': trial.suggest_categorical('REQUIRE_MACD_HISTOGRAM_CONFIRMATION', [False, True]),
+        'WEIGHT_RSI': trial.suggest_float('WEIGHT_RSI', 0.3, 4.0, step=0.05),
+        'WEIGHT_MACD': trial.suggest_float('WEIGHT_MACD', 0.5, 4.0, step=0.05),
+        'WEIGHT_BB': trial.suggest_float('WEIGHT_BB', 0.2, 3.0, step=0.05),
+        'WEIGHT_VWAP': trial.suggest_float('WEIGHT_VWAP', 0.3, 3.0, step=0.05),
+        'WEIGHT_VOLUME': trial.suggest_float('WEIGHT_VOLUME', 0.5, 5.0, step=0.05),
+        'WEIGHT_ADX': trial.suggest_float('WEIGHT_ADX', 0.8, 8.0, step=0.1),
+        'SHORT_BOOST_MULTIPLIER': trial.suggest_float('SHORT_BOOST_MULTIPLIER', 0.5, 3.0, step=0.02),
+        'LONG_PENALTY_IN_DOWNTREND': trial.suggest_float('LONG_PENALTY_IN_DOWNTREND', 0.01, 0.5, step=0.005),
+        'RSI_WINDOW': trial.suggest_int('RSI_WINDOW', 4, 30, step=1),
+        'MA_FAST': trial.suggest_int('MA_FAST', 4, 50, step=1),
+        'MA_SLOW': trial.suggest_int('MA_SLOW', 15, 100, step=2),
+        'ATR_WINDOW': trial.suggest_int('ATR_WINDOW', 4, 40, step=1),
+        'TRAIL_ATR_MULT': trial.suggest_float('TRAIL_ATR_MULT', 0.5, 5.0, step=0.1),
+        'TP_MIN': trial.suggest_float('TP_MIN', 0.006, 0.05, step=0.001),
+        'SL_MIN': trial.suggest_float('SL_MIN', 0.006, 0.08, step=0.001),
+        'BB_WINDOW': trial.suggest_int('BB_WINDOW', 6, 50, step=1),
+        'BB_STD_DEV': trial.suggest_float('BB_STD_DEV', 0.8, 4.0, step=0.05),
+        'MACD_FAST': trial.suggest_int('MACD_FAST', 3, 25, step=1),
+        'MACD_SLOW': trial.suggest_int('MACD_SLOW', 10, 60, step=1),
+        'MACD_SIGNAL': trial.suggest_int('MACD_SIGNAL', 2, 25, step=1),
+        'STOCH_RSI_K': trial.suggest_int('STOCH_RSI_K', 1, 15),
+        'STOCH_RSI_D': trial.suggest_int('STOCH_RSI_D', 1, 15),
+        'STOCH_RSI_LENGTH': trial.suggest_int('STOCH_RSI_LENGTH', 4, 30, step=1),
+        'STOCH_RSI_SMOOTH': trial.suggest_int('STOCH_RSI_SMOOTH', 1, 12),
+        'MIN_TP_SL_DISTANCE': trial.suggest_float('MIN_TP_SL_DISTANCE', 0.002, 0.025, step=0.0002),
+        'BB_SQUEEZE_THRESHOLD': trial.suggest_float('BB_SQUEEZE_THRESHOLD', 0.01, 0.20, step=0.002),
+        'MACD_SIGNAL_WINDOW': trial.suggest_int('MACD_SIGNAL_WINDOW', 3, 25, step=1),
+        'VOLATILITY_FILTER_STRENGTH': trial.suggest_float('VOLATILITY_FILTER_STRENGTH', 0.3, 3.0, step=0.05),
+        'TREND_STRENGTH_MULTIPLIER': trial.suggest_float('TREND_STRENGTH_MULTIPLIER', 0.5, 2.0, step=0.02),
+        'VOLUME_SPIKE_SENSITIVITY': trial.suggest_float('VOLUME_SPIKE_SENSITIVITY', 1.0, 5.0, step=0.05),
+        'DIVERGENCE_WEIGHT': trial.suggest_float('DIVERGENCE_WEIGHT', 0.2, 3.0, step=0.05),
     }
 
 def get_historical_data(symbol, hours_back=72):
@@ -192,30 +165,30 @@ def simulate_signals(df, symbol, params, active_hours_utc):
     last_signal_time = None
     
     # Извлекаем параметры
-    min_score = params['min_score']
-    min_adx = params['min_adx']
-    short_min_adx = params['short_min_adx']
-    short_min_rsi = params['short_min_rsi']
-    long_max_rsi = params['long_max_rsi']
-    rsi_min = params['rsi_min']
-    rsi_max = params['rsi_max']
-    tp_mult = params['tp_mult']
-    sl_mult = params['sl_mult']
-    min_volume = params['min_volume']
-    max_spread = params['max_spread']
-    min_bb_width = params['min_bb_width']
-    rsi_extreme_oversold = params['rsi_extreme_oversold']
-    rsi_extreme_overbought = params['rsi_extreme_overbought']
-    min_candle_body_pct = params['min_candle_body_pct']
-    max_wick_to_body_ratio = params['max_wick_to_body_ratio']
-    signal_cooldown_minutes = params['signal_cooldown_minutes']
-    min_triggers_active_hours = params['min_triggers_active_hours']
-    min_triggers_inactive_hours = params['min_triggers_inactive_hours']
-    min_volume_ma_ratio = params['min_volume_ma_ratio']
-    min_volume_consistency = params['min_volume_consistency']
-    max_rsi_volatility = params['max_rsi_volatility']
-    require_macd_histogram = params['require_macd_histogram']
-    min_tp_sl_distance = params['min_tp_sl_distance']
+    min_score = params['MIN_SCORE']
+    min_adx = params['MIN_ADX']
+    short_min_adx = params['SHORT_MIN_ADX']
+    short_min_rsi = params['SHORT_MIN_RSI']
+    long_max_rsi = params['LONG_MAX_RSI']
+    rsi_min = params['RSI_MIN']
+    rsi_max = params['RSI_MAX']
+    tp_mult = params['TP_ATR_MULT']
+    sl_mult = params['SL_ATR_MULT']
+    min_volume = params['MIN_VOLUME_USDT']
+    max_spread = params['MAX_SPREAD_PCT']
+    min_bb_width = params['MIN_BB_WIDTH']
+    rsi_extreme_oversold = params['RSI_EXTREME_OVERSOLD']
+    rsi_extreme_overbought = params['RSI_EXTREME_OVERBOUGHT']
+    min_candle_body_pct = params['MIN_CANDLE_BODY_PCT']
+    max_wick_to_body_ratio = params['MAX_WICK_TO_BODY_RATIO']
+    signal_cooldown_minutes = params['SIGNAL_COOLDOWN_MINUTES']
+    min_triggers_active_hours = params['MIN_TRIGGERS_ACTIVE_HOURS']
+    min_triggers_inactive_hours = params['MIN_TRIGGERS_INACTIVE_HOURS']
+    min_volume_ma_ratio = params['MIN_VOLUME_MA_RATIO']
+    min_volume_consistency = params['MIN_VOLUME_CONSISTENCY']
+    max_rsi_volatility = params['MAX_RSI_VOLATILITY']
+    require_macd_histogram = params['REQUIRE_MACD_HISTOGRAM_CONFIRMATION']
+    min_tp_sl_distance = params['MIN_TP_SL_DISTANCE']
     
     for i in range(MIN_15M_CANDLES, len(df_analyzed) - 20):
         current_df = df_analyzed.iloc[:i+1].copy()
@@ -608,7 +581,7 @@ def optimize_filters():
     GLOBAL_HOURS_BACK = 96
     GLOBAL_ACTIVE_HOURS_UTC = list(range(6, 24))  # 6:00 до 23:59 UTC
     GLOBAL_MIN_SIGNALS_PER_DAY = 12
-    N_TRIALS = 3000  # Увеличено для более тщательного поиска оптимальных параметров
+    N_TRIALS = 2000  # Увеличено для более тщательного поиска оптимальных параметров
     
     # Загружаем символы
     GLOBAL_ALL_SYMBOLS = get_all_symbols_from_data()

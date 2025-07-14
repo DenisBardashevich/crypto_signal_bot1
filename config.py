@@ -9,8 +9,8 @@ TIMEFRAME        = '15m'     # основной ТФ для сигналов (15
 BACKUP_TIMEFRAME = '1h'      # 1ч для подтверждения тренда
 
 # --- EMA периоды (ЛУЧШИЕ ПАРАМЕТРЫ) ---
-MA_FAST = 6  # OPTUNA 2025-01-27
-MA_SLOW = 35  # OPTUNA 2025-01-27
+MA_FAST = 6  # OPTUNA AUTO
+MA_SLOW = 35  # OPTUNA AUTO
 
 # --- Лимиты данных ---
 LIMIT = 400     # ~4 дня истории на 15м
@@ -34,26 +34,26 @@ SL_ATR_MULT = 3.3  # OPTUNA 2025-01-27
 MIN_VOLUME_USDT = 1000  # OPTUNA 2025-01-27
 
 # === RSI (ЛУЧШИЕ ПАРАМЕТРЫ) ===
-RSI_WINDOW = 27  # OPTUNA 2025-01-27
+RSI_WINDOW = 27  # OPTUNA AUTO
 RSI_OVERSOLD = RSI_MIN       
 RSI_OVERBOUGHT = RSI_MAX     
 RSI_EXTREME_OVERSOLD = 3  # OPTUNA 2025-01-27
 RSI_EXTREME_OVERBOUGHT = 79  # OPTUNA 2025-01-27
 
 # --- ATR (ЛУЧШИЕ ПАРАМЕТРЫ) ---
-ATR_WINDOW = 27  # OPTUNA 2025-01-27
-TRAIL_ATR_MULT = 0.5  # OPTUNA 2025-01-27
+ATR_WINDOW = 27  # OPTUNA AUTO
+TRAIL_ATR_MULT = 0.5  # OPTUNA AUTO
 
 # --- Bollinger Bands (ЛУЧШИЕ ПАРАМЕТРЫ) ---
-BB_WINDOW = 30  # OPTUNA 2025-01-27
-BB_STD_DEV = 3.15  # OPTUNA 2025-01-27
-BB_SQUEEZE_THRESHOLD = 0.058  # OPTUNA 2025-01-27
+BB_WINDOW = 30  # OPTUNA AUTO
+BB_STD_DEV = 3.15  # OPTUNA AUTO
+BB_SQUEEZE_THRESHOLD = 0.058  # OPTUNA AUTO
 MIN_BB_WIDTH = 0.005  # OPTUNA 2025-01-27
 
 # --- MACD (ЛУЧШИЕ ПАРАМЕТРЫ) ---
-MACD_FAST = 20  # OPTUNA 2025-01-27
-MACD_SLOW = 11  # OPTUNA 2025-01-27
-MACD_SIGNAL = 4  # OPTUNA 2025-01-27
+MACD_FAST = 20  # OPTUNA AUTO
+MACD_SLOW = 11  # OPTUNA AUTO
+MACD_SIGNAL = 4  # OPTUNA AUTO
 
 # --- VWAP ---
 USE_VWAP = True
@@ -67,9 +67,9 @@ TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
 TELEGRAM_CHAT_ID = 931346988
 
 # === ЛУЧШИЕ ПАРАМЕТРЫ TP/SL НАСТРОЙКИ ===
-TP_MIN = 0.037  # OPTUNA 2025-01-27
+TP_MIN = 0.037  # OPTUNA AUTO
 TP_MAX = 0.028  # сохраняем умеренную цель
-SL_MIN = 0.008  # OPTUNA 2025-01-27
+SL_MIN = 0.008  # OPTUNA AUTO
 SL_MAX = 0.048  # сохраняем умеренный максимальный риск
 
 # --- Минимальное расстояние между TP и SL ---
@@ -82,7 +82,7 @@ FEE_RATE = 0.0006
 MAX_SPREAD_PCT = 0.0435  # OPTUNA 2025-01-27
 VOLUME_SPIKE_MULT = 2.3      # сохраняем
 VOLUME_BOOST_THRESHOLD = 2.1 # сохраняем
-MACD_SIGNAL_WINDOW = 16  # ЛУЧШИЕ ПАРАМЕТРЫ: оптимизировано
+MACD_SIGNAL_WINDOW = 13  # OPTUNA AUTO
 
 # Минимум свечей для анализа
 MIN_15M_CANDLES = 105        # сохраняем
@@ -120,10 +120,10 @@ USE_VOLUME_FILTER = True
 USE_VOLATILITY_FILTER = True
 
 # --- ЛУЧШИЕ ПАРАМЕТРЫ Стохастический RSI ---
-STOCH_RSI_K = 9  # OPTUNA 2025-01-27
-STOCH_RSI_D = 2  # OPTUNA 2025-01-27
-STOCH_RSI_LENGTH = 22  # OPTUNA 2025-01-27
-STOCH_RSI_SMOOTH = 2  # OPTUNA 2025-01-27
+STOCH_RSI_K = 9  # OPTUNA AUTO
+STOCH_RSI_D = 2  # OPTUNA AUTO
+STOCH_RSI_LENGTH = 22  # OPTUNA AUTO
+STOCH_RSI_SMOOTH = 2  # OPTUNA AUTO
 
 # --- Дивергенции ---
 USE_DIVERGENCE_DETECTION = True
@@ -201,4 +201,4 @@ REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False  # OPTUNA 2025-01-27
 # 📊 - RSI_WINDOW: 20 (было 22)
 # 📊 - MACD_SIGNAL_WINDOW: 16 (было 8)
 # 📊 - BB_SQUEEZE_THRESHOLD: 0.095 (было 0.12)
-# 📊 - REQUIRE_MACD_HISTOGRAM_CONFIRMATION: False (было True) 
+# 📊 - REQUIRE_MACD_HISTOGRAM_CONFIRMATION: False (было True)
