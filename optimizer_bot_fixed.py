@@ -49,7 +49,7 @@ EXCHANGE = ccxt.bybit({
 })
 
 # --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ OPTUNA ---
-GLOBAL_HOURS_BACK = 96
+GLOBAL_HOURS_BACK = 200  # Загружаем ВСЕ доступные данные из CSV файлов
 GLOBAL_ACTIVE_HOURS_UTC = list(range(6, 24))
 GLOBAL_MIN_SIGNALS_PER_DAY = 12
 GLOBAL_ALL_SYMBOLS = []
@@ -77,15 +77,15 @@ def suggest_parameters(trial: optuna.Trial) -> Dict[str, Any]:
         'RSI_MAX': trial.suggest_int('RSI_MAX', 50, 99, step=1),
         'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.2, 6.0, step=0.05),
         'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 0.5, 6.0, step=0.05),
-        'MIN_VOLUME_USDT': trial.suggest_categorical('MIN_VOLUME_USDT', [100, 500, 1000, 2000]),
+        'MIN_VOLUME_USDT': trial.suggest_categorical('MIN_VOLUME_USDT', [0.001, 0.01, 0.1]),  # ИСПРАВЛЕНО: реалистичные объемы в миллионах USDT
         'MAX_SPREAD_PCT': trial.suggest_float('MAX_SPREAD_PCT', 0.001, 0.08, step=0.0005),  # (0.08-0.001)/0.0005=158
-        'MIN_BB_WIDTH': trial.suggest_float('MIN_BB_WIDTH', 0.0001, 0.0796, step=0.0005),   # (0.0796-0.0001)/0.0005=159
+        'MIN_BB_WIDTH': trial.suggest_float('MIN_BB_WIDTH', 0.0001, 0.02, step=0.0005),   # ИСПРАВЛЕНО: снижен верхний предел до реалистичного
         'RSI_EXTREME_OVERSOLD': trial.suggest_int('RSI_EXTREME_OVERSOLD', 1, 40, step=1),
         'RSI_EXTREME_OVERBOUGHT': trial.suggest_int('RSI_EXTREME_OVERBOUGHT', 70, 99, step=1),
-        'MIN_CANDLE_BODY_PCT': trial.suggest_float('MIN_CANDLE_BODY_PCT', 0.05, 0.97, step=0.01),  # (0.97-0.05)/0.01=92
+        'MIN_CANDLE_BODY_PCT': trial.suggest_float('MIN_CANDLE_BODY_PCT', 0.05, 0.8, step=0.01),  # ИСПРАВЛЕНО: снижен верхний предел
         'MAX_WICK_TO_BODY_RATIO': trial.suggest_float('MAX_WICK_TO_BODY_RATIO', 0.5, 12.0, step=0.1),
-        'MIN_TRIGGERS_ACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0.01, 4.0, step=0.01),
-        'MIN_TRIGGERS_INACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_INACTIVE_HOURS', 0.1, 6.0, step=0.05),
+        'MIN_TRIGGERS_ACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0.1, 3.0, step=0.01),  # ИСПРАВЛЕНО: снижен диапазон
+        'MIN_TRIGGERS_INACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_INACTIVE_HOURS', 0.1, 4.0, step=0.05),  # ИСПРАВЛЕНО: снижен диапазон
         'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 1, 90, step=1),
         'MIN_VOLUME_MA_RATIO': trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.01, 4.96, step=0.05),  # (4.96-0.01)/0.05=99
         'MIN_VOLUME_CONSISTENCY': trial.suggest_float('MIN_VOLUME_CONSISTENCY', 0.01, 0.97, step=0.01),  # (0.97-0.01)/0.01=96
@@ -115,7 +115,7 @@ def suggest_parameters(trial: optuna.Trial) -> Dict[str, Any]:
         'STOCH_RSI_D': trial.suggest_int('STOCH_RSI_D', 1, 20),
         'STOCH_RSI_LENGTH': trial.suggest_int('STOCH_RSI_LENGTH', 2, 40, step=1),
         'STOCH_RSI_SMOOTH': trial.suggest_int('STOCH_RSI_SMOOTH', 1, 20),
-        'MIN_TP_SL_DISTANCE': trial.suggest_float('MIN_TP_SL_DISTANCE', 0.001, 0.0498, step=0.0002),  # (0.0498-0.001)/0.0002=244
+        'MIN_TP_SL_DISTANCE': trial.suggest_float('MIN_TP_SL_DISTANCE', 0.001, 0.02, step=0.002),  # ИСПРАВЛЕНО: снижен верхний предел
         'BB_SQUEEZE_THRESHOLD': trial.suggest_float('BB_SQUEEZE_THRESHOLD', 0.005, 0.249, step=0.002),  # (0.249-0.005)/0.002=122
         'MACD_SIGNAL_WINDOW': trial.suggest_int('MACD_SIGNAL_WINDOW', 1, 40, step=1),
         'VOLATILITY_FILTER_STRENGTH': trial.suggest_float('VOLATILITY_FILTER_STRENGTH', 0.1, 5.0, step=0.05),
@@ -195,6 +195,8 @@ def simulate_signals(df, symbol, params, active_hours_utc):
     require_macd_histogram = params['REQUIRE_MACD_HISTOGRAM_CONFIRMATION']
     min_tp_sl_distance = params['MIN_TP_SL_DISTANCE']
     
+    # ПРАВИЛЬНО: Оптимизатор НЕ должен видеть последние данные (будущее)!
+    # Исключаем последние 384 свечи (4 дня) чтобы не "подглядывать"
     for i in range(MIN_15M_CANDLES, len(df_analyzed) - 384):  # 4 суток = 384 свечи
         current_df = df_analyzed.iloc[:i+1].copy()
         last = current_df.iloc[-1]
@@ -217,17 +219,17 @@ def simulate_signals(df, symbol, params, active_hours_utc):
         if last['adx'] < min_adx:
             continue
             
-        if last['rsi'] < rsi_min or last['rsi'] > rsi_max:
-            continue
+        # ИСПРАВЛЕНО: RSI диапазон НЕ блокирует сигналы!
+        # Перепроданные/перекупленные состояния должны генерировать сигналы, а не блокироваться
             
-        # RSI экстремальные значения
-        if last['rsi'] < rsi_extreme_oversold or last['rsi'] > rsi_extreme_overbought:
-            continue
+        # ИСПРАВЛЕНО: RSI экстремальные значения НЕ блокируют сигналы!
+        # Экстремальные RSI генерируют СИЛЬНЫЕ сигналы в триггерах ниже
             
-        # Объем - теперь в USDT
+        # Объем - теперь в USDT - СИНХРОНИЗАЦИЯ с ботом
         volume = last.get('volume_usdt', 1_000_000)
-        # Сравниваем напрямую с min_volume (уже в миллионах)
-        if volume < min_volume:
+        # КРИТИЧНО: Приводим к миллионам USDT для сравнения с min_volume
+        volume_millions = volume / 1_000_000  # Переводим в миллионы USDT
+        if volume_millions < min_volume:
             continue
             
         # BB width
@@ -278,6 +280,17 @@ def simulate_signals(df, symbol, params, active_hours_utc):
         buy_triggers = 0
         sell_triggers = 0
         
+        # КРИТИЧНО: RSI экстремальные значения дают СИЛЬНЫЕ триггеры (как в боте)
+        if last['rsi'] <= rsi_extreme_oversold:
+            buy_triggers += 2.0  # Очень сильный сигнал покупки
+        elif last['rsi'] < rsi_min:
+            buy_triggers += 1.0  # Сильный сигнал покупки
+            
+        if last['rsi'] >= rsi_extreme_overbought:
+            sell_triggers += 2.0  # Очень сильный сигнал продажи
+        elif last['rsi'] > rsi_max:
+            sell_triggers += 1.0  # Сильный сигнал продажи
+        
         # EMA кроссовер
         if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             buy_triggers += 1
@@ -318,9 +331,10 @@ def simulate_signals(df, symbol, params, active_hours_utc):
         min_triggers = min_triggers_active_hours if hour_utc in active_hours_utc else min_triggers_inactive_hours
         
         signal_type = None
-        if buy_triggers >= min_triggers and last['rsi'] <= rsi_max and last['rsi'] >= rsi_min:
+        # ИСПРАВЛЕНО: Учитываем экстремальные RSI как валидные для сигналов (как в боте)
+        if buy_triggers >= min_triggers and (last['rsi'] <= rsi_max or last['rsi'] <= rsi_extreme_oversold):
             signal_type = 'BUY'
-        elif sell_triggers >= min_triggers and last['rsi'] >= rsi_min and last['rsi'] <= rsi_max:
+        elif sell_triggers >= min_triggers and (last['rsi'] >= rsi_min or last['rsi'] >= rsi_extreme_overbought):
             signal_type = 'SELL'
             
         # MACD Histogram фильтр (если включен)
@@ -583,10 +597,10 @@ def optimize_filters():
     global GLOBAL_ALL_SYMBOLS, GLOBAL_HOURS_BACK, GLOBAL_ACTIVE_HOURS_UTC, GLOBAL_MIN_SIGNALS_PER_DAY
     
     # Настройки оптимизации
-    GLOBAL_HOURS_BACK = 96
+    GLOBAL_HOURS_BACK = 200  # Загружаем ВСЕ доступные данные из CSV файлов
     GLOBAL_ACTIVE_HOURS_UTC = list(range(6, 24))  # 6:00 до 23:59 UTC
-    GLOBAL_MIN_SIGNALS_PER_DAY = 12
-    N_TRIALS = 2000  # Увеличено для более тщательного поиска оптимальных параметров
+    GLOBAL_MIN_SIGNALS_PER_DAY = 5  # Снижено для тестирования
+    N_TRIALS = 100  # Уменьшено для быстрого тестирования исправленных параметров
     
     # Загружаем символы
     GLOBAL_ALL_SYMBOLS = get_all_symbols_from_data()
