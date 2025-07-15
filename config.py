@@ -1,3 +1,16 @@
+
+# =============================================================================
+# ОБНОВЛЕНО ИСПРАВЛЕННЫМ ОПТИМИЗАТОРОМ: 2025-07-16 00:54:16
+# =============================================================================
+# 🎯 РЕАЛИСТИЧНЫЕ РЕЗУЛЬТАТЫ:
+#   📊 Winrate: 68.0%
+#   💰 Мат. ожидание: 0.003%
+#   📈 TP/SL Count Ratio: 2.12
+#   ⚡ Сигналов/день: 39.0
+#   🎯 TP: 221, SL: 104
+#   💸 Чистый TP: 0.845%, Чистый SL: -1.787%
+# =============================================================================
+
 # 🛡️ СИНХРОНИЗИРОВАННЫЙ КОНФИГ С ОПТИМИЗАТОРОМ
 # Обновлено: 2025-01-27 16:00:00
 # ИСПРАВЛЕНЫ ЭКСТРЕМАЛЬНЫЕ ПАРАМЕТРЫ TP/SL
@@ -8,86 +21,86 @@ TIMEFRAME        = '15m'     # основной ТФ для сигналов (15
 BACKUP_TIMEFRAME = '1h'      # 1ч для подтверждения тренда
 
 # --- EMA периоды ---
-MA_FAST = 22  # OPTUNA FIXED
-MA_SLOW = 98  # OPTUNA FIXED
+MA_FAST = 16
+MA_SLOW = 40
 
 # --- Лимиты данных ---
 LIMIT = 400     # ~4 дня истории на 15м
 
 # === ПАРАМЕТРЫ ДЛЯ ОПТИМИЗАЦИИ ===
 MIN_COMPOSITE_SCORE = 3.0  # OPTUNA FIXED
-MIN_SCORE = 5.0  # OPTUNA FIXED
-MIN_ADX = 11  # OPTUNA FIXED
-RSI_MIN = 44  # OPTUNA FIXED
-RSI_MAX = 73  # OPTUNA FIXED
-SHORT_MIN_ADX = 5  # OPTUNA FIXED
-SHORT_MIN_RSI = 62  # OPTUNA FIXED
-LONG_MAX_RSI = 80  # OPTUNA FIXED
+MIN_SCORE = 6.5
+MIN_ADX = 30
+RSI_MIN = 40
+RSI_MAX = 70
+SHORT_MIN_ADX = 24
+SHORT_MIN_RSI = 60
+LONG_MAX_RSI = 55
 
 # === ИСПРАВЛЕННЫЕ TP/SL ===
 # КРИТИЧНО: Более реалистичные значения вместо экстремальных
-TP_ATR_MULT = 1.2  # OPTUNA FIXED
-SL_ATR_MULT = 2.0  # OPTUNA FIXED
+TP_ATR_MULT = 1.4
+SL_ATR_MULT = 2.7
 
 # === ОБЪЕМНЫЕ ФИЛЬТРЫ ===
-MIN_VOLUME_USDT = 0.001  # OPTUNA FIXED
+MIN_VOLUME_USDT = 0.01
 
 # === RSI ПАРАМЕТРЫ ===
-RSI_WINDOW = 9  # OPTUNA FIXED
+RSI_WINDOW = 24
 RSI_OVERSOLD = RSI_MIN       
 RSI_OVERBOUGHT = RSI_MAX     
-RSI_EXTREME_OVERSOLD = 26  # OPTUNA FIXED
-RSI_EXTREME_OVERBOUGHT = 80  # OPTUNA FIXED
+RSI_EXTREME_OVERSOLD = 25
+RSI_EXTREME_OVERBOUGHT = 80
 
 # --- ATR ---
-ATR_WINDOW = 51  # OPTUNA FIXED
-TRAIL_ATR_MULT = 0.3  # OPTUNA FIXED
+ATR_WINDOW = 16
+TRAIL_ATR_MULT = 2.2
 
 # --- Bollinger Bands ---
-BB_WINDOW = 75  # OPTUNA FIXED
-BB_STD_DEV = 2.0  # OPTUNA FIXED
-BB_SQUEEZE_THRESHOLD = 0.163  # OPTUNA FIXED
-MIN_BB_WIDTH = 0.0001  # OPTUNA FIXED
+BB_WINDOW = 18
+BB_STD_DEV = 2.3
+BB_SQUEEZE_THRESHOLD = 0.15000000000000002
+MIN_BB_WIDTH = 0.006
 
 # --- MACD ---
-MACD_FAST = 16  # OPTUNA FIXED
-MACD_SLOW = 73  # OPTUNA FIXED
-MACD_SIGNAL = 13  # OPTUNA FIXED
-MACD_SIGNAL_WINDOW = 39  # OPTUNA FIXED
+MACD_FAST = 18
+MACD_SLOW = 35
+MACD_SIGNAL = 10
+MACD_SIGNAL_WINDOW = 13
 
 # --- VWAP ---
 USE_VWAP = True
 VWAP_DEVIATION_THRESHOLD = 0.018
 
 # === ВРЕМЕННЫЕ ФИЛЬТРЫ ===
-SIGNAL_COOLDOWN_MINUTES = 66  # OPTUNA FIXED
-MIN_TRIGGERS_ACTIVE_HOURS = 0.42  # OPTUNA FIXED
-MIN_TRIGGERS_INACTIVE_HOURS = 3.15  # OPTUNA FIXED
+SIGNAL_COOLDOWN_MINUTES = 90
+MIN_TRIGGERS_ACTIVE_HOURS = 1.4
+MIN_TRIGGERS_INACTIVE_HOURS = 1.5
 
 # --- Telegram ---
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
 TELEGRAM_CHAT_ID = 931346988
 
 # === TP/SL НАСТРОЙКИ ===
-TP_MIN = 0.059  # OPTUNA FIXED
+TP_MIN = 0.02
 TP_MAX = 0.08   
-SL_MIN = 0.064  # OPTUNA FIXED
+SL_MIN = 0.01
 SL_MAX = 0.15   
 
 # --- Минимальное расстояние между TP и SL ---
-MIN_TP_SL_DISTANCE = 0.008  # OPTUNA FIXED
+MIN_TP_SL_DISTANCE = 0.01
 
 # --- Fee Rate ---
 FEE_RATE = 0.0006
 
 # === ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ===
-MAX_SPREAD_PCT = 0.016  # OPTUNA FIXED
-MIN_CANDLE_BODY_PCT = 0.54  # OPTUNA FIXED
-MAX_WICK_TO_BODY_RATIO = 8.0  # OPTUNA FIXED
-MIN_VOLUME_MA_RATIO = 0.41  # OPTUNA FIXED
-MIN_VOLUME_CONSISTENCY = 0.16  # OPTUNA FIXED
-MAX_RSI_VOLATILITY = 15  # OPTUNA FIXED
-REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False  # OPTUNA FIXED
+MAX_SPREAD_PCT = 0.025
+MIN_CANDLE_BODY_PCT = 0.2
+MAX_WICK_TO_BODY_RATIO = 4.0
+MIN_VOLUME_MA_RATIO = 0.8
+MIN_VOLUME_CONSISTENCY = 0.6000000000000001
+MAX_RSI_VOLATILITY = 20
+REQUIRE_MACD_HISTOGRAM_CONFIRMATION = True
 
 # --- Минимум свечей для анализа ---
 MIN_15M_CANDLES = 105
@@ -118,10 +131,10 @@ USE_VOLUME_FILTER = True
 USE_VOLATILITY_FILTER = True
 
 # --- Стохастический RSI ---
-STOCH_RSI_K = 2  # OPTUNA FIXED
-STOCH_RSI_D = 12  # OPTUNA FIXED
-STOCH_RSI_LENGTH = 39  # OPTUNA FIXED
-STOCH_RSI_SMOOTH = 5  # OPTUNA FIXED
+STOCH_RSI_K = 6
+STOCH_RSI_D = 8
+STOCH_RSI_LENGTH = 14
+STOCH_RSI_SMOOTH = 4
 
 # --- Мультитаймфреймовый анализ ---
 USE_MULTI_TIMEFRAME = True
@@ -129,16 +142,16 @@ MTF_CONFLUENCE_WEIGHT = 2.2
 
 # === СИСТЕМА СКОРИНГА ===
 # Веса компонентов системы оценки сигналов
-WEIGHT_RSI = 0.75  # OPTUNA FIXED
-WEIGHT_MACD = 1.45  # OPTUNA FIXED
-WEIGHT_BB = 1.4  # OPTUNA FIXED
-WEIGHT_VWAP = 2.4  # OPTUNA FIXED
-WEIGHT_VOLUME = 5.95  # OPTUNA FIXED
-WEIGHT_ADX = 4.9  # OPTUNA FIXED
+WEIGHT_RSI = 0.8
+WEIGHT_MACD = 2.9
+WEIGHT_BB = 1.5000000000000002
+WEIGHT_VWAP = 0.7
+WEIGHT_VOLUME = 3.8
+WEIGHT_ADX = 2.0
 
 # === СИСТЕМА ДЛЯ SHORT/LONG ===
-SHORT_BOOST_MULTIPLIER = 3.02  # OPTUNA FIXED
-LONG_PENALTY_IN_DOWNTREND = 0.681  # OPTUNA FIXED
+SHORT_BOOST_MULTIPLIER = 0.8
+LONG_PENALTY_IN_DOWNTREND = 0.9
 
 # --- Фильтр времени ---
 AVOID_WEEKEND_SIGNALS = True
