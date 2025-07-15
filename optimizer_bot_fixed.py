@@ -75,7 +75,7 @@ def suggest_parameters(trial: optuna.Trial) -> Dict[str, Any]:
         'LONG_MAX_RSI': trial.suggest_int('LONG_MAX_RSI', 40, 98, step=2),    # 98 = 40 + 29*2
         'RSI_MIN': trial.suggest_int('RSI_MIN', 1, 50, step=1),
         'RSI_MAX': trial.suggest_int('RSI_MAX', 50, 99, step=1),
-        'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.2, 6.0, step=0.05),
+        'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.1, 6.0, step=0.05),
         'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 0.5, 6.0, step=0.05),
         'MIN_VOLUME_USDT': trial.suggest_categorical('MIN_VOLUME_USDT', [0.001, 0.01, 0.1]),  # ИСПРАВЛЕНО: реалистичные объемы в миллионах USDT
         'MAX_SPREAD_PCT': trial.suggest_float('MAX_SPREAD_PCT', 0.001, 0.08, step=0.0005),  # (0.08-0.001)/0.0005=158
