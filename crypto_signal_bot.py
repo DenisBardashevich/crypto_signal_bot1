@@ -273,14 +273,16 @@ def calculate_profit():
 # ========== ФУНКЦИИ АНАЛИЗА ==========
 def get_ohlcv(symbol):
     """Получить исторические данные по монете."""
-    for attempt in range(3):  # Добавляем повторные попытки
+    for attempt in range(3):
         try:
             ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=LIMIT)
-            if not ohlcv or len(ohlcv) < MA_SLOW:  # Проверяем достаточность данных
+            if not ohlcv or len(ohlcv) < MA_SLOW:
                 logging.warning(f"{symbol}: недостаточно данных для анализа")
                 return pd.DataFrame()
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
+            # Новый столбец: объём в USDT
+            df['volume_usdt'] = df['volume'] * df['close']
             return df
         except ccxt.RateLimitExceeded as e:
             wait_time = getattr(e, 'retry_after', 1)
@@ -288,11 +290,11 @@ def get_ohlcv(symbol):
             time.sleep(wait_time)
         except ccxt.NetworkError as e:
             logging.error(f"Network error for {symbol}: {e}")
-            time.sleep(5)  # Ждём подольше при сетевой ошибке
+            time.sleep(5)
         except Exception as e:
             logging.error(f"Ошибка получения OHLCV по {symbol}: {e}")
             return pd.DataFrame()
-    return pd.DataFrame()  # Возвращаем пустой DataFrame после всех попыток
+    return pd.DataFrame()
 
 def analyze(df):
     """ОПТИМИЗИРОВАННЫЙ анализ для 15-минутных фьючерсов с современными настройками 2025."""
@@ -347,8 +349,8 @@ def analyze(df):
         
         # Объём с улучшенной фильтрацией (как в оптимизаторе)
         if USE_VOLUME_FILTER:
-            df['volume_ma'] = df['volume'].rolling(window=20).mean()
-            df['volume_ratio'] = df['volume'] / df['volume_ma']
+            df['volume_ma_usdt'] = df['volume_usdt'].rolling(window=20).mean()
+            df['volume_ratio_usdt'] = df['volume_usdt'] / df['volume_ma_usdt']
         
         # Волатильность за последние периоды
         df['volatility'] = df['close'].rolling(window=VOLATILITY_LOOKBACK).std() / df['close'].rolling(window=VOLATILITY_LOOKBACK).mean()
@@ -516,8 +518,8 @@ def evaluate_signal_strength(df, symbol, action):
         
         # 5. Объём анализ (более строгие требования)
         volume_score = 0
-        if USE_VOLUME_FILTER and 'volume_ratio' in df.columns:
-            vol_ratio = last.get('volume_ratio', 1.0)
+        if USE_VOLUME_FILTER and 'volume_ratio_usdt' in df.columns:
+            vol_ratio = last.get('volume_ratio_usdt', 1.0)
             # Увеличиваем требования к объему
             if vol_ratio >= 2.5:  # было 1.5, теперь 2.5
                 volume_score = 1.5  # было 2.0, теперь 1.5
@@ -577,7 +579,7 @@ def evaluate_signal_strength(df, symbol, action):
         
         # Проверка минимальной активности рынка
         market_activity = 1.0
-        if 'volume_ratio' in locals():
+        if 'volume_ratio_usdt' in locals():
             market_activity = min(1.0, vol_ratio * current_volatility * 25)  # было 50, теперь 25
             if market_activity < MIN_MARKET_ACTIVITY_SCORE:
                 score *= 0.8
@@ -727,8 +729,8 @@ def check_signals(df, symbol):
         signals = []
         
         # === БАЗОВЫЕ ФИЛЬТРЫ (как в оптимизаторе) ===
-        # 1. Объём торгов (как в оптимизаторе - используем данные из DataFrame)
-        volume = last.get('volume', 1_000_000)  # данные уже в миллионах USDT
+        # 1. Объём торгов (теперь в USDT)
+        volume = last.get('volume_usdt', 1_000_000)
         if volume < MIN_VOLUME_USDT:
             return []
         
@@ -787,17 +789,17 @@ def check_signals(df, symbol):
             if wick_ratio > MAX_WICK_TO_BODY_RATIO:
                 return []
         
-        # 11. Volume MA ratio фильтр (как в оптимизаторе)
-        if 'volume_ma' in df.columns:
-            volume_ma = last.get('volume_ma', 0)
+        # 11. Volume MA ratio фильтр (теперь в USDT)
+        if 'volume_ma_usdt' in df.columns:
+            volume_ma = last.get('volume_ma_usdt', 0)
             if volume_ma > 0:
-                volume_ratio = last['volume'] / volume_ma
+                volume_ratio = last['volume_usdt'] / volume_ma
                 if volume_ratio < MIN_VOLUME_MA_RATIO:
                     return []
         
-        # 12. Volume consistency фильтр (как в оптимизаторе)
+        # 12. Volume consistency фильтр (теперь в USDT)
         if len(df) >= 5:
-            recent_volumes = df['volume'].iloc[-5:]
+            recent_volumes = df['volume_usdt'].iloc[-5:]
             volume_std = recent_volumes.std()
             volume_mean = recent_volumes.mean()
             if volume_mean > 0:
