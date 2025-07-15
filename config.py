@@ -9,87 +9,88 @@ TIMEFRAME        = '15m'     # основной ТФ для сигналов (15
 BACKUP_TIMEFRAME = '1h'      # 1ч для подтверждения тренда
 
 # --- EMA периоды (ЛУЧШИЕ ПАРАМЕТРЫ) ---
-MA_FAST = 6  # OPTUNA AUTO
-MA_SLOW = 35  # OPTUNA AUTO
+MA_FAST = 80  # ЛУЧШИЕ ПАРАМЕТРЫ
+MA_SLOW = 16  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Лимиты данных ---
 LIMIT = 400     # ~4 дня истории на 15м
 
 # === OPTUNA ОПТИМАЛЬНЫЕ ФИЛЬТРЫ ===
 # Цель: 18 сигналов в день при винрейте 98.6% и профит факторе 34.08
-MIN_COMPOSITE_SCORE = 4.5  # OPTUNA 2025-01-27
-MIN_ADX = 26  # OPTUNA 2025-01-27
-RSI_MIN = 10  # OPTUNA 2025-01-27
-RSI_MAX = 69  # OPTUNA 2025-01-27
-SHORT_MIN_ADX = 5  # OPTUNA 2025-01-27
-SHORT_MIN_RSI = 50  # OPTUNA 2025-01-27
-LONG_MAX_RSI = 61  # OPTUNA 2025-01-27
+MIN_COMPOSITE_SCORE = 2.0  # OPTUNA 2025-01-27
+MIN_SCORE = 2.0  # ЛУЧШИЕ ПАРАМЕТРЫ
+MIN_ADX = 35  # ЛУЧШИЕ ПАРАМЕТРЫ
+RSI_MIN = 44  # ЛУЧШИЕ ПАРАМЕТРЫ
+RSI_MAX = 62  # ЛУЧШИЕ ПАРАМЕТРЫ
+SHORT_MIN_ADX = 3  # ЛУЧШИЕ ПАРАМЕТРЫ
+SHORT_MIN_RSI = 38  # ЛУЧШИЕ ПАРАМЕТРЫ
+LONG_MAX_RSI = 78  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # === OPTUNA ОПТИМИЗИРОВАННЫЕ TP/SL ===
 # Оптимизированные цели для лучшего профит фактора 34.08
-TP_ATR_MULT = 0.55  # OPTUNA 2025-01-27
-SL_ATR_MULT = 3.3  # OPTUNA 2025-01-27
+TP_ATR_MULT = 0.4  # ЛУЧШИЕ ПАРАМЕТРЫ
+SL_ATR_MULT = 5.800000000000001  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # === OPTUNA ОПТИМИЗИРОВАННЫЕ ОБЪЕМНЫЕ ФИЛЬТРЫ ===
-MIN_VOLUME_USDT = 1000  # OPTUNA 2025-01-27
+MIN_VOLUME_USDT = 100  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # === RSI (ЛУЧШИЕ ПАРАМЕТРЫ) ===
-RSI_WINDOW = 27  # OPTUNA AUTO
+RSI_WINDOW = 9  # ЛУЧШИЕ ПАРАМЕТРЫ
 RSI_OVERSOLD = RSI_MIN       
 RSI_OVERBOUGHT = RSI_MAX     
-RSI_EXTREME_OVERSOLD = 3  # OPTUNA 2025-01-27
-RSI_EXTREME_OVERBOUGHT = 79  # OPTUNA 2025-01-27
+RSI_EXTREME_OVERSOLD = 14  # ЛУЧШИЕ ПАРАМЕТРЫ
+RSI_EXTREME_OVERBOUGHT = 99  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- ATR (ЛУЧШИЕ ПАРАМЕТРЫ) ---
-ATR_WINDOW = 27  # OPTUNA AUTO
-TRAIL_ATR_MULT = 0.5  # OPTUNA AUTO
+ATR_WINDOW = 12  # ЛУЧШИЕ ПАРАМЕТРЫ
+TRAIL_ATR_MULT = 2.6  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Bollinger Bands (ЛУЧШИЕ ПАРАМЕТРЫ) ---
-BB_WINDOW = 30  # OPTUNA AUTO
-BB_STD_DEV = 3.15  # OPTUNA AUTO
-BB_SQUEEZE_THRESHOLD = 0.058  # OPTUNA AUTO
-MIN_BB_WIDTH = 0.005  # OPTUNA 2025-01-27
+BB_WINDOW = 43  # ЛУЧШИЕ ПАРАМЕТРЫ
+BB_STD_DEV = 3.2  # ЛУЧШИЕ ПАРАМЕТРЫ
+BB_SQUEEZE_THRESHOLD = 0.193  # ЛУЧШИЕ ПАРАМЕТРЫ
+MIN_BB_WIDTH = 0.0366  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- MACD (ЛУЧШИЕ ПАРАМЕТРЫ) ---
-MACD_FAST = 20  # OPTUNA AUTO
-MACD_SLOW = 11  # OPTUNA AUTO
-MACD_SIGNAL = 4  # OPTUNA AUTO
+MACD_FAST = 4  # ЛУЧШИЕ ПАРАМЕТРЫ
+MACD_SLOW = 54  # ЛУЧШИЕ ПАРАМЕТРЫ
+MACD_SIGNAL = 1  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- VWAP ---
 USE_VWAP = True
 VWAP_DEVIATION_THRESHOLD = 0.018  # сохраняем прежнее значение
 
 # === ЛУЧШИЕ ПАРАМЕТРЫ КУЛДАУН ===
-SIGNAL_COOLDOWN_MINUTES = 58  # OPTUNA 2025-01-27
+SIGNAL_COOLDOWN_MINUTES = 9  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Telegram ---
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
 TELEGRAM_CHAT_ID = 931346988
 
 # === ЛУЧШИЕ ПАРАМЕТРЫ TP/SL НАСТРОЙКИ ===
-TP_MIN = 0.037  # OPTUNA AUTO
-TP_MAX = 0.028  # сохраняем умеренную цель
-SL_MIN = 0.008  # OPTUNA AUTO
-SL_MAX = 0.048  # сохраняем умеренный максимальный риск
+TP_MIN = 0.034  # ЛУЧШИЕ ПАРАМЕТРЫ
+TP_MAX = 0.06  # сохраняем умеренную цель
+SL_MIN = 0.049  # ЛУЧШИЕ ПАРАМЕТРЫ
+SL_MAX = 0.07  # сохраняем умеренный максимальный риск
 
 # --- Минимальное расстояние между TP и SL ---
-MIN_TP_SL_DISTANCE = 0.004  # OPTUNA 2025-01-27
+MIN_TP_SL_DISTANCE = 0.009400000000000002  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Fee Rate ---
 FEE_RATE = 0.0006
 
 # === ЛУЧШИЕ ПАРАМЕТРЫ ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ===
-MAX_SPREAD_PCT = 0.0435  # OPTUNA 2025-01-27
+MAX_SPREAD_PCT = 0.047  # ЛУЧШИЕ ПАРАМЕТРЫ
 VOLUME_SPIKE_MULT = 2.3      # сохраняем
 VOLUME_BOOST_THRESHOLD = 2.1 # сохраняем
-MACD_SIGNAL_WINDOW = 13  # OPTUNA AUTO
+MACD_SIGNAL_WINDOW = 39  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # Минимум свечей для анализа
 MIN_15M_CANDLES = 105        # сохраняем
 
 # --- ЛУЧШИЕ ПАРАМЕТРЫ пороги триггеров ---
-MIN_TRIGGERS_ACTIVE_HOURS = 0.3  # OPTUNA 2025-01-27
-MIN_TRIGGERS_INACTIVE_HOURS = 3.45  # OPTUNA 2025-01-27
+MIN_TRIGGERS_ACTIVE_HOURS = 0.17  # ЛУЧШИЕ ПАРАМЕТРЫ
+MIN_TRIGGERS_INACTIVE_HOURS = 3.7  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Адаптивные настройки по времени ---
 ACTIVE_HOURS_UTC = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
@@ -99,7 +100,7 @@ ACTIVE_HOURS_MULTIPLIER = 0.96     # сохраняем
 VOLATILITY_LOOKBACK = 48
 HIGH_VOLATILITY_THRESHOLD = 0.034  # сохраняем
 LOW_VOLATILITY_THRESHOLD = 0.011   # сохраняем
-VOLATILITY_FILTER_STRENGTH = 1.65  # OPTUNA 2025-01-27
+VOLATILITY_FILTER_STRENGTH = 2.8000000000000003  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # При высокой волатильности
 HIGH_VOL_ADX_MIN = 26       # сохраняем
@@ -112,23 +113,23 @@ LOW_VOL_RSI_RANGE = 7       # сохраняем
 # --- Дополнительные фильтры ---
 MIN_MOMENTUM = 0.008        # сохраняем
 MAX_BB_WIDTH = 0.055        # сохраняем
-TREND_STRENGTH_MULTIPLIER = 0.7  # OPTUNA 2025-01-27
-VOLUME_SPIKE_SENSITIVITY = 2.65  # OPTUNA 2025-01-27
+TREND_STRENGTH_MULTIPLIER = 0.4  # ЛУЧШИЕ ПАРАМЕТРЫ
+VOLUME_SPIKE_SENSITIVITY = 7.25  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Фильтры ---
 USE_VOLUME_FILTER = True
 USE_VOLATILITY_FILTER = True
 
 # --- ЛУЧШИЕ ПАРАМЕТРЫ Стохастический RSI ---
-STOCH_RSI_K = 9  # OPTUNA AUTO
-STOCH_RSI_D = 2  # OPTUNA AUTO
-STOCH_RSI_LENGTH = 22  # OPTUNA AUTO
-STOCH_RSI_SMOOTH = 2  # OPTUNA AUTO
+STOCH_RSI_K = 16  # ЛУЧШИЕ ПАРАМЕТРЫ
+STOCH_RSI_D = 12  # ЛУЧШИЕ ПАРАМЕТРЫ
+STOCH_RSI_LENGTH = 10  # ЛУЧШИЕ ПАРАМЕТРЫ
+STOCH_RSI_SMOOTH = 1  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Дивергенции ---
 USE_DIVERGENCE_DETECTION = True
 DIVERGENCE_LOOKBACK = 20
-DIVERGENCE_WEIGHT = 2.1  # OPTUNA 2025-01-27
+DIVERGENCE_WEIGHT = 3.4  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Мультитаймфреймовый анализ ---
 USE_MULTI_TIMEFRAME = True
@@ -136,21 +137,21 @@ MTF_CONFLUENCE_WEIGHT = 2.2  # сохраняем
 
 # === ЛУЧШИЕ ПАРАМЕТРЫ система скоринга ===
 # Оптимизированные веса по результатам ЛУЧШИЕ ПАРАМЕТРЫ
-WEIGHT_RSI = 2.5  # OPTUNA 2025-01-27
-WEIGHT_MACD = 2.1  # OPTUNA 2025-01-27
-WEIGHT_BB = 0.3  # OPTUNA 2025-01-27
-WEIGHT_VWAP = 2.05  # OPTUNA 2025-01-27
-WEIGHT_VOLUME = 1.8  # OPTUNA 2025-01-27
-WEIGHT_ADX = 1.3  # OPTUNA 2025-01-27
+WEIGHT_RSI = 2.4000000000000004  # ЛУЧШИЕ ПАРАМЕТРЫ
+WEIGHT_MACD = 6.0  # ЛУЧШИЕ ПАРАМЕТРЫ
+WEIGHT_BB = 0.2  # ЛУЧШИЕ ПАРАМЕТРЫ
+WEIGHT_VWAP = 3.7  # ЛУЧШИЕ ПАРАМЕТРЫ
+WEIGHT_VOLUME = 3.35  # ЛУЧШИЕ ПАРАМЕТРЫ
+WEIGHT_ADX = 5.0  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # === ЛУЧШИЕ ПАРАМЕТРЫ система для SHORT/LONG ===
-SHORT_BOOST_MULTIPLIER = 2.82  # OPTUNA 2025-01-27
-LONG_PENALTY_IN_DOWNTREND = 0.145  # OPTUNA 2025-01-27
+SHORT_BOOST_MULTIPLIER = 3.66  # ЛУЧШИЕ ПАРАМЕТРЫ
+LONG_PENALTY_IN_DOWNTREND = 0.066  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- ЛУЧШИЕ ПАРАМЕТРЫ фильтры качества ---
-MIN_CANDLE_BODY_PCT = 0.19  # OPTUNA 2025-01-27
-MAX_WICK_TO_BODY_RATIO = 3.9  # OPTUNA 2025-01-27
-MIN_VOLUME_MA_RATIO = 2.95  # OPTUNA 2025-01-27
+MIN_CANDLE_BODY_PCT = 0.19  # ЛУЧШИЕ ПАРАМЕТРЫ
+MAX_WICK_TO_BODY_RATIO = 4.9  # ЛУЧШИЕ ПАРАМЕТРЫ
+MIN_VOLUME_MA_RATIO = 0.66  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # --- Фильтр времени ---
 AVOID_WEEKEND_SIGNALS = True
@@ -158,9 +159,9 @@ MIN_MARKET_ACTIVITY_SCORE = 0.85     # сохраняем
 
 # --- ЛУЧШИЕ ПАРАМЕТРЫ ДОПОЛНИТЕЛЬНЫЕ ФИЛЬТРЫ ---
 MIN_EMA_SEPARATION = 0.0008          # сохраняем
-MAX_RSI_VOLATILITY = 20  # OPTUNA 2025-01-27
-MIN_VOLUME_CONSISTENCY = 0.12  # OPTUNA 2025-01-27
-REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False  # OPTUNA 2025-01-27
+MAX_RSI_VOLATILITY = 39  # ЛУЧШИЕ ПАРАМЕТРЫ
+MIN_VOLUME_CONSISTENCY = 0.03  # ЛУЧШИЕ ПАРАМЕТРЫ
+REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False  # ЛУЧШИЕ ПАРАМЕТРЫ
 
 # 🎯 НОВЫЕ ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ПРИМЕНЕНЫ! 
 # ✅ ВСЕ ПАРАМЕТРЫ ОБНОВЛЕНЫ СОГЛАСНО OPTUNA ОПТИМИЗАЦИИ
