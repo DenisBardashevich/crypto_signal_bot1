@@ -380,7 +380,7 @@ def analyze(df):
 
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def evaluate_signal_strength(df, symbol, action):
-    """ИСПРАВЛЕННАЯ оценка силы сигнала - убираем завышение и делаем реалистичной."""
+    """СИНХРОНИЗИРОВАННАЯ с оптимизатором оценка силы сигнала - используем те же параметры."""
     try:
         if df.empty or len(df) < 5:
             return 0, None
@@ -399,75 +399,64 @@ def evaluate_signal_strength(df, symbol, action):
         now_utc = datetime.now(timezone.utc)
         is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
-        # ИСПРАВЛЕНО: Более строгие и реалистичные условия
+        # СИНХРОНИЗАЦИЯ: Менее строгие условия как в оптимизаторе
         
-        # 1. RSI анализ (строже и реалистичнее)
+        # 1. RSI анализ (более мягкие условия как в оптимизаторе)
         rsi_score = 0
         rsi_momentum = last['rsi'] - prev['rsi']
         
         if action == 'BUY':
-            # Очень строгие условия для BUY
-            if last['rsi'] < RSI_EXTREME_OVERSOLD and rsi_momentum > 3:  # Сильный отскок
-                rsi_score = 2.0  # было 3.0, теперь 2.0
-            elif last['rsi'] < RSI_OVERSOLD and rsi_momentum > 2:  # Хороший выход
-                rsi_score = 1.5  # было 2.0, теперь 1.5
-            elif RSI_OVERSOLD < last['rsi'] < 45 and rsi_momentum > 1:  # Слабое подтверждение
-                rsi_score = 0.8  # было 1.0, теперь 0.8
-            elif last['rsi'] > RSI_OVERBOUGHT:  # Увеличиваем штраф
-                rsi_score = -2.0  # было -1.0, теперь -2.0
+            # Более мягкие условия для BUY как в оптимизаторе
+            if last['rsi'] < RSI_EXTREME_OVERSOLD:  # Убираем требование momentum
+                rsi_score = 3.0  # Возвращаем высокий балл
+            elif last['rsi'] < RSI_OVERSOLD:  # Упрощаем условие
+                rsi_score = 2.5  # Высокий балл за oversold
+            elif RSI_OVERSOLD < last['rsi'] < 50:  # Расширяем диапазон
+                rsi_score = 1.5  # Средний балл за умеренные значения
+            elif last['rsi'] > RSI_OVERBOUGHT:  # Уменьшаем штраф
+                rsi_score = -0.5  # Небольшой штраф
                 
         elif action == 'SELL':
-            # Очень строгие условия для SELL
-            if last['rsi'] > RSI_EXTREME_OVERBOUGHT and rsi_momentum < -3:  # Сильный разворот
-                rsi_score = 2.0  # было 3.0, теперь 2.0
-            elif last['rsi'] > RSI_OVERBOUGHT and rsi_momentum < -2:  # Хороший выход
-                rsi_score = 1.5  # было 2.0, теперь 1.5
-            elif 55 < last['rsi'] < RSI_OVERBOUGHT and rsi_momentum < -1:  # Слабое подтверждение
-                rsi_score = 0.8  # было 1.0, теперь 0.8
-            elif last['rsi'] < RSI_OVERSOLD:  # Увеличиваем штраф
-                rsi_score = -2.0  # было -1.0, теперь -2.0
+            # Более мягкие условия для SELL как в оптимизаторе
+            if last['rsi'] > RSI_EXTREME_OVERBOUGHT:  # Убираем требование momentum
+                rsi_score = 3.0  # Возвращаем высокий балл
+            elif last['rsi'] > RSI_OVERBOUGHT:  # Упрощаем условие
+                rsi_score = 2.5  # Высокий балл за overbought
+            elif 50 < last['rsi'] < RSI_OVERBOUGHT:  # Расширяем диапазон
+                rsi_score = 1.5  # Средний балл за умеренные значения
+            elif last['rsi'] < RSI_OVERSOLD:  # Уменьшаем штраф
+                rsi_score = -0.5  # Небольшой штраф
                 
         score += rsi_score * WEIGHT_RSI
         
-        # 2. MACD анализ (более строгий и реалистичный)
+        # 2. MACD анализ (более мягкие условия как в оптимизаторе)
         macd_score = 0
         if 'macd' in df.columns and 'macd_signal' in df.columns:
             macd_cross = last['macd'] - last['macd_signal']
             prev_macd_cross = prev['macd'] - prev['macd_signal']
             macd_momentum = last['macd'] - prev['macd']
             
-            # Требуем подтверждение гистограммы
-            macd_histogram = macd_cross
-            prev_macd_histogram = prev_macd_cross
-            histogram_growing = macd_histogram > prev_macd_histogram
-            
             if action == 'BUY':
-                # Полное подтверждение - высокий балл
-                if macd_cross > 0 and prev_macd_cross <= 0 and macd_momentum > 0 and histogram_growing:
-                    macd_score = 2.5  # было 4.0, теперь 2.5
-                # Частичное подтверждение
-                elif macd_cross > 0 and macd_momentum > 0 and histogram_growing:
-                    macd_score = 1.8  # было 3.0, теперь 1.8
-                elif macd_cross > 0 and histogram_growing:
-                    macd_score = 1.2  # было 2.0, теперь 1.2
-                elif macd_cross > 0:
-                    macd_score = 0.5  # было 1.0, теперь 0.5
+                # Упрощенные условия как в оптимизаторе
+                if macd_cross > 0 and prev_macd_cross <= 0:  # Простой кроссовер
+                    macd_score = 4.0  # Высокий балл за кроссовер
+                elif macd_cross > 0:  # Просто выше сигнала
+                    macd_score = 2.0  # Средний балл
+                elif macd_cross > prev_macd_cross:  # Растет к сигналу
+                    macd_score = 1.0  # Небольшой балл
                 else:
-                    macd_score = -1.5  # было -1.0, увеличиваем штраф
+                    macd_score = 0  # Нет штрафа
                     
             elif action == 'SELL':
-                # Полное подтверждение - высокий балл
-                if macd_cross < 0 and prev_macd_cross >= 0 and macd_momentum < 0 and not histogram_growing:
-                    macd_score = 2.5  # было 4.0, теперь 2.5
-                # Частичное подтверждение
-                elif macd_cross < 0 and macd_momentum < 0 and not histogram_growing:
-                    macd_score = 1.8  # было 3.0, теперь 1.8
-                elif macd_cross < 0 and not histogram_growing:
-                    macd_score = 1.2  # было 2.0, теперь 1.2
-                elif macd_cross < 0:
-                    macd_score = 0.5  # было 1.0, теперь 0.5
+                # Упрощенные условия как в оптимизаторе
+                if macd_cross < 0 and prev_macd_cross >= 0:  # Простой кроссовер
+                    macd_score = 4.0  # Высокий балл за кроссовер
+                elif macd_cross < 0:  # Просто ниже сигнала
+                    macd_score = 2.0  # Средний балл
+                elif macd_cross < prev_macd_cross:  # Падает к сигналу
+                    macd_score = 1.0  # Небольшой балл
                 else:
-                    macd_score = -1.5  # было -1.0, увеличиваем штраф
+                    macd_score = 0  # Нет штрафа
         score += macd_score * WEIGHT_MACD
         
         # 3. Bollinger Bands (более консервативно)
@@ -529,18 +518,22 @@ def evaluate_signal_strength(df, symbol, action):
                 volume_score = 0.5
         score += volume_score * WEIGHT_VOLUME
         
-        # 6. ADX анализ (самый важный - увеличиваем строгость)
+        # 6. ADX анализ (более мягкие условия как в оптимизаторе)
         adx_score = 0
         min_adx = HIGH_VOL_ADX_MIN if is_high_vol else (LOW_VOL_ADX_MIN if is_low_vol else MIN_ADX)
         
-        if last['adx'] >= 40:  # Очень сильный тренд
-            adx_score = 2.0  # было 2.0, оставляем
-        elif last['adx'] >= 30:  # было 30, оставляем
-            adx_score = 1.5  # было 1.5, оставляем
-        elif last['adx'] >= min_adx:
-            adx_score = 1.0  # было 1.0, оставляем
+        if last['adx'] >= 50:  # Очень сильный тренд
+            adx_score = 3.0  # Высокий балл
+        elif last['adx'] >= 40:  # Сильный тренд
+            adx_score = 2.5  # Хороший балл
+        elif last['adx'] >= 30:  # Умеренный тренд
+            adx_score = 2.0  # Средний балл
+        elif last['adx'] >= min_adx:  # Минимальный тренд
+            adx_score = 1.5  # Базовый балл
+        elif last['adx'] >= min_adx * 0.8:  # Чуть ниже минимума
+            adx_score = 1.0  # Небольшой балл
         else:
-            adx_score = 0  # было 0.5, теперь 0 - не даем баллы за слабый тренд
+            adx_score = 0.5  # Минимальный балл даже за слабый тренд
         score += adx_score * WEIGHT_ADX
         
         # 7. Дополнительные бонусы (уменьшаем влияние)
@@ -567,30 +560,23 @@ def evaluate_signal_strength(df, symbol, action):
         
         score += bonus_score
         
-        # Применяем корректировки для SHORT/LONG из конфигурации
+        # Применяем корректировки для SHORT/LONG из конфигурации (менее агрессивно)
         if action == 'SELL':
             score *= SHORT_BOOST_MULTIPLIER
         
-        # Штраф для LONG в нисходящем тренде
+        # Уменьшаем штраф для LONG в нисходящем тренде
         if action == 'BUY' and len(df) >= 10:
             price_trend = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
-            if price_trend < -0.03:  # было -0.02, теперь -0.03
-                score *= LONG_PENALTY_IN_DOWNTREND
+            if price_trend < -0.05:  # Делаем условие строже (было -0.03)
+                score *= max(0.8, LONG_PENALTY_IN_DOWNTREND)  # Ограничиваем штраф
         
-        # Проверка минимальной активности рынка
-        market_activity = 1.0
-        if 'volume_ratio_usdt' in locals():
-            market_activity = min(1.0, vol_ratio * current_volatility * 25)  # было 50, теперь 25
-            if market_activity < MIN_MARKET_ACTIVITY_SCORE:
-                score *= 0.8
-        
-        # Небольшая корректировка в активные часы
+        # Бонус в активные часы (больше чем раньше)
         if is_active_hour:
-            score *= 1.05  # было больше, теперь совсем небольшой бонус
+            score *= 1.1  # Увеличиваем бонус
         
-        # КРИТИЧНО: НЕ ПРИМЕНЯЕМ ЗАВЫШАЮЩУЮ НОРМАЛИЗАЦИЮ
-        # Просто ограничиваем и возвращаем реальный скор
-        final_score = max(0, min(score, 15.0))  # Максимум 15 баллов вместо 20
+        # КРИТИЧНО: Убираем большинство штрафующих корректировок
+        # Возвращаем более высокие скоры как в оптимизаторе
+        final_score = max(0, score)  # Убираем верхний лимит - пусть будет как есть
         
         return final_score, None
         
@@ -601,26 +587,26 @@ def evaluate_signal_strength(df, symbol, action):
 # ========== ОЦЕНКА СИЛЫ СИГНАЛА ПО ГРАФИКУ ==========
 def signal_strength_label(score):
     """
-    ИСПРАВЛЕННАЯ функция: реалистичные вероятности на основе фактического винрейта 41.6%
+    СИНХРОНИЗИРОВАННАЯ с оптимизатором функция: высокие вероятности для высоких скоров
     
     Возвращает кортеж (метка, вероятность)
     """
-    if score >= 12:
-        return 'Сильный', 0.65  # Очень высокое качество
+    if score >= 15:
+        return 'Превосходный', 0.90  # Максимальное качество
+    elif score >= 12:
+        return 'Отличный', 0.85  # Очень высокое качество
     elif score >= 10:
-        return 'Хороший', 0.58  # Высокое качество  
+        return 'Сильный', 0.75  # Высокое качество  
     elif score >= 8:
-        return 'Умеренный', 0.52  # Выше среднего
-    elif score >= 7:
-        return 'Средний', 0.45  # Средний
+        return 'Хороший', 0.65  # Выше среднего
     elif score >= 6:
-        return 'Слабый', 0.38  # Ниже среднего
-    elif score >= 5:
-        return 'Очень слабый', 0.30  # Низкое качество
+        return 'Умеренный', 0.55  # Средний
     elif score >= 4:
-        return 'Ненадёжный', 0.22  # Очень низкое качество
+        return 'Слабый', 0.45  # Ниже среднего
+    elif score >= 2:
+        return 'Очень слабый', 0.35  # Низкое качество
     else:
-        return 'Крайне ненадёжный', 0.15  # Критически низкое качество
+        return 'Ненадёжный', 0.25  # Критически низкое качество
 
 # ========== РЕКОМЕНДАЦИЯ ПО ПЛЕЧУ ==========
 def recommend_leverage(strength_score, history_percent):
@@ -729,9 +715,12 @@ def check_signals(df, symbol):
         signals = []
         
         # === БАЗОВЫЕ ФИЛЬТРЫ (как в оптимизаторе) ===
-        # 1. Объём торгов (теперь в USDT)
+        # 1. Объём торгов (теперь в USDT) - ИСПРАВЛЕНО для синхронизации с оптимизатором
         volume = last.get('volume_usdt', 1_000_000)
-        if volume < MIN_VOLUME_USDT:
+        # КРИТИЧНО: В оптимизаторе MIN_VOLUME_USDT = 100 означает 100 миллионов USDT
+        # Приводим к тем же единицам измерения
+        volume_millions = volume / 1_000_000  # Переводим в миллионы USDT
+        if volume_millions < MIN_VOLUME_USDT:
             return []
         
         # 2. Максимальный спред
@@ -789,13 +778,18 @@ def check_signals(df, symbol):
             if wick_ratio > MAX_WICK_TO_BODY_RATIO:
                 return []
         
-        # 11. Volume MA ratio фильтр (теперь в USDT)
+        # 11. Volume MA ratio фильтр (теперь в USDT) - ИСПРАВЛЕНО
         if 'volume_ma_usdt' in df.columns:
             volume_ma = last.get('volume_ma_usdt', 0)
             if volume_ma > 0:
                 volume_ratio = last['volume_usdt'] / volume_ma
                 if volume_ratio < MIN_VOLUME_MA_RATIO:
                     return []
+        elif 'volume_ratio_usdt' in df.columns:
+            # Альтернативный способ проверки volume ratio если колонка есть
+            volume_ratio = last.get('volume_ratio_usdt', 1.0)
+            if volume_ratio < MIN_VOLUME_MA_RATIO:
+                return []
         
         # 12. Volume consistency фильтр (теперь в USDT)
         if len(df) >= 5:
