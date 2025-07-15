@@ -751,12 +751,13 @@ def check_signals(df, symbol):
         if last['adx'] < MIN_ADX:
             return []
         
-        if last['rsi'] < RSI_MIN or last['rsi'] > RSI_MAX:
-            return []
+        # ИСПРАВЛЕНО: RSI фильтр не должен блокировать перепроданные/перекупленные состояния
+        # Они должны генерировать сигналы, а не отфильтровываться
+        # Убираем жёсткий RSI фильтр - логика обрабатывается в триггерах
         
-        # 7. RSI экстремальные значения (как в оптимизаторе)
-        if last['rsi'] < RSI_EXTREME_OVERSOLD or last['rsi'] > RSI_EXTREME_OVERBOUGHT:
-            return []
+        # 7. RSI экстремальные значения - ИСПРАВЛЕНО! 
+        # Экстремальные значения должны генерировать СИЛЬНЫЕ сигналы, а не отфильтровываться
+        # Убираем неправильный фильтр - экстремальные RSI обрабатываются в триггерах
         
         # 8. BB width фильтр (как в оптимизаторе)
         if 'bollinger_high' in last and 'bollinger_low' in last:
@@ -811,6 +812,17 @@ def check_signals(df, symbol):
         buy_triggers = 0
         sell_triggers = 0
         
+        # КРИТИЧНО: RSI экстремальные значения дают СИЛЬНЫЕ триггеры
+        if last['rsi'] <= RSI_EXTREME_OVERSOLD:
+            buy_triggers += 2.0  # Очень сильный сигнал покупки
+        elif last['rsi'] < RSI_MIN:
+            buy_triggers += 1.0  # Сильный сигнал покупки
+            
+        if last['rsi'] >= RSI_EXTREME_OVERBOUGHT:
+            sell_triggers += 2.0  # Очень сильный сигнал продажи
+        elif last['rsi'] > RSI_MAX:
+            sell_triggers += 1.0  # Сильный сигнал продажи
+        
         # EMA кроссовер
         if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
             buy_triggers += 1
@@ -850,9 +862,10 @@ def check_signals(df, symbol):
         
         # === ОПРЕДЕЛЕНИЕ ТИПА СИГНАЛА (как в оптимизаторе) ===
         signal_type = None
-        if buy_triggers >= min_triggers and last['rsi'] <= RSI_MAX and last['rsi'] >= RSI_MIN:
+        # ИСПРАВЛЕНО: Учитываем экстремальные RSI как валидные для сигналов
+        if buy_triggers >= min_triggers and (last['rsi'] <= RSI_MAX or last['rsi'] <= RSI_EXTREME_OVERSOLD):
             signal_type = 'BUY'
-        elif sell_triggers >= min_triggers and last['rsi'] >= RSI_MIN and last['rsi'] <= RSI_MAX:
+        elif sell_triggers >= min_triggers and (last['rsi'] >= RSI_MIN or last['rsi'] >= RSI_EXTREME_OVERBOUGHT):
             signal_type = 'SELL'
         
         # MACD Histogram фильтр (как в оптимизаторе)
