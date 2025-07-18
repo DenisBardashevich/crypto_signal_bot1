@@ -1621,7 +1621,13 @@ def check_tp_sl(symbol, price, time, df):
         elif reason == 'SL':
             display_result = 'НЕУДАЧНО'  # SL всегда означает убыток
         
-        msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {display_result}"
+        # Добавляем силу сигнала в сообщение, если она есть
+        signal_strength_msg = ''
+        if score is not None:
+            strength_label, win_prob = signal_strength_label(score)
+            signal_strength_msg = f"\nСила сигнала: {strength_label} ({score:.1f})"
+        
+        msg = f"{symbol} {side.upper()} закрыт по {reason}: вход {entry:.6f}, выход {price:.6f}, P&L: {pnl_pct:+.2f}%, результат: {display_result}{signal_strength_msg}"
         asyncio.create_task(send_telegram_message(msg))
         
         # Записываем результат в портфель
