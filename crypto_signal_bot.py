@@ -396,7 +396,21 @@ def evaluate_signal_strength(df, symbol, action):
         is_low_vol = current_volatility < LOW_VOLATILITY_THRESHOLD
         
         # Адаптируем пороги в зависимости от времени
-        now_utc = datetime.now(timezone.utc)
+        # Используем время последней свечи, если доступно (важно для backtest/оптимизатора)
+        try:
+            last_time = last.get('timestamp') if isinstance(last, pd.Series) else None
+        except Exception:
+            last_time = None
+        if last_time is not None:
+            try:
+                now_utc = last_time.tz_convert(timezone.utc)
+            except Exception:
+                try:
+                    now_utc = last_time.tz_localize(timezone.utc)
+                except Exception:
+                    now_utc = datetime.now(timezone.utc)
+        else:
+            now_utc = datetime.now(timezone.utc)
         is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
         # СИНХРОНИЗАЦИЯ: Менее строгие условия как в оптимизаторе
@@ -714,18 +728,7 @@ def check_signals(df, symbol):
         prev = df.iloc[-2]
         signals = []
         
-        # === БАЗОВЫЕ ФИЛЬТРЫ (как в оптимизаторе) ===
-        # 1. Объём торгов (теперь в USDT) - ИСПРАВЛЕНО для синхронизации с оптимизатором
-        volume = last.get('volume_usdt', 1_000_000)
-        # КРИТИЧНО: В оптимизаторе MIN_VOLUME_USDT = 100 означает 100 миллионов USDT
-        # Приводим к тем же единицам измерения
-        volume_millions = volume / 1_000_000  # Переводим в миллионы USDT
-        if volume_millions < MIN_VOLUME_USDT:
-            return []
-        
-        # 2. Максимальный спред
-        if last['spread_pct'] > MAX_SPREAD_PCT:
-            return []
+        # === БАЗОВЫЕ ФИЛЬТРЫ (как в оптимизаторе, упрощённые) ===
         
         # 3. Проверка Cooldown
         if symbol not in last_signal_time:
@@ -792,21 +795,7 @@ def check_signals(df, symbol):
             if volume_ratio < MIN_VOLUME_MA_RATIO:
                 return []
         
-        # 12. Volume consistency фильтр (теперь в USDT)
-        if len(df) >= 5:
-            recent_volumes = df['volume_usdt'].iloc[-5:]
-            volume_std = recent_volumes.std()
-            volume_mean = recent_volumes.mean()
-            if volume_mean > 0:
-                volume_cv = volume_std / volume_mean
-                if volume_cv > (1 - MIN_VOLUME_CONSISTENCY):
-                    return []
-        
-        # 13. RSI volatility фильтр (как в оптимизаторе)
-        if len(df) > 1:
-            rsi_change = abs(last['rsi'] - df['rsi'].iloc[-2])
-            if rsi_change > MAX_RSI_VOLATILITY:
-                return []
+        # 12-13. Удалены лишние фильтры (консистентность объёма, волатильность RSI)
         
         # === ТРИГГЕРЫ (точно как в оптимизаторе) ===
         buy_triggers = 0
@@ -849,23 +838,17 @@ def check_signals(df, symbol):
             if bb_position >= 0.7:
                 sell_triggers += 0.5
                 
-        # VWAP
-        if USE_VWAP and 'vwap' in df.columns:
-            vwap_dev = last.get('vwap_deviation', 0)
-            if vwap_dev <= 0 and vwap_dev >= -VWAP_DEVIATION_THRESHOLD * 2:
-                buy_triggers += 0.3
-            if vwap_dev >= 0 and vwap_dev <= VWAP_DEVIATION_THRESHOLD * 2:
-                sell_triggers += 0.3
+        # VWAP триггеры отключены (упрощение и снижение шума)
                 
         # Минимальные триггеры (как в оптимизаторе)
         min_triggers = MIN_TRIGGERS_ACTIVE_HOURS if hour_utc in ACTIVE_HOURS_UTC else MIN_TRIGGERS_INACTIVE_HOURS
         
         # === ОПРЕДЕЛЕНИЕ ТИПА СИГНАЛА (как в оптимизаторе) ===
         signal_type = None
-        # ИСПРАВЛЕНО: Учитываем экстремальные RSI как валидные для сигналов
-        if buy_triggers >= min_triggers and (last['rsi'] <= RSI_MAX or last['rsi'] <= RSI_EXTREME_OVERSOLD):
+        # ИСПРАВЛЕНО: Опираемся на количество триггеров; ограничения по RSI применяются ниже
+        if buy_triggers >= min_triggers:
             signal_type = 'BUY'
-        elif sell_triggers >= min_triggers and (last['rsi'] >= RSI_MIN or last['rsi'] >= RSI_EXTREME_OVERBOUGHT):
+        elif sell_triggers >= min_triggers:
             signal_type = 'SELL'
         
         # MACD Histogram фильтр (как в оптимизаторе)
@@ -1239,10 +1222,8 @@ async def process_symbol(symbol):
             # calculate_tp_sl вызывается уже в check_tp_sl при необходимости
             pass
         else:
-            # Для новых позиций устанавливаем минимальные значения
-            if symbol not in open_trades:
-                tp_pct, sl_pct = TP_MIN, SL_MIN
-                adaptive_targets[symbol] = {'tp': tp_pct, 'sl': sl_pct}
+            # Не записываем цели до появления реального сигнала/позиции
+            pass
         
         # Проверка на открытые сделки (перенесено в monitor_open_positions)
         
@@ -1511,13 +1492,9 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
         tp_pct = max((atr * tp_mult) / price, TP_MIN)
         sl_pct = max((atr * sl_mult) / price, SL_MIN)
         
-        # КРИТИЧНО: Обеспечиваем консервативное соотношение R:R
-        min_rr = 1.8  # было 1.3, теперь 1.8 - более консервативно
-        if tp_pct / sl_pct < min_rr:
-            # Уменьшаем стоп для достижения минимального R:R
-            sl_pct = tp_pct / min_rr
-            # Но не меньше минимального значения
-            sl_pct = max(sl_pct, SL_MIN)
+        # Убираем принудительное навязывание минимального R:R
+        # Оптимизатор подбирает TP_ATR_MULT/SL_ATR_MULT и Мин. дистанции,
+        # поэтому не изменяем SL искусственно здесь.
         
         # Ограничиваем значениями из конфига (как для TP, так и для SL)
         tp_pct = max(tp_pct, TP_MIN)  # Не меньше минимального TP
