@@ -388,6 +388,21 @@ def evaluate_signal_strength(df, symbol, action):
         score = 0
         last = df.iloc[-1]
         prev = df.iloc[-2]
+        # Время последней свечи (UTC) для синхронизации с оптимизатором
+        try:
+            last_time = last.get('timestamp') if isinstance(last, pd.Series) else None
+        except Exception:
+            last_time = None
+        if last_time is not None:
+            try:
+                current_time_utc = last_time.tz_convert(timezone.utc)
+            except Exception:
+                try:
+                    current_time_utc = last_time.tz_localize(timezone.utc)
+                except Exception:
+                    current_time_utc = datetime.now(timezone.utc)
+        else:
+            current_time_utc = datetime.now(timezone.utc)
         prev2 = df.iloc[-3] if len(df) > 3 else prev
         
         # Определяем текущую волатильность для адаптации
@@ -727,18 +742,33 @@ def check_signals(df, symbol):
         last = df.iloc[-1]
         prev = df.iloc[-2]
         signals = []
+
+        # Синхронизация времени: используем метку времени последней свечи (UTC)
+        try:
+            last_time = last.get('timestamp') if isinstance(last, pd.Series) else None
+        except Exception:
+            last_time = None
+        if last_time is not None:
+            try:
+                current_time_utc = last_time.tz_convert(timezone.utc)
+            except Exception:
+                try:
+                    current_time_utc = last_time.tz_localize(timezone.utc)
+                except Exception:
+                    current_time_utc = datetime.now(timezone.utc)
+        else:
+            current_time_utc = datetime.now(timezone.utc)
         
         # === БАЗОВЫЕ ФИЛЬТРЫ (как в оптимизаторе, упрощённые) ===
         
         # 3. Проверка Cooldown
         if symbol not in last_signal_time:
-            last_signal_time[symbol] = datetime.now(timezone.utc) - timedelta(minutes=SIGNAL_COOLDOWN_MINUTES + 1)
+            last_signal_time[symbol] = current_time_utc - timedelta(minutes=SIGNAL_COOLDOWN_MINUTES + 1)
         
         if last_signal_time[symbol].tzinfo is None:
             last_signal_time[symbol] = last_signal_time[symbol].replace(tzinfo=timezone.utc)
         
-        now = datetime.now(timezone.utc)
-        if now - last_signal_time[symbol] < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES):
+        if current_time_utc - last_signal_time[symbol] < timedelta(minutes=SIGNAL_COOLDOWN_MINUTES):
             return []
         
         # 4. Проверяем открытые позиции
@@ -746,7 +776,7 @@ def check_signals(df, symbol):
             return []
         
         # 5. Временные фильтры (как в оптимизаторе)
-        hour_utc = now.hour
+        hour_utc = current_time_utc.hour
         if hour_utc not in ACTIVE_HOURS_UTC:
             return []
         
@@ -924,10 +954,10 @@ def check_signals(df, symbol):
                     signals.append(signal)
                     
                     # Открываем виртуальную сделку
-                    open_trade(symbol, last['close'], now, side, last['atr'], score)
-                    record_trade(symbol, 'OPEN', last['close'], now, side, score)
+                    open_trade(symbol, last['close'], current_time_utc, side, last['atr'], score)
+                    record_trade(symbol, 'OPEN', last['close'], current_time_utc, side, score)
                     
-                    last_signal_time[symbol] = now
+                    last_signal_time[symbol] = current_time_utc
                     
             except Exception as e:
                 logging.error(f"Ошибка оценки сигнала {symbol}: {e}")
@@ -1454,71 +1484,43 @@ async def main():
 
 def calculate_tp_sl(df, price, atr, direction='LONG'):
     """
-    ИСПРАВЛЕННЫЙ расчет TP/SL для повышения винрейта.
-    Более консервативные цели и широкие стопы.
+    Расчет TP/SL в стиле оптимизатора: ATR-множители + минимальные проценты из конфигурации.
+    Без адаптаций по ADX/волатильности и без ограничений TP_MAX/SL_MAX.
+    Возвращает абсолютные цены TP и SL.
     """
     try:
-        last = df.iloc[-1]
-        adx = last.get('adx', 20)
-        
-        # ИСПРАВЛЕНО: Более консервативные базовые множители
-        base_tp_mult = TP_ATR_MULT  # 0.8 (консервативно)
-        base_sl_mult = SL_ATR_MULT  # 3.0 (широко)
-        
-        # Адаптация на основе силы тренда (менее агрессивная)
-        if adx > 35:  # Очень сильный тренд
-            tp_mult = base_tp_mult * 1.2  # Можно взять чуть больше
-            sl_mult = base_sl_mult * 0.9  # Можно сузить стоп
-        elif adx > 25:  # Умеренный тренд
-            tp_mult = base_tp_mult  # Базовые значения
-            sl_mult = base_sl_mult
-        else:  # Слабый тренд
-            tp_mult = base_tp_mult * 0.8  # Более скромные цели
-            sl_mult = base_sl_mult * 1.1  # Более широкий стоп
-        
-        # Адаптация к волатильности (более консервативная)
-        if 'volatility' in last:
-            vol = last['volatility']
-            if vol > HIGH_VOLATILITY_THRESHOLD:
-                # Высокая волатильность - увеличиваем стопы и уменьшаем цели
-                tp_mult *= 0.9
-                sl_mult *= 1.2
-            elif vol < LOW_VOLATILITY_THRESHOLD:
-                # Низкая волатильность - можно быть чуть агрессивнее
-                tp_mult *= 1.1
-                sl_mult *= 0.95
-        
-        # Базовый расчет в процентах от цены
-        tp_pct = max((atr * tp_mult) / price, TP_MIN)
-        sl_pct = max((atr * sl_mult) / price, SL_MIN)
-        
-        # Убираем принудительное навязывание минимального R:R
-        # Оптимизатор подбирает TP_ATR_MULT/SL_ATR_MULT и Мин. дистанции,
-        # поэтому не изменяем SL искусственно здесь.
-        
-        # Ограничиваем значениями из конфига (как для TP, так и для SL)
-        tp_pct = max(tp_pct, TP_MIN)  # Не меньше минимального TP
-        tp_pct = min(tp_pct, TP_MAX)  # Не больше максимального TP
-        sl_pct = max(sl_pct, SL_MIN)  # Не меньше минимального SL
-        sl_pct = min(sl_pct, SL_MAX)  # Не больше максимального SL
-        
-        # Рассчитываем абсолютные цены
+        tp_mult = TP_ATR_MULT
+        sl_mult = SL_ATR_MULT
+
+        # Начальные уровни по ATR
         if direction.upper() == 'LONG':
-            tp_price = price * (1 + tp_pct)
-            sl_price = price * (1 - sl_pct)
-        else:  # SHORT
-            tp_price = price * (1 - tp_pct)
-            sl_price = price * (1 + sl_pct)
-        
+            tp_price_raw = price + atr * tp_mult
+            sl_price_raw = price - atr * sl_mult
+        else:
+            tp_price_raw = price - atr * tp_mult
+            sl_price_raw = price + atr * sl_mult
+
+        # Применяем минимальные проценты в терминах цены
+        def enforce_min_levels(entry, tp_price, sl_price, side):
+            if side == 'LONG':
+                tp_eff = max((tp_price - entry) / entry, TP_MIN)
+                sl_eff = max((entry - sl_price) / entry, SL_MIN)
+                return entry * (1 + tp_eff), entry * (1 - sl_eff)
+            else:
+                tp_eff = max((entry - tp_price) / entry, TP_MIN)
+                sl_eff = max((sl_price - entry) / entry, SL_MIN)
+                return entry * (1 - tp_eff), entry * (1 + sl_eff)
+
+        tp_price, sl_price = enforce_min_levels(price, tp_price_raw, sl_price_raw, direction.upper())
         return tp_price, sl_price
-        
+
     except Exception as e:
         logging.error(f"Ошибка в calculate_tp_sl: {e}")
-        # Возвращаем безопасные консервативные значения
+        # Возвращаем консервативные значения по конфигу
         if direction.upper() == 'LONG':
-            return price * 1.008, price * 0.975  # +0.8% TP, -2.5% SL
+            return price * (1 + max(TP_MIN, 0.008)), price * (1 - max(SL_MIN, 0.025))
         else:
-            return price * 0.992, price * 1.025  # -0.8% TP, +2.5% SL
+            return price * (1 - max(TP_MIN, 0.008)), price * (1 + max(SL_MIN, 0.025))
 
 def check_tp_sl(symbol, price, time, df):
     global adaptive_targets
