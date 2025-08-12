@@ -26,47 +26,42 @@ EXCHANGE = ccxt.bybit({
     }
 })
 
-# ФИНАЛЬНО ОПТИМИЗИРОВАННЫЙ список (смешанный: топовые + проверенные + новые эффективные)
+# РЕКОМЕНДОВАННЫЙ СПИСОК МОНЕТ (расширенный аудит, лучшие 34)
 TOP_SYMBOLS = [
-    # ⭐ ПРОВЕРЕННЫЕ ПОБЕДИТЕЛИ (высокий винрейт)
-    'DOGE/USDT:USDT',  # 100% винрейт, +1.36% P&L
-    'YFI/USDT:USDT',   # 100% винрейт, +1.12% P&L
-    'RUNE/USDT:USDT',  # 100% винрейт, +1.40% P&L (новый!)
-    'TRX/USDT:USDT',   # 66.7% винрейт, +0.34% P&L
-    'TON/USDT:USDT',   # 66.7% винрейт, +0.41% P&L (новый!)
-    'SUI/USDT:USDT',   # 50% винрейт, +0.69% P&L
-    'SEI/USDT:USDT',   # 50% винрейт, +0.42% P&L
-    'VET/USDT:USDT',   # 50% винрейт, +0.36% P&L (новый!)
-    
-    # 💎 ТОПОВЫЕ ЛИКВИДНЫЕ (основа портфеля - могут активироваться)
-    'BTC/USDT:USDT', 'ETH/USDT:USDT', 'BNB/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT',
-    'ADA/USDT:USDT', 'AVAX/USDT:USDT', 'MATIC/USDT:USDT',
-    
-    # 🎲 МЕМКОИНЫ (высокая волатильность - потенциал для сигналов)
-    'SHIB/USDT:USDT', 'PEPE/USDT:USDT', '1000PEPE/USDT:USDT', 'FLOKI/USDT:USDT', 
-    'BONK/USDT:USDT', 'WIF/USDT:USDT',
-    
-    # 🔥 АКТИВНЫЕ АЛЬТКОИНЫ (средняя волатильность)
-    'UNI/USDT:USDT', 'AAVE/USDT:USDT', 'MKR/USDT:USDT', 'LDO/USDT:USDT',
-    'ARB/USDT:USDT', 'OP/USDT:USDT', 'LRC/USDT:USDT', 
-    
-    # 🎮 GAMING И NFT (периодически активные)
-    'SAND/USDT:USDT', 'MANA/USDT:USDT', 'AXS/USDT:USDT', 'ENJ/USDT:USDT',
-    
-    # 🚀 AI И TECH (перспективные)
-    'RNDR/USDT:USDT', 'FET/USDT:USDT', 'INJ/USDT:USDT',
-    
-    # 📈 КЛАССИЧЕСКИЕ АЛЬТЫ (стабильность)
-    'LTC/USDT:USDT', 'BCH/USDT:USDT', 'ETC/USDT:USDT',
-    
-    # 🆕 НОВЫЕ ПЕРСПЕКТИВНЫЕ (2024-2025)
-    'JUP/USDT:USDT', 'PYTH/USDT:USDT', 'TIA/USDT:USDT', 'ALT/USDT:USDT',
-    'PIXEL/USDT:USDT', 'PORTAL/USDT:USDT', 'STX/USDT:USDT', 'ORDI/USDT:USDT',
-    
-    # 💼 ДОПОЛНИТЕЛЬНЫЕ (для диверсификации)
-    'THETA/USDT:USDT', 'FIL/USDT:USDT', 'COMP/USDT:USDT', 'SUSHI/USDT:USDT',
-    'CAKE/USDT:USDT', 'CRV/USDT:USDT', 'IMX/USDT:USDT', 'ALICE/USDT:USDT',
-    'GMT/USDT:USDT', 'MAVIA/USDT:USDT', 'JTO/USDT:USDT', 'STRK/USDT:USDT'
+    '1000PEPE/USDT:USDT',
+    'ADA/USDT:USDT',
+    'ALT/USDT:USDT',
+    'AXS/USDT:USDT',
+    'BCH/USDT:USDT',
+    'BNB/USDT:USDT',
+    'COMP/USDT:USDT',
+    'CRV/USDT:USDT',
+    'INJ/USDT:USDT',
+    'JTO/USDT:USDT',
+    'LRC/USDT:USDT',
+    'LTC/USDT:USDT',
+    'MANA/USDT:USDT',
+    'MAVIA/USDT:USDT',
+    'OP/USDT:USDT',
+    'ORDI/USDT:USDT',
+    'PIXEL/USDT:USDT',
+    'PORTAL/USDT:USDT',
+    'SEI/USDT:USDT',
+    'SOL/USDT:USDT',
+    'STX/USDT:USDT',
+    'SUSHI/USDT:USDT',
+    'THETA/USDT:USDT',
+    'TIA/USDT:USDT',
+    'TON/USDT:USDT',
+    'UNI/USDT:USDT',
+    'VET/USDT:USDT',
+    'WIF/USDT:USDT',
+    'ETC/USDT:USDT',
+    'IMX/USDT:USDT',
+    'SAND/USDT:USDT',
+    'SUI/USDT:USDT',
+    'ARB/USDT:USDT',
+    'ENJ/USDT:USDT'
 ]
 markets = EXCHANGE.load_markets()
 # Фильтруем только те пары, которые есть на фьючерсах (swap) и активны
@@ -792,25 +787,7 @@ def check_signals(df, symbol):
         # Экстремальные значения должны генерировать СИЛЬНЫЕ сигналы, а не отфильтровываться
         # Убираем неправильный фильтр - экстремальные RSI обрабатываются в триггерах
         
-        # 8. BB width фильтр (как в оптимизаторе)
-        if 'bollinger_high' in last and 'bollinger_low' in last:
-            bb_width = (last['bollinger_high'] - last['bollinger_low']) / last['close']
-            if bb_width < MIN_BB_WIDTH:
-                return []
-        
-        # 9. Candle body фильтр (как в оптимизаторе)
-        candle_body = abs(last['close'] - last['open'])
-        candle_range = last['high'] - last['low']
-        if candle_range > 0:
-            body_pct = candle_body / candle_range
-            if body_pct < MIN_CANDLE_BODY_PCT:
-                return []
-        
-        # 10. Wick ratio фильтр (как в оптимизаторе)
-        if candle_body > 0:
-            wick_ratio = candle_range / candle_body
-            if wick_ratio > MAX_WICK_TO_BODY_RATIO:
-                return []
+        # 8-10. Убираем жёсткие фильтры по BB width, телу свечи и wick ratio — оставим их влияние через скоринг
         
         # 11. Volume MA ratio фильтр (теперь в USDT) - ИСПРАВЛЕНО
         if 'volume_ma_usdt' in df.columns:
@@ -910,10 +887,7 @@ def check_signals(df, symbol):
                     direction = 'SHORT' if signal_type == 'SELL' else 'LONG'
                     tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], direction)
                     
-                    # Проверка минимального расстояния между TP и SL (как в оптимизаторе)
-                    tp_sl_distance = abs(tp_price - sl_price) / last['close']
-                    if tp_sl_distance < MIN_TP_SL_DISTANCE:
-                        return []
+                    # Удаляем проверку минимальной дистанции TP/SL — минимальные TP/SL уже заданы
                     
                     # Рекомендуем плечо
                     leverage = recommend_leverage(score, win_prob * 100)
