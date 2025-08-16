@@ -6,35 +6,30 @@
 # ⚡ РЕЗУЛЬТАТ: лучшие параметры на текущем рынке
 # =============================================================================
 
-# 🛡️ ОПТИМИЗИРОВАН С API ДАННЫМИ (КАК В РЕАЛЬНОМ БОТЕ)
-# Обновлено: 2025-08-16 после синхронизации с API биржи
-# АНТИ-ОВЕРФИТТИНГ ПАРАМЕТРЫ - БОЛЕЕ НАДЕЖНЫЕ
-
 # === ОСНОВНЫЕ НАСТРОЙКИ ===
-TIMEFRAME        = '15m'     # основной ТФ для сигналов (15 минут)
-BACKUP_TIMEFRAME = '1h'      # 1ч для подтверждения тренда
+TIMEFRAME        = '15m'     
+BACKUP_TIMEFRAME = '1h'      
 
 # --- EMA периоды ---
 MA_FAST = 27
 MA_SLOW = 146
 
-
 # --- Лимиты данных ---
-LIMIT = 400     # ~4 дня истории на 15м
+LIMIT = 400     
 
 # === ПАРАМЕТРЫ ===
-MIN_COMPOSITE_SCORE = 5.5  
-MIN_SCORE = 5.5  
-MIN_ADX = 10
-RSI_MIN = 20
-RSI_MAX = 75
-SHORT_MIN_ADX = 17
-SHORT_MIN_RSI = 90
-LONG_MAX_RSI = 50
+MIN_COMPOSITE_SCORE = 2.0  
+MIN_SCORE = 2.0  
+MIN_ADX = 11
+RSI_MIN = 45
+RSI_MAX = 65
+SHORT_MIN_ADX = 19
+SHORT_MIN_RSI = 45
+LONG_MAX_RSI = 10
 
 # === TP/SL ===
-TP_ATR_MULT = 4.0
-SL_ATR_MULT = 5.9
+TP_ATR_MULT = 1.7
+SL_ATR_MULT = 3.7
 
 # === ОБЪЕМНЫЕ ФИЛЬТРЫ ===
 MIN_VOLUME_USDT = 0.0001  
@@ -67,18 +62,18 @@ USE_VWAP = True
 VWAP_DEVIATION_THRESHOLD = 0.5  
 
 # === ВРЕМЕННЫЕ ФИЛЬТРЫ ===
-SIGNAL_COOLDOWN_MINUTES = 55
-MIN_TRIGGERS_ACTIVE_HOURS = 2.2
-MIN_TRIGGERS_INACTIVE_HOURS = 0.7
+SIGNAL_COOLDOWN_MINUTES = 15
+MIN_TRIGGERS_ACTIVE_HOURS = 1.9
+MIN_TRIGGERS_INACTIVE_HOURS = 2.5
 
 # --- Telegram ---
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
 TELEGRAM_CHAT_ID = 931346988
 
 # === TP/SL НАСТРОЙКИ ===
-TP_MIN = 0.028
+TP_MIN = 0.016
 TP_MAX = 0.08   
-SL_MIN = 0.03
+SL_MIN = 0.034
 SL_MAX = 0.15   
 
 # --- Минимальное расстояние между TP и SL ---
@@ -91,7 +86,7 @@ FEE_RATE = 0.0006
 MAX_SPREAD_PCT = 0.035    
 MIN_CANDLE_BODY_PCT = 0.03  
 MAX_WICK_TO_BODY_RATIO = 15.0  
-MIN_VOLUME_MA_RATIO = 1.0    
+MIN_VOLUME_MA_RATIO = 0.9    
 MIN_VOLUME_CONSISTENCY = 0.3  
 MAX_RSI_VOLATILITY = 30      
 REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False  
@@ -119,13 +114,13 @@ STOCH_RSI_LENGTH = 4
 STOCH_RSI_SMOOTH = 15
 
 # === СИСТЕМА СКОРИНГА ===
-WEIGHT_RSI = 3.0
-WEIGHT_MACD = 3.5
-WEIGHT_BB = 6.0
-WEIGHT_VWAP = 3.0
-WEIGHT_VOLUME = 3.0
-WEIGHT_ADX = 6.5
+WEIGHT_RSI = 8.0
+WEIGHT_MACD = 7.5
+WEIGHT_BB = 1.0
+WEIGHT_VWAP = 10.0
+WEIGHT_VOLUME = 2.5
+WEIGHT_ADX = 8.0
 
 # === СИСТЕМА ДЛЯ SHORT/LONG ===
-SHORT_BOOST_MULTIPLIER = 0.5
-LONG_PENALTY_IN_DOWNTREND = 0.65
+SHORT_BOOST_MULTIPLIER = 0.9
+LONG_PENALTY_IN_DOWNTREND = 0.85
