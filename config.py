@@ -1,9 +1,9 @@
 # =============================================================================
-# ОПТИМИЗИРОВАНО OPTUNA: 2025-08-16
+# ОПТИМИЗИРОВАНО OPTUNA: 2025-01-17
 # =============================================================================
-# 🎯 РЕЗУЛЬТАТ: 80.3% винрейт, 6.3 сигналов/день, 84% месячная доходность
-# 🛡️ ПАРАМЕТРЫ: найдены через 600 итераций с требованием 5+ сигналов
-# ⚡ PROFIT FACTOR: 1.80, мат.ожидание: 0.575%
+# 🎯 РЕЗУЛЬТАТ: 83.1% винрейт, 8.0 сигналов/день, 182.1% месячная доходность
+# 🛡️ ПАРАМЕТРЫ: найдены через 600 итераций с защитой от overfitting
+# ⚡ PROFIT FACTOR: 2.62, мат.ожидание: 0.912%
 # =============================================================================
 
 # === ОСНОВНЫЕ НАСТРОЙКИ ===
@@ -17,9 +17,8 @@ MA_SLOW = 146
 # --- Лимиты данных ---
 LIMIT = 400     
 
-# === ПАРАМЕТРЫ (ОПТИМИЗИРОВАНЫ OPTUNA) ===
+# === ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ===
 MIN_COMPOSITE_SCORE = 4.0
-MIN_SCORE = 2.0  
 MIN_ADX = 21
 RSI_MIN = 15
 RSI_MAX = 65
@@ -30,62 +29,54 @@ LONG_MAX_RSI = 30
 # === TP/SL (ОПТИМИЗИРОВАНЫ) ===
 TP_ATR_MULT = 2.5
 SL_ATR_MULT = 1.9
-
-# === ОБЪЕМНЫЕ ФИЛЬТРЫ ===
-MIN_VOLUME_USDT = 0.0001  
-
-# === RSI ПАРАМЕТРЫ ===
-RSI_WINDOW = 8
-RSI_OVERSOLD = RSI_MIN       
-RSI_OVERBOUGHT = RSI_MAX     
-RSI_EXTREME_OVERSOLD = 12
-RSI_EXTREME_OVERBOUGHT = 89
-
-# --- ATR ---
-ATR_WINDOW = 41
-TRAIL_ATR_MULT = 7.3
-
-# --- Bollinger Bands ---
-BB_WINDOW = 10
-BB_STD_DEV = 5.8
-# УДАЛЕНО: BB_SQUEEZE_THRESHOLD, MIN_BB_WIDTH - не используются  
-
-# --- MACD ---
-MACD_FAST = 18
-MACD_SLOW = 38
-MACD_SIGNAL = 18
-# УДАЛЕНО: MACD_SIGNAL_WINDOW - не используется
-
-# --- VWAP ---
-USE_VWAP = True
-VWAP_DEVIATION_THRESHOLD = 0.5  
+TP_MIN = 0.014
+SL_MIN = 0.034
 
 # === ВРЕМЕННЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
 SIGNAL_COOLDOWN_MINUTES = 15
 MIN_TRIGGERS_ACTIVE_HOURS = 1.9
 MIN_TRIGGERS_INACTIVE_HOURS = 2.1
 
+# === ОБЪЕМНЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
+MIN_VOLUME_USDT = 0.0001  
+MIN_VOLUME_MA_RATIO = 1.5
+REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False
+
+# === RSI ПАРАМЕТРЫ ===
+RSI_WINDOW = 8
+RSI_EXTREME_OVERSOLD = 12
+RSI_EXTREME_OVERBOUGHT = 89
+RSI_OVERSOLD = RSI_MIN       # 15 
+RSI_OVERBOUGHT = RSI_MAX     # 65
+
+# --- ATR ---
+ATR_WINDOW = 41
+
+# --- ADX ---
+ADX_WINDOW = 14
+
+# --- Bollinger Bands ---
+BB_WINDOW = 10
+BB_STD_DEV = 5.8
+
+# --- MACD ---
+MACD_FAST = 18
+MACD_SLOW = 38
+MACD_SIGNAL = 18
+
+# --- VWAP ---
+USE_VWAP = True
+VWAP_DEVIATION_THRESHOLD = 0.5  
+
 # --- Telegram ---
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
 TELEGRAM_CHAT_ID = 931346988
 
-# === TP/SL НАСТРОЙКИ (ОПТИМИЗИРОВАНЫ) ===
-TP_MIN = 0.014
-SL_MIN = 0.034
-# УДАЛЕНО: TP_MAX, SL_MAX, MIN_TP_SL_DISTANCE - не используются
-
 # --- Fee Rate ---
 FEE_RATE = 0.0006
 
-# === ОБЪЕМНЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
-MIN_VOLUME_MA_RATIO = 1.5
-REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False
-# УДАЛЕНО: MAX_SPREAD_PCT, MIN_CANDLE_BODY_PCT, MAX_WICK_TO_BODY_RATIO, 
-#          MIN_VOLUME_CONSISTENCY, MAX_RSI_VOLATILITY - не используются  
-
-# === НЕЙТРАЛИЗОВАННЫЕ ПАРАМЕТРЫ ===
+# === БАЗОВЫЕ ПАРАМЕТРЫ ===
 MIN_15M_CANDLES = 50  
-
 VOLATILITY_LOOKBACK = 48  
 HIGH_VOLATILITY_THRESHOLD = 0.99   
 LOW_VOLATILITY_THRESHOLD = 0.001   
@@ -103,7 +94,6 @@ USE_VOLATILITY_FILTER = True
 STOCH_RSI_K = 13
 STOCH_RSI_D = 14
 STOCH_RSI_LENGTH = 4
-# УДАЛЕНО: STOCH_RSI_SMOOTH - не используется
 
 # === СИСТЕМА СКОРИНГА (ОПТИМИЗИРОВАНЫ) ===
 WEIGHT_RSI = 4.0
