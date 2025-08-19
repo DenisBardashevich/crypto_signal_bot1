@@ -483,81 +483,83 @@ def evaluate_signal_strength(df, symbol, action):
                     macd_score = 0  # Нет штрафа
         score += macd_score * WEIGHT_MACD
         
-        # 3. Bollinger Bands (более консервативно)
+        # 3. Bollinger Bands (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         bb_score = 0
         if 'bollinger_low' in df.columns and 'bollinger_high' in df.columns:
             close = last['close']
             bb_position = (close - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
             
             if action == 'BUY':
-                # Более строгие условия
-                if bb_position <= 0.05:  # Очень близко к нижней полосе
-                    bb_score = 1.5  # было 2.0, теперь 1.5
-                elif bb_position <= 0.15:  # было 0.2
-                    bb_score = 1.0  # было 1.5, теперь 1.0
-                elif bb_position <= 0.3:  # было 0.4
-                    bb_score = 0.5  # было 1.0, теперь 0.5
+                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+                if bb_position <= 0.05:  # как в оптимизаторе
+                    bb_score = 1.5
+                elif bb_position <= 0.15:  # как в оптимизаторе
+                    bb_score = 1.0
+                elif bb_position <= 0.3:  # как в оптимизаторе
+                    bb_score = 0.5
             elif action == 'SELL':
-                # Более строгие условия
-                if bb_position >= 0.95:  # Очень близко к верхней полосе
-                    bb_score = 1.5  # было 2.0, теперь 1.5
-                elif bb_position >= 0.85:  # было 0.8
-                    bb_score = 1.0  # было 1.5, теперь 1.0
-                elif bb_position >= 0.7:  # было 0.6
-                    bb_score = 0.5  # было 1.0, теперь 0.5
+                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+                if bb_position >= 0.95:  # как в оптимизаторе
+                    bb_score = 1.5
+                elif bb_position >= 0.85:  # как в оптимизаторе
+                    bb_score = 1.0
+                elif bb_position >= 0.7:  # как в оптимизаторе
+                    bb_score = 0.5
         score += bb_score * WEIGHT_BB
         
-        # 4. VWAP анализ (более консервативно)
+        # 4. VWAP анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         vwap_score = 0
         if USE_VWAP and 'vwap' in df.columns:
             vwap_dev = last.get('vwap_deviation', 0)
             if action == 'BUY':
-                # Требуем значительное отклонение
-                if vwap_dev <= -VWAP_DEVIATION_THRESHOLD * 1.5:  # Очень ниже VWAP
-                    vwap_score = 1.5  # было 2.0, теперь 1.5
-                elif vwap_dev <= -VWAP_DEVIATION_THRESHOLD:  # Ниже VWAP
-                    vwap_score = 1.0  # было 1.0, оставляем
-                elif vwap_dev <= 0:  # Слегка ниже
-                    vwap_score = 0.3  # новое условие
+                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+                if vwap_dev <= -VWAP_DEVIATION_THRESHOLD * 1.5:  # как в оптимизаторе
+                    vwap_score = 1.5
+                elif vwap_dev <= -VWAP_DEVIATION_THRESHOLD:  # как в оптимизаторе
+                    vwap_score = 1.0
+                elif vwap_dev <= 0:  # как в оптимизаторе
+                    vwap_score = 0.3
             elif action == 'SELL':
-                # Требуем значительное отклонение
-                if vwap_dev >= VWAP_DEVIATION_THRESHOLD * 1.5:  # Очень выше VWAP
-                    vwap_score = 1.5  # было 2.0, теперь 1.5
-                elif vwap_dev >= VWAP_DEVIATION_THRESHOLD:  # Выше VWAP
-                    vwap_score = 1.0  # было 1.0, оставляем
-                elif vwap_dev >= 0:  # Слегка выше
-                    vwap_score = 0.3  # новое условие
+                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+                if vwap_dev >= VWAP_DEVIATION_THRESHOLD * 1.5:  # как в оптимизаторе
+                    vwap_score = 1.5
+                elif vwap_dev >= VWAP_DEVIATION_THRESHOLD:  # как в оптимизаторе
+                    vwap_score = 1.0
+                elif vwap_dev >= 0:  # как в оптимизаторе
+                    vwap_score = 0.3
         score += vwap_score * WEIGHT_VWAP
         
-        # 5. Объём анализ (более строгие требования)
+        # 5. Объём анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         volume_score = 0
         if USE_VOLUME_FILTER and 'volume_ratio_usdt' in df.columns:
             vol_ratio = last.get('volume_ratio_usdt', 1.0)
-            # Увеличиваем требования к объему
-            if vol_ratio >= 2.5:  # было 1.5, теперь 2.5
-                volume_score = 1.5  # было 2.0, теперь 1.5
-            elif vol_ratio >= 2.0:  # было 1.2, теперь 2.0
-                volume_score = 1.0  # было 1.0, оставляем
-            elif vol_ratio >= 1.5:  # новое условие
+            # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+            if vol_ratio >= 2.0:  # как в оптимизаторе
+                volume_score = 1.5
+            elif vol_ratio >= 1.5:  # как в оптимизаторе
+                volume_score = 1.0
+            elif vol_ratio >= 1.2:  # как в оптимизаторе
                 volume_score = 0.5
         score += volume_score * WEIGHT_VOLUME
         
-        # 6. ADX анализ (более мягкие условия как в оптимизаторе)
+        # 6. ADX анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         adx_score = 0
-        min_adx = HIGH_VOL_ADX_MIN if is_high_vol else (LOW_VOL_ADX_MIN if is_low_vol else MIN_ADX)
+        # СИНХРОНИЗИРОВАНО: используем упрощенные пороги как в оптимизаторе
+        min_adx = 25 if is_high_vol else (15 if is_low_vol else 20)  # Упрощенные пороги
         
-        if last['adx'] >= 50:  # Очень сильный тренд
-            adx_score = 3.0  # Высокий балл
-        elif last['adx'] >= 40:  # Сильный тренд
-            adx_score = 2.5  # Хороший балл
-        elif last['adx'] >= 30:  # Умеренный тренд
-            adx_score = 2.0  # Средний балл
-        elif last['adx'] >= min_adx:  # Минимальный тренд
-            adx_score = 1.5  # Базовый балл
-        elif last['adx'] >= min_adx * 0.8:  # Чуть ниже минимума
-            adx_score = 1.0  # Небольшой балл
+        if last['adx'] >= 50:
+            adx_score = 3.0
+        elif last['adx'] >= 40:
+            adx_score = 2.5
+        elif last['adx'] >= 30:
+            adx_score = 2.0
+        elif last['adx'] >= min_adx:
+            adx_score = 1.5
+        elif last['adx'] >= min_adx * 0.8:
+            adx_score = 1.0
         else:
-            adx_score = 0.5  # Минимальный балл даже за слабый тренд
+            adx_score = 0.5
+            
         score += adx_score * WEIGHT_ADX
         
         # 7. Дополнительные бонусы (уменьшаем влияние)
@@ -574,13 +576,14 @@ def evaluate_signal_strength(df, symbol, action):
             elif action == 'SELL' and price_trend > 0.01 and rsi_trend < -0.02:  # Строже
                 bonus_score += 0.5  # было 1.0, теперь 0.5
         
-        # Stochastic RSI (менее влиятельный)
+        # Stochastic RSI (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         if 'stoch_rsi_k' in df.columns:
             stoch_k = last.get('stoch_rsi_k', 50)
-            if action == 'BUY' and stoch_k <= 15:  # было 20, теперь 15
-                bonus_score += 0.3  # было 0.5, теперь 0.3
-            elif action == 'SELL' and stoch_k >= 85:  # было 80, теперь 85
-                bonus_score += 0.3  # было 0.5, теперь 0.3
+            # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+            if action == 'BUY' and stoch_k <= 15:  # как в оптимизаторе
+                bonus_score += 0.3
+            elif action == 'SELL' and stoch_k >= 85:  # как в оптимизаторе
+                bonus_score += 0.3
         
         score += bonus_score
         
@@ -782,7 +785,7 @@ def check_signals(df, symbol):
             return []
         
         # 6. Базовые фильтры ADX и RSI (как в оптимизаторе)
-        if last['adx'] < MIN_ADX:
+        if last['adx'] < MIN_ADX:  # 21 из config.py (как в оптимизаторе)
             logging.info(f"🔍 {symbol}: ОТКЛОНЕН по ADX ({last['adx']:.1f} < {MIN_ADX})")
             return []
         
@@ -820,15 +823,15 @@ def check_signals(df, symbol):
         buy_triggers = 0
         sell_triggers = 0
         
-        # КРИТИЧНО: RSI экстремальные значения дают СИЛЬНЫЕ триггеры
-        if last['rsi'] <= RSI_EXTREME_OVERSOLD:
+        # КРИТИЧНО: RSI экстремальные значения дают СИЛЬНЫЕ триггеры (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        if last['rsi'] <= RSI_EXTREME_OVERSOLD:  # 12 из config.py
             buy_triggers += 2.0  # Очень сильный сигнал покупки
-        elif last['rsi'] < RSI_MIN:
+        elif last['rsi'] < RSI_MIN:  # 15 из config.py (как в оптимизаторе)
             buy_triggers += 1.0  # Сильный сигнал покупки
             
-        if last['rsi'] >= RSI_EXTREME_OVERBOUGHT:
+        if last['rsi'] >= RSI_EXTREME_OVERBOUGHT:  # 89 из config.py
             sell_triggers += 2.0  # Очень сильный сигнал продажи
-        elif last['rsi'] > RSI_MAX:
+        elif last['rsi'] > RSI_MAX:  # 77 из config.py (как в оптимизаторе)
             sell_triggers += 1.0  # Сильный сигнал продажи
         
         # EMA кроссовер (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
@@ -870,10 +873,11 @@ def check_signals(df, symbol):
         # === ОПРЕДЕЛЕНИЕ ТИПА СИГНАЛА (ПОЛНОСТЬЮ СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ) ===
         signal_type = None
         # КРИТИЧНО: RSI фильтры применяются ПРИ определении типа сигнала (как в оптимизаторе)
-        if buy_triggers >= min_triggers and last['rsi'] <= LONG_MAX_RSI:
+        # СИНХРОНИЗИРОВАНО: используем параметры из config.py как в оптимизаторе
+        if buy_triggers >= min_triggers and last['rsi'] <= LONG_MAX_RSI:  # 38 из config.py
             signal_type = 'BUY'
             logging.info(f"🔍 {symbol}: ✅ НАЙДЕН BUY сигнал! RSI={last['rsi']:.1f} <= {LONG_MAX_RSI}")
-        elif sell_triggers >= min_triggers and last['rsi'] >= SHORT_MIN_RSI:
+        elif sell_triggers >= min_triggers and last['rsi'] >= SHORT_MIN_RSI:  # 32 из config.py
             signal_type = 'SELL'
             logging.info(f"🔍 {symbol}: ✅ НАЙДЕН SELL сигнал! RSI={last['rsi']:.1f} >= {SHORT_MIN_RSI}")
         else:
@@ -898,7 +902,7 @@ def check_signals(df, symbol):
         
         # Дополнительные условия для short (как в оптимизаторе)
         # RSI проверки уже применены при определении типа сигнала
-        if signal_type == 'SELL' and last['adx'] < SHORT_MIN_ADX:
+        if signal_type == 'SELL' and last['adx'] < SHORT_MIN_ADX:  # 23 из config.py (как в оптимизаторе)
             logging.info(f"🔍 {symbol}: ❌ SELL отклонен по SHORT_MIN_ADX ({last['adx']:.1f} < {SHORT_MIN_ADX})")
             return []
         
