@@ -18,51 +18,51 @@ MA_SLOW = 146
 LIMIT = 400     
 
 # === ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ===
-MIN_COMPOSITE_SCORE = 0.5
-MIN_ADX = 21
-RSI_MIN = 15
-RSI_MAX = 85
-SHORT_MIN_ADX = 23
-SHORT_MIN_RSI = 40
-LONG_MAX_RSI = 45
+MIN_COMPOSITE_SCORE = 3.5
+MIN_ADX = 18
+RSI_MIN = 46
+RSI_MAX = 65
+SHORT_MIN_RSI_MAX = 85
+SHORT_MIN_ADX = 20
+SHORT_MIN_RSI = 84
+LONG_MAX_RSI = 14
 
-# === TP/SL (ОПТИМИЗИРОВАНЫ) ===
-TP_ATR_MULT = 1.6
-SL_ATR_MULT = 4.2
-TP_MIN = 0.008
-SL_MIN = 0.034
+TP_ATR_MULT = 2.8
+SL_ATR_MULT = 4.0
+TP_MIN = 0.016
+SL_MIN = 0.01
 
 # === ВРЕМЕННЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
 SIGNAL_COOLDOWN_MINUTES = 10
-MIN_TRIGGERS_ACTIVE_HOURS = 1.9
-MIN_TRIGGERS_INACTIVE_HOURS = 2.8
+MIN_TRIGGERS_ACTIVE_HOURS = 2.0
+MIN_TRIGGERS_INACTIVE_HOURS = 5.5
 
 # === ОБЪЕМНЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
 MIN_VOLUME_USDT = 0.0001  
-MIN_VOLUME_MA_RATIO = 1.2
+MIN_VOLUME_MA_RATIO = 1.1
 REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False
 
 # === RSI ПАРАМЕТРЫ ===
-RSI_WINDOW = 8
-RSI_EXTREME_OVERSOLD = 12
-RSI_EXTREME_OVERBOUGHT = 89
-RSI_OVERSOLD = RSI_MIN       # 15 
-RSI_OVERBOUGHT = RSI_MAX     # 85
+RSI_WINDOW = 9  # Оптимизировано Optuna для стабильного расчета
+RSI_EXTREME_OVERSOLD = 20  # Более реалистичное значение для экстремальной перепроданности
+RSI_EXTREME_OVERBOUGHT = 80  # Более реалистичное значение для экстремальной перекупленности
+RSI_OVERSOLD = RSI_MIN       # 46 
+RSI_OVERBOUGHT = RSI_MAX     # 65
 
 # --- ATR ---
-ATR_WINDOW = 41
+ATR_WINDOW = 14  # Стандартное значение для надежного расчета волатильности
 
 # --- ADX ---
-ADX_WINDOW = 14
+ADX_WINDOW = 14  # Стандартное значение для определения силы тренда
 
 # --- Bollinger Bands ---
-BB_WINDOW = 10
-BB_STD_DEV = 5.8
+BB_WINDOW = 20   # Стандартное значение для стабильных полос
+BB_STD_DEV = 2.0 # Стандартное отклонение для классических полос
 
 # --- MACD ---
-MACD_FAST = 18
-MACD_SLOW = 38
-MACD_SIGNAL = 18
+MACD_FAST = 12   # Стандартное значение для быстрого MACD
+MACD_SLOW = 26   # Стандартное значение для медленного MACD
+MACD_SIGNAL = 9  # Стандартное значение для сигнальной линии
 
 # --- VWAP ---
 USE_VWAP = True
@@ -91,18 +91,18 @@ USE_VOLUME_FILTER = True
 USE_VOLATILITY_FILTER = True
 
 # --- Стохастический RSI ---
-STOCH_RSI_K = 13
-STOCH_RSI_D = 14
-STOCH_RSI_LENGTH = 4
+STOCH_RSI_K = 14   # Стандартное значение для %K
+STOCH_RSI_D = 3    # Стандартное значение для %D
+STOCH_RSI_LENGTH = 14  # Стандартная длина для стабильного расчета
 
 # === СИСТЕМА СКОРИНГА (ОПТИМИЗИРОВАНЫ) ===
-WEIGHT_RSI = 6.5
-WEIGHT_MACD = 7.5
-WEIGHT_BB = 1.0
-WEIGHT_VWAP = 10.0
-WEIGHT_VOLUME = 1.0
-WEIGHT_ADX = 8.0
+WEIGHT_RSI = 9.0
+WEIGHT_MACD = 8.0
+WEIGHT_BB = 1.5
+WEIGHT_VWAP = 7.0
+WEIGHT_VOLUME = 2.5
+WEIGHT_ADX = 9.0
 
 # === СИСТЕМА ДЛЯ SHORT/LONG (ОПТИМИЗИРОВАНЫ) ===
-SHORT_BOOST_MULTIPLIER = 2.4
-LONG_PENALTY_IN_DOWNTREND = 0.3
+SHORT_BOOST_MULTIPLIER = 2.1
+LONG_PENALTY_IN_DOWNTREND = 0.5
