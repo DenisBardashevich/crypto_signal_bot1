@@ -19,36 +19,36 @@ LIMIT = 400
 
 
 # === ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ===
-MIN_COMPOSITE_SCORE = 3.5
-MIN_ADX = 18
-RSI_MIN = 46
-RSI_MAX = 65
+MIN_COMPOSITE_SCORE = 1.3
+MIN_ADX = 16
+RSI_MIN = 38
+RSI_MAX = 58
 SHORT_MIN_RSI_MAX = 85
-SHORT_MIN_ADX = 20
-SHORT_MIN_RSI = 84
-LONG_MAX_RSI = 14
+SHORT_MIN_ADX = 36
+SHORT_MIN_RSI = 73
+LONG_MAX_RSI = 44
 
-TP_ATR_MULT = 2.8
-SL_ATR_MULT = 4.0
-TP_MIN = 0.016
-SL_MIN = 0.01
+TP_ATR_MULT = 3.4
+SL_ATR_MULT = 3.4
+TP_MIN = 0.047
+SL_MIN = 0.057
 
 # === ВРЕМЕННЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
 SIGNAL_COOLDOWN_MINUTES = 10
-MIN_TRIGGERS_ACTIVE_HOURS = 2.0
-MIN_TRIGGERS_INACTIVE_HOURS = 5.5
+MIN_TRIGGERS_ACTIVE_HOURS = 1.2
+MIN_TRIGGERS_INACTIVE_HOURS = 2.1
 
 # === ОБЪЕМНЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
 MIN_VOLUME_USDT = 0.0001  
-MIN_VOLUME_MA_RATIO = 1.1
+MIN_VOLUME_MA_RATIO = 1.0
 REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False
 
 # === RSI ПАРАМЕТРЫ ===
 RSI_WINDOW = 9  # Оптимизировано Optuna для стабильного расчета
 RSI_EXTREME_OVERSOLD = 20  # Более реалистичное значение для экстремальной перепроданности
 RSI_EXTREME_OVERBOUGHT = 80  # Более реалистичное значение для экстремальной перекупленности
-RSI_OVERSOLD = RSI_MIN       # 46 
-RSI_OVERBOUGHT = RSI_MAX     # 65
+RSI_OVERSOLD = RSI_MIN       # 38 
+RSI_OVERBOUGHT = RSI_MAX     # 58
 
 # --- ATR ---
 ATR_WINDOW = 14  # Стандартное значение для надежного расчета волатильности
@@ -97,13 +97,13 @@ STOCH_RSI_D = 3    # Стандартное значение для %D
 STOCH_RSI_LENGTH = 14  # Стандартная длина для стабильного расчета
 
 # === СИСТЕМА СКОРИНГА (ОПТИМИЗИРОВАНЫ) ===
-WEIGHT_RSI = 9.0
-WEIGHT_MACD = 8.0
-WEIGHT_BB = 1.5
-WEIGHT_VWAP = 7.0
-WEIGHT_VOLUME = 2.5
-WEIGHT_ADX = 9.0
+WEIGHT_RSI = 4.7
+WEIGHT_MACD = 2.9
+WEIGHT_BB = 2.3
+WEIGHT_VWAP = 6.5
+WEIGHT_VOLUME = 0.9
+WEIGHT_ADX = 0.3
 
 # === СИСТЕМА ДЛЯ SHORT/LONG (ОПТИМИЗИРОВАНЫ) ===
-SHORT_BOOST_MULTIPLIER = 2.1
-LONG_PENALTY_IN_DOWNTREND = 0.5
+SHORT_BOOST_MULTIPLIER = 1.1
+LONG_PENALTY_IN_DOWNTREND = 0.3
