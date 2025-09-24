@@ -846,7 +846,7 @@ def check_signals(df, symbol):
         # VWAP триггеры отключены (упрощение и снижение шума)
                 
         # Минимальные триггеры (как в оптимизаторе)
-        min_triggers = MIN_TRIGGERS_ACTIVE_HOURS if hour_utc in ACTIVE_HOURS_UTC else MIN_TRIGGERS_INACTIVE_HOURS
+        min_triggers = MIN_TRIGGERS_ACTIVE_HOURS
         
         # === ДИАГНОСТИКА ТРИГГЕРОВ ===
         logging.info(f"🔍 {symbol}: Триггеры - BUY:{buy_triggers:.1f}, SELL:{sell_triggers:.1f}, мин_требуется:{min_triggers:.1f}")

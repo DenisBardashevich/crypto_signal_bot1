@@ -139,9 +139,9 @@ def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
     """УПРОЩЕННЫЕ параметры для 15-минутной торговли с приоритетом на количество сигналов"""
     return {
         # Основные пороги (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'MIN_COMPOSITE_SCORE': trial.suggest_float('MIN_COMPOSITE_SCORE', 0.5, 2.5, step=0.5),  # ПОНИЖЕНО: для больше сигналов
+        'MIN_COMPOSITE_SCORE': trial.suggest_float('MIN_COMPOSITE_SCORE', 0.5, 4.0, step=0.5),  # ПОНИЖЕНО: для больше сигналов
         'MIN_ADX': trial.suggest_int('MIN_ADX', 6, 40, step=2),  # ПОНИЖЕНО: для больше сигналов
-        'SHORT_MIN_ADX': trial.suggest_int('SHORT_MIN_ADX', 8, 46, step=2),  # ПОНИЖЕНО: для больше сигналов
+        'SHORT_MIN_ADX': trial.suggest_int('SHORT_MIN_ADX', 8, 52, step=2),  # ПОНИЖЕНО: для больше сигналов
         
         # RSI фильтры (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
         'SHORT_MIN_RSI': trial.suggest_int('SHORT_MIN_RSI', 24, 90, step=2),  # ПОНИЖЕНО: для больше сигналов
@@ -150,38 +150,38 @@ def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
         'RSI_MAX': trial.suggest_int('RSI_MAX', 50, 90, step=2),             # ПОНИЖЕНО: больше сигналов
         
         # TP/SL (ОПТИМИЗИРОВАНО ДЛЯ ЛУЧШИХ СООТНОШЕНИЙ)
-        'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.8, 5.0, step=0.2),  # ПОНИЖЕНО: лучшие TP/SL соотношения
-        'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 1.0, 6.0, step=0.2),  # ПОНИЖЕНО: более реалистичные SL
+        'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.8, 6.0, step=0.2),  # Расширен верхний предел
+        'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 1.0, 8.0, step=0.2),  # Расширен верхний предел
 
         # Триггеры (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
         'MIN_TRIGGERS_ACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0.1, 6.0, step=0.3),   # ПОНИЖЕНО: больше сигналов
         
         # Временные фильтры (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 5, 45, step=5),  # ПОНИЖЕНО: больше сигналов
+        'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 0, 60, step=5),  # Разрешаем 0 и до 90
         
         # Объем (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'MIN_VOLUME_MA_RATIO': trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.05, 2.0, step=0.05),  # ПОНИЖЕНО: больше сигналов
+        'MIN_VOLUME_MA_RATIO': trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.05, 3.0, step=0.05),  # Верх до 3.0
 
         # MACD подтверждение (опционально)
         'REQUIRE_MACD_HISTOGRAM_CONFIRMATION': trial.suggest_categorical('REQUIRE_MACD_HISTOGRAM_CONFIRMATION', [False, True]),
         
         # Веса скоринга (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'WEIGHT_RSI': trial.suggest_float('WEIGHT_RSI', 0.8, 8.0, step=0.3),    # ПОНИЖЕНО: больше гибкости
-        'WEIGHT_MACD': trial.suggest_float('WEIGHT_MACD', 0.8, 7.0, step=0.3),  # ПОНИЖЕНО: больше гибкости
-        'WEIGHT_BB': trial.suggest_float('WEIGHT_BB', 0.8, 5.0, step=0.3),      # ПОНИЖЕНО: больше гибкости
-        'WEIGHT_VWAP': trial.suggest_float('WEIGHT_VWAP', 0.8, 10.0, step=0.3),  # ПОНИЖЕНО: больше гибкости
-        'WEIGHT_VOLUME': trial.suggest_float('WEIGHT_VOLUME', 0.3, 5.0, step=0.3), # ПОНИЖЕНО: больше гибкости
-        'WEIGHT_ADX': trial.suggest_float('WEIGHT_ADX', 0.2, 9.0, step=0.3),    # ПОНИЖЕНО: больше гибкости
+        'WEIGHT_RSI': trial.suggest_float('WEIGHT_RSI', 0.0, 10.0, step=0.2),
+        'WEIGHT_MACD': trial.suggest_float('WEIGHT_MACD', 0.0, 9.0, step=0.2),
+        'WEIGHT_BB': trial.suggest_float('WEIGHT_BB', 0.0, 6.0, step=0.2),
+        'WEIGHT_VWAP': trial.suggest_float('WEIGHT_VWAP', 0.0, 12.0, step=0.2),
+        'WEIGHT_VOLUME': trial.suggest_float('WEIGHT_VOLUME', 0.0, 6.0, step=0.2),
+        'WEIGHT_ADX': trial.suggest_float('WEIGHT_ADX', 0.0, 12.0, step=0.2),
         
 
         
         # Множители направления (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'SHORT_BOOST_MULTIPLIER': trial.suggest_float('SHORT_BOOST_MULTIPLIER', 0.3, 3.5, step=0.2),  # ПОНИЖЕНО: больше гибкости
-        'LONG_PENALTY_IN_DOWNTREND': trial.suggest_float('LONG_PENALTY_IN_DOWNTREND', 0.05, 0.8, step=0.05),  # ПОНИЖЕНО: больше гибкости
+        'SHORT_BOOST_MULTIPLIER': trial.suggest_float('SHORT_BOOST_MULTIPLIER', 0.2, 5.0, step=0.2),
+        'LONG_PENALTY_IN_DOWNTREND': trial.suggest_float('LONG_PENALTY_IN_DOWNTREND', 0.05, 1.0, step=0.05),
 
         # Минимальные TP/SL (проценты) - ОПТИМИЗИРОВАНО ДЛЯ ЛУЧШИХ СООТНОШЕНИЙ
-        'TP_MIN': trial.suggest_float('TP_MIN', 0.007, 0.07, step=0.002),   # ПОНИЖЕНО: лучшие TP/SL соотношения
-        'SL_MIN': trial.suggest_float('SL_MIN', 0.007, 0.07, step=0.002),   # ПОНИЖЕНО: лучшие TP/SL соотношения
+        'TP_MIN': trial.suggest_float('TP_MIN', 0.006, 0.10, step=0.002),
+        'SL_MIN': trial.suggest_float('SL_MIN', 0.006, 0.10, step=0.002),
     }
 
 def evaluate_signal_strength_optimized(df, current_index, symbol, action, weights):
@@ -921,12 +921,12 @@ def optimize_filters_anti_overfitting():
         direction='maximize',
         sampler=optuna.samplers.TPESampler(
             seed=42,
-            n_startup_trials=40,            # Тщательный старт для 1000+ trials
-            n_ei_candidates=7,              # Больше кандидатов для лучшего поиска
+            n_startup_trials=80,            # Чуть дольше разогрев для расширенного пространства
+            n_ei_candidates=15,             # Больше кандидатов для диверсификации
             constant_liar=True                # Параллельная оптимизация
         ),
         pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=80,             # Консервативная обрезка для надежности
+            n_startup_trials=120,            # Дольше без обрезки в расширенном поиске
             n_warmup_steps=20                # Достаточно данных для принятия решений
         ),
         storage=None,                         # Локальное хранение (быстрее)
@@ -1035,7 +1035,7 @@ if __name__ == '__main__':
     print("  • ИСПРАВЛЕННАЯ СИСТЕМА БАЛЛОВ: стартовый капитал $100, учитываем убытки!")
     print("  • 🆕 ШТРАФЫ: за убытки, большие SL, плохие TP/SL соотношения!")
     print("  • 🆕 БОНУСЫ: за прибыль, хорошие TP/SL соотношения!")
-    print("  • TPE Sampler: 40 startup trials, 7 кандидатов")
+    print("  • TPE Sampler: 80 startup trials, 15 кандидатов")
     print("  • MedianPruner: 80 startup trials, 20 warmup steps")
     print("  • Упрощенная система баллов с приоритетом на выполнение задачи")
     print("  • МИНИМАЛЬНЫЕ фильтры - система скоринга сама отсеет плохие результаты!")
