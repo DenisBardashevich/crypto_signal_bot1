@@ -23,7 +23,6 @@ MIN_COMPOSITE_SCORE = 0.5
 MIN_ADX = 30
 RSI_MIN = 20
 RSI_MAX = 68
-SHORT_MIN_RSI_MAX = 85
 SHORT_MIN_ADX = 46
 SHORT_MIN_RSI = 88
 LONG_MAX_RSI = 46
@@ -38,7 +37,6 @@ SIGNAL_COOLDOWN_MINUTES = 15
 MIN_TRIGGERS_ACTIVE_HOURS = 0.4
 
 # === ОБЪЕМНЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
-MIN_VOLUME_USDT = 0.0001  
 MIN_VOLUME_MA_RATIO = 0.1
 REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False
 
@@ -77,18 +75,12 @@ FEE_RATE = 0.0006
 
 # === БАЗОВЫЕ ПАРАМЕТРЫ ===
 MIN_15M_CANDLES = 50  
-VOLATILITY_LOOKBACK = 48  
-HIGH_VOLATILITY_THRESHOLD = 0.99   
-LOW_VOLATILITY_THRESHOLD = 0.001   
-HIGH_VOL_ADX_MIN = 1    
-LOW_VOL_ADX_MIN = 1     
 
 # Адаптивные настройки по времени
 ACTIVE_HOURS_UTC = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
 
 # --- Фильтры ---
 USE_VOLUME_FILTER = True
-USE_VOLATILITY_FILTER = True
 
 # --- Стохастический RSI ---
 STOCH_RSI_K = 14   # Стандартное значение для %K

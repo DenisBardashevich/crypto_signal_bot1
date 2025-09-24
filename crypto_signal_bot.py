@@ -117,16 +117,13 @@ def record_trade(symbol, action, price, time, side, score=None):
     logging.info(f"Записана сделка: {symbol} {action} {side} по цене {price} в {time} (score: {score})")
 
 # Открытие сделки
-def open_trade(symbol, price, time, side, atr=None, score=None, position_size=0.03):
+def open_trade(symbol, price, time, side, atr=None, score=None):
     open_trades[symbol] = {
         'side': side,  # 'long' или 'short'
         'entry_price': price,
         'time': time.strftime('%Y-%m-%d %H:%M'),
         'atr': atr if atr is not None else 0,
-        'trail_pct': 7.3,  # Не используется в оптимизированной логике
-        'last_peak': price,
-        'score': score,
-        'position_size': position_size
+        'score': score
     }
     save_portfolio()
 
@@ -303,7 +300,7 @@ def analyze(df):
         df['stoch_rsi_k'] = stoch_rsi * 100  # Приводим к шкале 0-100
         
         # ADX для определения силы тренда
-        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
+        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=ADX_WINDOW)
         
         # ATR для расчёта TP/SL
         df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
@@ -326,22 +323,9 @@ def analyze(df):
         
         # Объём с улучшенной фильтрацией (как в оптимизаторе)
         if USE_VOLUME_FILTER:
-            df['volume_ma_usdt'] = df['volume_usdt'].rolling(window=20).mean()
+            df['volume_ma_usdt'] = df['volume_usdt'].rolling(window=BB_WINDOW).mean()
             df['volume_ratio_usdt'] = df['volume_usdt'] / df['volume_ma_usdt']
         
-        # Волатильность за последние периоды
-        df['volatility'] = df['close'].rolling(window=VOLATILITY_LOOKBACK).std() / df['close'].rolling(window=VOLATILITY_LOOKBACK).mean()
-        
-        # Спред и импульс
-        df['spread_pct'] = (df['high'] - df['low']) / df['low']
-        df['momentum'] = df['close'].pct_change(5) * 100  # 5 свечей назад
-        
-        # Дополнительные индикаторы для адаптивной системы
-        # Trending vs Ranging market detection
-        df['ema_slope'] = df['ema_slow'].pct_change(3) * 100  # Наклон EMA
-        
-        # Williams %R для дополнительного подтверждения
-        df['williams_r'] = ta.momentum.williams_r(df['high'], df['low'], df['close'], lbp=14)
         
         # Очистка данных
         df = df.dropna().reset_index(drop=True)
@@ -382,10 +366,6 @@ def evaluate_signal_strength(df, symbol, action):
             current_time_utc = datetime.now(timezone.utc)
         prev2 = df.iloc[-3] if len(df) > 3 else prev
         
-        # Определяем текущую волатильность для адаптации
-        current_volatility = last.get('volatility', 0.02)
-        is_high_vol = current_volatility > HIGH_VOLATILITY_THRESHOLD
-        is_low_vol = current_volatility < LOW_VOLATILITY_THRESHOLD
         
         # Адаптируем пороги в зависимости от времени
         # Используем время последней свечи, если доступно (важно для backtest/оптимизатора)
@@ -403,7 +383,6 @@ def evaluate_signal_strength(df, symbol, action):
                     now_utc = datetime.now(timezone.utc)
         else:
             now_utc = datetime.now(timezone.utc)
-        is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
         # СИНХРОНИЗАЦИЯ: Менее строгие условия как в оптимизаторе
         
@@ -526,8 +505,8 @@ def evaluate_signal_strength(df, symbol, action):
         
         # 6. ADX анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         adx_score = 0
-        # СИНХРОНИЗИРОВАНО: используем упрощенные пороги как в оптимизаторе
-        min_adx = 25 if is_high_vol else (15 if is_low_vol else 20)  # Упрощенные пороги
+        # СИНХРОНИЗИРОВАНО: используем параметр из конфига как в оптимизаторе
+        min_adx = MIN_ADX  # Берем из конфига
         
         if last['adx'] >= 50:
             adx_score = 3.0
@@ -579,9 +558,6 @@ def evaluate_signal_strength(df, symbol, action):
             if price_trend < -0.05:  # Делаем условие строже (было -0.03)
                 score *= max(0.8, LONG_PENALTY_IN_DOWNTREND)  # Ограничиваем штраф
         
-        # Бонус в активные часы (больше чем раньше)
-        if is_active_hour:
-            score *= 1.1  # Увеличиваем бонус
         
         # КРИТИЧНО: Убираем большинство штрафующих корректировок
         # Возвращаем более высокие скоры как в оптимизаторе
@@ -684,31 +660,9 @@ def recommend_leverage(strength_score, history_percent):
     
     return f'x{final_leverage}'
 
-# ========== ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ОБЪЁМА ==========
-def get_24h_volume(symbol):
-    try:
-        ticker = EXCHANGE.fetch_ticker(symbol)
-        volume = ticker.get('quoteVolume', 0)
-        return volume
-    except ccxt.RateLimitExceeded as e:
-        logging.warning(f"Rate limit exceeded for {symbol}, жду {getattr(e, 'retry_after', 1)} сек.")
-        time.sleep(getattr(e, 'retry_after', 1))
-        return 0
-    except Exception as e:
-        logging.error(f"Ошибка получения объёма по {symbol}: {e}")
-        return 0
 
 last_signal_time = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
 
-def get_btc_adx():
-    try:
-        ohlcv = EXCHANGE.fetch_ohlcv('BTC/USDT:USDT', timeframe=TIMEFRAME, limit=50)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
-        return df['adx'].iloc[-1]
-    except Exception as e:
-        logging.error(f"Ошибка получения ADX BTC: {e}")
-        return 99
 
 def check_signals(df, symbol):
     """
@@ -760,11 +714,8 @@ def check_signals(df, symbol):
             logging.info(f"🔍 {symbol}: ОТКЛОНЕН - есть открытая позиция")
             return []
         
-        # 5. Временные фильтры (как в оптимизаторе)
+        # 5. Временные фильтры убраны (как в оптимизаторе - тестируем во все часы)
         hour_utc = current_time_utc.hour
-        if hour_utc not in ACTIVE_HOURS_UTC:
-            logging.info(f"🔍 {symbol}: ОТКЛОНЕН - неактивные часы UTC {hour_utc}")
-            return []
         
         # 6. Базовые фильтры ADX и RSI (как в оптимизаторе)
         if last['adx'] < MIN_ADX:  # 21 из config.py (как в оптимизаторе)
@@ -900,8 +851,9 @@ def check_signals(df, symbol):
                     # Рассчитываем TP/SL
                     direction = 'SHORT' if signal_type == 'SELL' else 'LONG'
                     tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], direction)
-                    
-                    # Удаляем проверку минимальной дистанции TP/SL — минимальные TP/SL уже заданы
+                    if tp_price is None or sl_price is None:
+                        logging.error(f"Ошибка расчета TP/SL для {symbol}, пропускаем сигнал")
+                        continue
                     
                     # Рекомендуем плечо
                     leverage = recommend_leverage(score, win_prob * 100)
@@ -998,8 +950,8 @@ async def stats_command(update, context):
         await update.message.reply_text(part)
 
 async def del_command(update, context):
-    """Очистить весь портфель (сброс к начальному состоянию)"""
-    global virtual_portfolio, open_trades, adaptive_targets
+    """Очистить весь портфель (сброс к начальному состояния)"""
+    global virtual_portfolio, open_trades
     
     # Подсчитываем статистику перед удалением
     report, win, loss = simple_stats()
@@ -1008,7 +960,6 @@ async def del_command(update, context):
     # Очищаем портфель
     virtual_portfolio.clear()
     open_trades.clear()
-    adaptive_targets = {}
     virtual_portfolio['open_trades'] = {}
     
     # Сохраняем пустой портфель
@@ -1069,6 +1020,7 @@ async def open_positions_command(update, context):
 
 async def close_position_command(update, context):
     """Принудительно закрыть позицию по символу"""
+    global adaptive_targets
     if not context.args:
         await update.message.reply_text("❗️ Укажите символ для закрытия: /close BTCUSDT")
         return
@@ -1235,17 +1187,6 @@ async def process_symbol(symbol):
         price = df['close'].iloc[-1]
         time = df['timestamp'].iloc[-1]
         
-        # Расчёт адаптивных целей по ATR и волатильности
-        atr = df['atr'].iloc[-1]
-        if not pd.isna(atr) and price > 0:
-            # НЕ перезаписываем TP/SL для уже открытых позиций
-            # calculate_tp_sl вызывается уже в check_tp_sl при необходимости
-            pass
-        else:
-            # Не записываем цели до появления реального сигнала/позиции
-            pass
-        
-        # Проверка на открытые сделки (перенесено в monitor_open_positions)
         
         return signals, symbol, price, time, df, atr
     except Exception as e:
@@ -1324,6 +1265,9 @@ async def main():
                 else:
                     # Рассчитываем TP/SL правильно
                     tp_price, sl_price = calculate_tp_sl(df, price, atr, direction)
+                    if tp_price is None or sl_price is None:
+                        logging.error(f"Ошибка расчета TP/SL для {symbol}, пропускаем сигнал")
+                        continue
                     adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
                 
                 # Рассчитываем проценты для отображения
@@ -1506,11 +1450,8 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
 
     except Exception as e:
         logging.error(f"Ошибка в calculate_tp_sl: {e}")
-        # Возвращаем консервативные значения по конфигу
-        if direction.upper() == 'LONG':
-            return price * (1 + max(TP_MIN, 0.008)), price * (1 - max(SL_MIN, 0.025))
-        else:
-            return price * (1 - max(TP_MIN, 0.008)), price * (1 + max(SL_MIN, 0.025))
+        # Возвращаем None при ошибке - пусть система сама решает
+        return None, None
 
 def check_tp_sl(symbol, price, time, df):
     global adaptive_targets
@@ -1536,6 +1477,9 @@ def check_tp_sl(symbol, price, time, df):
         # Рассчитываем TP/SL - возвращает абсолютные цены
         direction = 'LONG' if side == 'long' else 'SHORT'
         tp_price, sl_price = calculate_tp_sl(df, entry, atr, direction)
+        if tp_price is None or sl_price is None:
+            logging.error(f"Ошибка расчета TP/SL для {symbol}, не можем закрыть позицию")
+            return False
         adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
     
     # Определяем логику закрытия на основе реального движения цены
