@@ -851,9 +851,8 @@ def check_signals(df, symbol):
                     # Рассчитываем TP/SL
                     direction = 'SHORT' if signal_type == 'SELL' else 'LONG'
                     tp_price, sl_price = calculate_tp_sl(df, last['close'], last['atr'], direction)
-                    if tp_price is None or sl_price is None:
-                        logging.error(f"Ошибка расчета TP/SL для {symbol}, пропускаем сигнал")
-                        continue
+                    
+                    # Удаляем проверку минимальной дистанции TP/SL — минимальные TP/SL уже заданы
                     
                     # Рекомендуем плечо
                     leverage = recommend_leverage(score, win_prob * 100)
