@@ -24,20 +24,19 @@
 ✅ Параллельная обработка trials
 ✅ Упрощены расчеты - убраны лишние вычисления
 
-🎯 УПРОЩЕННАЯ СИСТЕМА БАЛЛОВ (без потолка):
-✅ Основной скор: прибыль в долларах (1 балл = $1, без потолка)
-✅ Бонусы: сделки, сигналы, просадка, TP/SL соотношение
-✅ Приоритет: прибыль + соотношение TP/SL
+🎯 ИСПРАВЛЕННАЯ СИСТЕМА БАЛЛОВ (учитывает убытки):
+✅ Основной скор: прибыль в долларах (МОЖЕТ БЫТЬ ОТРИЦАТЕЛЬНЫМ!)
+✅ ШТРАФЫ: за убытки, большие SL, плохие TP/SL соотношения
+✅ Бонусы: сделки, сигналы, хорошие TP/SL соотношения
+✅ Приоритет: максимальная прибыль с минимальными убытками от SL
 
 Теперь каждый trial ~2-4 секунды, качество параметров выше!
 """
 
 import ccxt
 import pandas as pd
-from datetime import datetime, timedelta, timezone
 from config import *
-from crypto_signal_bot import analyze, evaluate_signal_strength, SYMBOLS
-import crypto_signal_bot as csb
+from crypto_signal_bot import analyze, SYMBOLS
 import logging
 import optuna
 import json
@@ -51,6 +50,12 @@ EXCHANGE = ccxt.bybit({
     'options': {'defaultType': 'swap'}
 })
 
+# Инициализация рынков Bybit для стабильной работы символов/рынков
+try:
+    EXCHANGE.load_markets()
+except Exception as e:
+    logging.warning(f"Не удалось загрузить рынки: {e}")
+
 # --- ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ ---
 GLOBAL_HOURS_BACK = 720  # УМЕНЬШЕНО: ~30 дней истории для ускорения без потери качества
 try:
@@ -62,7 +67,6 @@ GLOBAL_ALL_SYMBOLS = []
 DATA_CACHE_ANALYZED: Dict[str, pd.DataFrame] = {}
 
 # --- УПРОЩЕННЫЕ ОГРАНИЧЕНИЯ ДЛЯ 15М ФЬЮЧЕРСОВ ---
-MIN_TRAINING_DAYS = 8   # ОПТИМИЗИРОВАНО: меньше дней для большего количества сигналов
 MIN_SL_COUNT = 2      # Минимум SL сделок для статистики
 COMMISSION_PCT = 0.055
 SPREAD_PCT = 0.04
@@ -86,7 +90,7 @@ def get_historical_data(symbol, hours_back=72):
             tf_ms = 15 * 60 * 1000
 
         safety_loops = 0
-        while len(all_ohlcv) < candles_needed and safety_loops < 10:
+        while len(all_ohlcv) < candles_needed and safety_loops < 30:
             batch_limit = min(1000, candles_needed - len(all_ohlcv))
             try:
                 ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, since=int(since), limit=batch_limit)
@@ -140,24 +144,23 @@ def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
         'SHORT_MIN_ADX': trial.suggest_int('SHORT_MIN_ADX', 8, 46, step=2),  # ПОНИЖЕНО: для больше сигналов
         
         # RSI фильтры (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'SHORT_MIN_RSI': trial.suggest_int('SHORT_MIN_RSI', 24, 86, step=2),  # ПОНИЖЕНО: для больше сигналов
+        'SHORT_MIN_RSI': trial.suggest_int('SHORT_MIN_RSI', 24, 90, step=2),  # ПОНИЖЕНО: для больше сигналов
         'LONG_MAX_RSI': trial.suggest_int('LONG_MAX_RSI', 8, 60, step=2),   # ПОНИЖЕНО: больше сигналов
         'RSI_MIN': trial.suggest_int('RSI_MIN', 6, 50, step=2),             # ПОНИЖЕНО: больше сигналов
         'RSI_MAX': trial.suggest_int('RSI_MAX', 50, 90, step=2),             # ПОНИЖЕНО: больше сигналов
         
         # TP/SL (ОПТИМИЗИРОВАНО ДЛЯ ЛУЧШИХ СООТНОШЕНИЙ)
         'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.8, 5.0, step=0.2),  # ПОНИЖЕНО: лучшие TP/SL соотношения
-        'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 1.0, 5.0, step=0.2),  # ПОНИЖЕНО: более реалистичные SL
+        'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 1.0, 6.0, step=0.2),  # ПОНИЖЕНО: более реалистичные SL
 
         # Триггеры (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
         'MIN_TRIGGERS_ACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0.1, 6.0, step=0.3),   # ПОНИЖЕНО: больше сигналов
-        'MIN_TRIGGERS_INACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_INACTIVE_HOURS', 0.3, 6.0, step=0.3), # ПОНИЖЕНО: больше сигналов
         
         # Временные фильтры (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
         'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 5, 45, step=5),  # ПОНИЖЕНО: больше сигналов
         
         # Объем (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'MIN_VOLUME_MA_RATIO': trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.1, 2.0, step=0.1),  # ПОНИЖЕНО: больше сигналов
+        'MIN_VOLUME_MA_RATIO': trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.05, 2.0, step=0.05),  # ПОНИЖЕНО: больше сигналов
 
         # MACD подтверждение (опционально)
         'REQUIRE_MACD_HISTOGRAM_CONFIRMATION': trial.suggest_categorical('REQUIRE_MACD_HISTOGRAM_CONFIRMATION', [False, True]),
@@ -168,7 +171,7 @@ def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
         'WEIGHT_BB': trial.suggest_float('WEIGHT_BB', 0.8, 5.0, step=0.3),      # ПОНИЖЕНО: больше гибкости
         'WEIGHT_VWAP': trial.suggest_float('WEIGHT_VWAP', 0.8, 10.0, step=0.3),  # ПОНИЖЕНО: больше гибкости
         'WEIGHT_VOLUME': trial.suggest_float('WEIGHT_VOLUME', 0.3, 5.0, step=0.3), # ПОНИЖЕНО: больше гибкости
-        'WEIGHT_ADX': trial.suggest_float('WEIGHT_ADX', 0.2, 8.0, step=0.3),    # ПОНИЖЕНО: больше гибкости
+        'WEIGHT_ADX': trial.suggest_float('WEIGHT_ADX', 0.2, 9.0, step=0.3),    # ПОНИЖЕНО: больше гибкости
         
 
         
@@ -201,16 +204,6 @@ def evaluate_signal_strength_with_weights_fast(last, prev, action, weights):
     """УПРОЩЕННАЯ быстрая оценка силы сигнала"""
     try:
         score = 0
-        
-        # ОПТИМИЗИРОВАНО: упрощенная проверка времени (убрана волатильность)
-        try:
-            last_time = last.get('timestamp')
-            if hasattr(last_time, 'hour'):
-                is_active_hour = last_time.hour in range(6, 24)  # Упрощенная проверка
-            else:
-                is_active_hour = True
-        except:
-            is_active_hour = True
         
         # 1. RSI анализ с переданными весами
         rsi_score = 0
@@ -360,10 +353,6 @@ def evaluate_signal_strength_with_weights_fast(last, prev, action, weights):
                     long_penalty = weights.get('LONG_PENALTY_IN_DOWNTREND', 0.5)
                     score *= long_penalty
         
-        # Бонус в активные часы
-        if is_active_hour:
-            score *= 1.1
-        
         return max(0, score)
         
     except Exception as e:
@@ -417,15 +406,7 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
         prev = df_analyzed.iloc[i-1] if i > 0 else df_analyzed.iloc[i]
         now = last['timestamp']
         
-        # Используем UTC-час для сопоставления с active_hours_utc
-        try:
-            hour_utc = now.hour  # Уже в UTC
-        except Exception:
-            hour_utc = getattr(now, 'hour', 0)
-        
-        # Временные фильтры
-        if hour_utc not in active_hours_utc:
-            continue
+        # Ранее здесь был фильтр по активным часам; теперь тестируем во все часы
             
         # Кулдаун
         if last_signal_time and (now - last_signal_time).total_seconds() < signal_cooldown_minutes * 60:
@@ -486,11 +467,8 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
             if bb_position >= 0.75:  # Более строго для 15м
                 sell_triggers += 0.5
                 
-        # Минимальные триггеры
-        if hour_utc in active_hours_utc:
-            min_triggers = min_triggers_active_hours
-        else:
-            min_triggers = params['MIN_TRIGGERS_INACTIVE_HOURS']  # Используем точное значение параметра
+        # Минимальные триггеры (единый порог для всех часов)
+        min_triggers = min_triggers_active_hours
         
         # Определение типа сигнала
         signal_type = None
@@ -618,7 +596,6 @@ def test_single_params_anti_overfitting(params, hours_back=None, active_hours_ut
     # Timeout больше не используем: сделки без TP/SL за 4 дня считаем SL
     tp_count = len(tp_signals)
     sl_count = len(sl_signals)
-    timeout_count = 0
     
     # ОПТИМИЗИРОВАНО: Упрощенный расчет winrate
     total_trades = tp_count + sl_count
@@ -626,9 +603,7 @@ def test_single_params_anti_overfitting(params, hours_back=None, active_hours_ut
         return None
     
     # Упрощенный winrate: считаем только TP и SL
-    effective_tp = tp_count
-    effective_sl = sl_count
-    winrate = effective_tp / (effective_tp + effective_sl) * 100 if (effective_tp + effective_sl) > 0 else 0
+    winrate = tp_count / total_trades * 100
     
     # ОПТИМИЗИРОВАНО: Только необходимые метрики для скоринга
     tp_sum = sum([s['tp_pct'] for s in tp_signals])
@@ -643,28 +618,23 @@ def test_single_params_anti_overfitting(params, hours_back=None, active_hours_ut
     # ОПТИМИЗИРОВАНО: Упрощенный расчет средних значений
     avg_tp_pct = tp_sum / max(tp_count, 1)
     avg_sl_pct = sl_sum / max(sl_count, 1)
-    
-    # ОПТИМИЗИРОВАНО: Упрощенный расчет с комиссиями
-    commission_roundtrip = 2 * COMMISSION_PCT
-    spread_roundtrip = 2 * SPREAD_PCT
-    
-    net_tp_pct = avg_tp_pct - commission_roundtrip - spread_roundtrip
-    net_sl_pct = avg_sl_pct + commission_roundtrip + spread_roundtrip
-    
-    # Упрощенное математическое ожидание
+
+    # Упрощенные TP/SL без комиссий и спреда (для быстрых метрик)
+    net_tp_pct = avg_tp_pct
+    net_sl_pct = avg_sl_pct
+
+    # Математическое ожидание (в процентах, без комиссий)
     winrate_decimal = winrate / 100
     expected_return = winrate_decimal * net_tp_pct - (1 - winrate_decimal) * net_sl_pct
-    
-    # ОПТИМИЗИРОВАНО: Упрощенный profit factor
-    tp_profit_sum = max(tp_sum - (tp_count * commission_roundtrip) - (tp_count * spread_roundtrip), 0)
-    sl_loss_sum = max(sl_sum + (sl_count * commission_roundtrip) + (sl_count * spread_roundtrip), 0.1)
-    profit_factor = tp_profit_sum / sl_loss_sum if sl_loss_sum > 0 else float('inf')
+
+    # ОПТИМИЗИРОВАНО: Упрощенный profit factor (без комиссий, точный расчет в calculate_advanced_score)
+    profit_factor = tp_sum / max(sl_sum, 0.1) if sl_sum > 0 else float('inf')
     
     # ОПТИМИЗИРОВАНО: Просадка здесь не рассчитывается
     max_drawdown_pct = 0.0
     
-    # ОПТИМИЗИРОВАНО: Упрощенная месячная доходность
-    avg_net_pct = (tp_sum - sl_sum - (len(all_signals) * commission_roundtrip) - (len(all_signals) * spread_roundtrip)) / len(all_signals)
+    # ОПТИМИЗИРОВАНО: Упрощенная месячная доходность (без комиссий, точный расчет в calculate_advanced_score)
+    avg_net_pct = (tp_sum - sl_sum) / len(all_signals)
     monthly_net_pct = avg_net_pct * signals_per_day * 30.0
     
     return {
@@ -674,15 +644,14 @@ def test_single_params_anti_overfitting(params, hours_back=None, active_hours_ut
         'winrate': winrate,
         'tp_count': tp_count,
         'sl_count': sl_count,
-        'timeout_count': timeout_count,
         'tp_sl_count_ratio': tp_sl_count_ratio,
         'tp_sum': tp_sum,
         'sl_sum': sl_sum,
-        'expected_return': expected_return,
         'avg_tp_pct': avg_tp_pct,
         'avg_sl_pct': avg_sl_pct,
         'net_tp_pct': net_tp_pct,
         'net_sl_pct': net_sl_pct,
+        'expected_return': expected_return,
         'profit_factor': profit_factor,
         'max_drawdown_pct': max_drawdown_pct,
         'avg_net_pct': avg_net_pct,
@@ -690,20 +659,15 @@ def test_single_params_anti_overfitting(params, hours_back=None, active_hours_ut
     }
 
 def calculate_advanced_score(result: dict, trial_number: int) -> float:
-    """🎯 ПРОСТАЯ СИСТЕМА БАЛЛОВ: РЕАЛЬНЫЙ КАПИТАЛ + ПРИБЫЛЬ"""
+    """🎯 ИСПРАВЛЕННАЯ СИСТЕМА БАЛЛОВ: ПРАВИЛЬНЫЙ УЧЕТ ПРИБЫЛИ И УБЫТКОВ"""
     
-    # Извлекаем все метрики
+    # Извлекаем только нужные метрики
     winrate = result['winrate']
-    expected_return = result['expected_return']
-    profit_factor = result.get('profit_factor', 0)
-    monthly_return = result.get('monthly_net_pct', 0)
-    max_drawdown = result.get('max_drawdown_pct', 100)
     signals_per_day = result['signals_per_day']
     tp_count = result['tp_count']
     sl_count = result['sl_count']
-    tp_sl_ratio = result.get('tp_sl_count_ratio', 0)
     
-    # === НОВАЯ СИСТЕМА: РЕАЛЬНЫЙ КАПИТАЛ $100 ===
+    # === ИСПРАВЛЕННАЯ СИСТЕМА: ПРАВИЛЬНЫЙ РАСЧЕТ ПРИБЫЛИ ===
     STARTING_CAPITAL = 100.0  # Стартовый капитал $100
     
     # Рассчитываем реальную прибыль/убыток
@@ -723,26 +687,38 @@ def calculate_advanced_score(result: dict, trial_number: int) -> float:
     net_tp_pct = avg_tp_pct - commission_roundtrip - spread_roundtrip
     net_sl_pct = avg_sl_pct + commission_roundtrip + spread_roundtrip
     
-    # Рассчитываем финальный капитал
-    final_capital = STARTING_CAPITAL
+    # ИСПРАВЛЕНО: Используем математическое ожидание вместо неправильной симуляции
+    winrate_decimal = winrate / 100.0
+    expected_return_per_trade = winrate_decimal * net_tp_pct - (1 - winrate_decimal) * net_sl_pct
     
-    # Симулируем каждую сделку
-    for i in range(total_trades):
-        if i < tp_count:  # Прибыльная сделка
-            final_capital *= (1 + net_tp_pct)
-        else:  # Убыточная сделка
-            final_capital *= (1 - net_sl_pct)
+    # Рассчитываем финальный капитал через компаундинг с математическим ожиданием
+    # Используем формулу сложного процента с учетом мат. ожидания
+    final_capital = STARTING_CAPITAL * (1 + expected_return_per_trade) ** total_trades
     
     # Общая прибыль/убыток в долларах и процентах
     total_profit_usd = final_capital - STARTING_CAPITAL
     total_profit_pct = (total_profit_usd / STARTING_CAPITAL) * 100
     
-    # === ПРОСТАЯ СИСТЕМА БАЛЛОВ ===
+    # === ИСПРАВЛЕННАЯ СИСТЕМА БАЛЛОВ ===
     
-    # 1. Основной скор: прибыль в долларах (1 балл = $1, без потолка)
-    base_score = max(0.0, total_profit_usd)
+    # 1. ИСПРАВЛЕННЫЙ базовый скор: прибыль в долларах (МОЖЕТ БЫТЬ ОТРИЦАТЕЛЬНЫМ!)
+    # Теперь убыточные стратегии получают отрицательные очки
+    base_score = total_profit_usd  # БЕЗ max(0.0, ...) - учитываем убытки!
     
-    # 2. Бонус за количество сделок (больше сделок = больше статистики)
+    # 2. ШТРАФ за большие убытки от SL (чем больше убытков, тем больше штраф)
+    if total_profit_usd < 0:  # Только для убыточных стратегий
+        # Дополнительный штраф: чем больше убыток, тем хуже
+        loss_penalty = abs(total_profit_usd) * 0.5  # 50% дополнительного штрафа за убыток
+        base_score -= loss_penalty
+    
+    # 3. ШТРАФ за высокий средний убыток на SL сделку
+    if sl_count > 0:
+        avg_sl_loss_pct = avg_sl_pct * 100  # в процентах
+        if avg_sl_loss_pct > 3.0:  # Если средний SL > 3%
+            sl_penalty = (avg_sl_loss_pct - 3.0) * sl_count * 2  # Штраф пропорционален количеству SL
+            base_score -= sl_penalty
+    
+    # 4. Бонус за количество сделок (больше сделок = больше статистики)
     if total_trades >= 100:  # 100+ сделок = максимум
         trades_bonus = 50
     elif total_trades >= 50:  # 50+ сделок
@@ -754,7 +730,7 @@ def calculate_advanced_score(result: dict, trial_number: int) -> float:
     else:
         trades_bonus = 0
     
-    # 3. Бонус за количество сигналов в день (больше сигналов = лучше)
+    # 5. Бонус за количество сигналов в день (больше сигналов = лучше)
     if signals_per_day >= 20:  # 20+ сигналов = максимум
         signals_bonus = 30
     elif signals_per_day >= 15:  # 15+ сигналов
@@ -766,33 +742,59 @@ def calculate_advanced_score(result: dict, trial_number: int) -> float:
     else:
         signals_bonus = 0
     
-    # 4. Бонус за низкую просадку отключён, т.к. просадка не рассчитывается
-    drawdown_bonus = 0
+    # 6. Бонус за низкую просадку отключён, т.к. просадка не рассчитывается
     
-    # 5. УПРОЩЕННЫЙ БОНУС: Соотношение TP к SL (чем больше TP чем SL, тем лучше!)
+    # 7. УЛУЧШЕННЫЙ БОНУС: Соотношение TP к SL с учетом размера убытков
     tp_sl_ratio_bonus = 0
     if tp_count > 0 and sl_count > 0:
         ratio = tp_count / sl_count
+        # Базовый бонус за соотношение
         if ratio >= 2.0:  # 2+ TP на каждый SL = максимум
-            tp_sl_ratio_bonus = 20
+            tp_sl_ratio_bonus = 25
         elif ratio >= 1.5:  # 1.5+ TP на каждый SL
-            tp_sl_ratio_bonus = 15
+            tp_sl_ratio_bonus = 18
         elif ratio >= 1.2:  # 1.2+ TP на каждый SL
-            tp_sl_ratio_bonus = 10
+            tp_sl_ratio_bonus = 12
+        elif ratio >= 1.0:  # Равное соотношение
+            tp_sl_ratio_bonus = 5
+        
+        # Дополнительный штраф, если SL слишком много по сравнению с TP
+        if ratio < 0.8:  # Меньше 0.8 TP на SL (больше SL чем TP)
+            tp_sl_ratio_bonus -= 15  # Серьезный штраф
+        
     elif tp_count > 0 and sl_count == 0:  # Только TP, нет SL!
-        tp_sl_ratio_bonus = 25  # Максимальный бонус!
+        tp_sl_ratio_bonus = 30  # Максимальный бонус!
+    elif tp_count == 0 and sl_count > 0:  # Только SL, нет TP!
+        tp_sl_ratio_bonus = -20  # Штраф за отсутствие прибыльных сделок
+    
+    # 8. ДОПОЛНИТЕЛЬНЫЙ штраф за неблагоприятное соотношение размеров TP/SL
+    tp_sl_size_penalty = 0
+    if tp_count > 0 and sl_count > 0 and avg_sl_pct > 0:
+        # Соотношение размеров (насколько TP больше SL) - используем уже имеющиеся переменные
+        tp_sl_size_ratio = avg_tp_pct / avg_sl_pct
+        
+        # Штраф, если средний SL слишком большой по сравнению с TP
+        if tp_sl_size_ratio < 1.0:  # TP меньше чем SL - плохо!
+            tp_sl_size_penalty = (1.0 - tp_sl_size_ratio) * 20  # Штраф до 20 баллов
+        elif tp_sl_size_ratio < 1.5:  # TP меньше чем 1.5 * SL - не очень хорошо
+            tp_sl_size_penalty = (1.5 - tp_sl_size_ratio) * 10  # Штраф до 5 баллов
     
     # === ФИНАЛЬНЫЙ СКОР ===
-    final_score = base_score + trades_bonus + signals_bonus + drawdown_bonus + tp_sl_ratio_bonus
+    final_score = base_score + trades_bonus + signals_bonus + tp_sl_ratio_bonus - tp_sl_size_penalty
     
-    # === ЛОГИРОВАНИЕ ===
-    if final_score > 80 and trial_number % 20 == 0:
-        tp_sl_ratio = tp_count / max(sl_count, 1) if sl_count > 0 else float('inf')
+    # === ОБНОВЛЕННОЕ ЛОГИРОВАНИЕ ===
+    if final_score > 50 and trial_number % 15 == 0:  # Понижен порог для большего логирования
+        tp_sl_count_ratio = tp_count / max(sl_count, 1) if sl_count > 0 else float('inf')
+        tp_sl_size_ratio = avg_tp_pct / max(avg_sl_pct, 0.001) if sl_count > 0 else float('inf')
+        
         logging.info(f"Trial {trial_number}: 🎯 Score={final_score:.1f} | "
                     f"Capital: ${STARTING_CAPITAL:.0f} → ${final_capital:.2f} | "
                     f"Profit: ${total_profit_usd:.2f} ({total_profit_pct:.1f}%) | "
-                    f"Trades: {total_trades} | Signals/day: {signals_per_day:.1f} | "
-                    f"TP/SL: {tp_count}/{sl_count} = {tp_sl_ratio:.2f} (+{tp_sl_ratio_bonus} bonus)")
+                    f"Trades: {total_trades} ({tp_count} TP / {sl_count} SL) | "
+                    f"Count Ratio: {tp_sl_count_ratio:.2f} | "
+                    f"Size Ratio: {tp_sl_size_ratio:.2f} | "
+                    f"Avg TP/SL: {avg_tp_pct*100:.2f}%/{avg_sl_pct*100:.2f}% | "
+                    f"Signals/day: {signals_per_day:.1f}")
     
     return final_score
 
@@ -821,8 +823,7 @@ def objective_anti_overfitting(trial: optuna.Trial) -> float:
         # УБРАНО: жесткие ограничения на drawdown - система скоринга сама отсеет плохие!
         
         # === МИНИМАЛЬНАЯ ПРОВЕРКА СТАТИСТИЧЕСКОЙ ДОСТОВЕРНОСТИ ===
-        total_signals = result['tp_count'] + result['sl_count']
-        if total_signals < 3:  # Снижено до минимума - главное чтобы были сделки
+        if result['tp_count'] + result['sl_count'] < 3:  # Снижено до минимума - главное чтобы были сделки
             return 0.0
         
         # === ВЫЗОВ ПРОСТОЙ СИСТЕМЫ БАЛЛОВ ===
@@ -860,7 +861,7 @@ def check_data_quality():
     return True
 
 def optimize_filters_anti_overfitting():
-    """🎯 ОПТИМИЗИРОВАННАЯ СИНХРОНИЗИРОВАННАЯ ОПТИМИЗАЦИЯ ДЛЯ 15М ТОРГОВЛИ (1600+ TRIALS)"""
+    """🎯 ОПТИМИЗИРОВАННАЯ СИНХРОНИЗИРОВАННАЯ ОПТИМИЗАЦИЯ ДЛЯ 15М ТОРГОВЛИ (1000 TRIALS)"""
     global GLOBAL_ALL_SYMBOLS
     
     print("🎯 ЗАПУСК ОПТИМИЗИРОВАННОЙ СИНХРОНИЗИРОВАННОЙ ОПТИМИЗАЦИИ")
@@ -892,32 +893,35 @@ def optimize_filters_anti_overfitting():
         return
     print(f"✅ Подготовлено символов: {loaded} (кэш индикаторов готов)")
     
-    N_TRIALS = 150  # УВЕЛИЧЕНО: больше попыток для поиска лучших параметров
+    N_TRIALS = 1000  # УВЕЛИЧЕНО: больше попыток для поиска лучших параметров
     
     print(f"🛡️ ОПТИМИЗИРОВАННЫЕ ЗАЩИТНЫЕ МЕРЫ:")
     print(f"  📊 Минимум сделок: 3 (было 8)")
     print(f"  💰 Учет комиссий: {COMMISSION_PCT}%")
     print(f"  📈 Учет спреда: {SPREAD_PCT}%")
     print(f"  🎯 TP диапазон: 0.8-5.0 ATR (для лучших TP/SL соотношений)")
-    print(f"  🛡️ SL диапазон: 1.0-5.0 ATR (для лучших TP/SL соотношений)")
+    print(f"  🛡️ SL диапазон: 1.0-6.0 ATR (для лучших TP/SL соотношений)")
     print(f"  🚀 ЦЕЛЬ: больше TP чем SL + хорошая прибыль - БЕЗ ОГРАНИЧЕНИЙ на сигналы!")
     
-    print(f"\n🎯 ПРОСТАЯ СИСТЕМА БАЛЛОВ: РЕАЛЬНЫЙ КАПИТАЛ $100")
-    print(f"  💰 Основной скор: прибыль в долларах (1 балл = $1, без потолка)")
-    print(f"  🎯 Дополнительные бонусы:")
+    print(f"\n🎯 ИСПРАВЛЕННАЯ СИСТЕМА БАЛЛОВ: РЕАЛЬНЫЙ КАПИТАЛ $100")
+    print(f"  💰 Основной скор: прибыль в долларах (МОЖЕТ БЫТЬ ОТРИЦАТЕЛЬНЫМ!)")
+    print(f"  🚨 ШТРАФЫ:")
+    print(f"    • За убытки: дополнительно -50% от убытка")
+    print(f"    • За большие SL: -(размер SL > 3%) * количество SL * 2")
+    print(f"    • За плохое соотношение размеров TP/SL: до -20 баллов")
+    print(f"    • За много SL по сравнению с TP: -15 баллов")
+    print(f"  🎯 Бонусы:")
     print(f"    • Количество сделок: 15+ = +10, 25+ = +20, 50+ = +30, 100+ = +50")
     print(f"    • Количество сигналов: 5+ = +10, 10+ = +15, 15+ = +20, 20+ = +30")
-    print(f"    • Низкая просадка: (временно не учитывается)")
-    print(f"    • TP/SL бонус: 1.2+ = +10, 1.5+ = +15, 2.0+ = +20")
-    print(f"    • Только TP (нет SL): +25 (максимальный бонус!)")
-    # Максимальный скор не ограничен
-    print(f"  💡 Принцип: Чем больше заработал И чем лучше соотношение TP/SL, тем лучше!")
+    print(f"    • TP/SL count бонус: 1.2+ = +12, 1.5+ = +18, 2.0+ = +25")
+    print(f"    • Только TP (нет SL): +30 (максимальный бонус!)")
+    print(f"  💡 Принцип: Максимальная прибыль с минимальными убытками от SL!")
     
     study = optuna.create_study(
         direction='maximize',
         sampler=optuna.samplers.TPESampler(
             seed=42,
-            n_startup_trials=10,            # Тщательный старт для 1000+ trials
+            n_startup_trials=40,            # Тщательный старт для 1000+ trials
             n_ei_candidates=7,              # Больше кандидатов для лучшего поиска
             constant_liar=True                # Параллельная оптимизация
         ),
@@ -930,12 +934,12 @@ def optimize_filters_anti_overfitting():
     )
     
     print(f"\n🔥 НАЧИНАЕМ ОПТИМИЗИРОВАННУЮ СИНХРОНИЗИРОВАННУЮ ОПТИМИЗАЦИЮ...")
-    print(f"🚀 ПАРАЛЛЕЛЬНАЯ ОПТИМИЗАЦИЯ: используем 3 ядра для ускорения")
+    print(f"🚀 РЕЖИМ: однопоточная оптимизация (n_jobs=1) для надежности на Windows")
     try:
         study.optimize(
             objective_anti_overfitting, 
             n_trials=N_TRIALS, 
-            n_jobs=3,                        # Умеренный параллелизм на Windows для снижения накладных
+            n_jobs=1,                        # Однопоточно: стабильный доступ к глобальному кэшу
             show_progress_bar=True
         )
         
@@ -982,7 +986,7 @@ def optimize_filters_anti_overfitting():
         for key in [
             'MIN_COMPOSITE_SCORE','MIN_ADX','SHORT_MIN_ADX','SHORT_MIN_RSI','LONG_MAX_RSI',
             'RSI_MIN','RSI_MAX','TP_ATR_MULT','SL_ATR_MULT',
-            'MIN_TRIGGERS_ACTIVE_HOURS','MIN_TRIGGERS_INACTIVE_HOURS',
+            'MIN_TRIGGERS_ACTIVE_HOURS',
             'SIGNAL_COOLDOWN_MINUTES','MIN_VOLUME_MA_RATIO','REQUIRE_MACD_HISTOGRAM_CONFIRMATION',
             'TP_MIN','SL_MIN','WEIGHT_RSI','WEIGHT_MACD','WEIGHT_BB','WEIGHT_VWAP',
             'WEIGHT_VOLUME','WEIGHT_ADX','SHORT_BOOST_MULTIPLIER','LONG_PENALTY_IN_DOWNTREND']:
@@ -1023,20 +1027,21 @@ def optimize_filters_anti_overfitting():
         print(f"\n⏹️ Оптимизация прервана")
 
 if __name__ == '__main__':
-    print("🎯 ОПТИМИЗИРОВАННАЯ ОПТИМИЗАЦИЯ (1600+ TRIALS) ГОТОВА К ЗАПУСКУ!")
+    print("🎯 ОПТИМИЗИРОВАННАЯ ОПТИМИЗАЦИЯ (1000 TRIALS) ГОТОВА К ЗАПУСКУ!")
     print("🚀 Основные улучшения ДЛЯ ВАШИХ ЦЕЛЕЙ:")
     print("  • Приоритет на выполнение задачи: больше TP чем SL, хорошая прибыль")
     print("  • БЕЗ ОГРАНИЧЕНИЙ на количество сигналов (может быть 10, 50, 100+)")
     print("  • Оптимизация для лучших TP/SL соотношений")
-    print("  • ПРОСТАЯ СИСТЕМА БАЛЛОВ: стартовый капитал $100, считаем реальную прибыль!")
-    print("  • 🆕 БОНУС: Соотношение TP/SL (чем больше TP чем SL, тем лучше!)")
-    print("  • TPE Sampler: 100 startup trials, 32 кандидата")
+    print("  • ИСПРАВЛЕННАЯ СИСТЕМА БАЛЛОВ: стартовый капитал $100, учитываем убытки!")
+    print("  • 🆕 ШТРАФЫ: за убытки, большие SL, плохие TP/SL соотношения!")
+    print("  • 🆕 БОНУСЫ: за прибыль, хорошие TP/SL соотношения!")
+    print("  • TPE Sampler: 40 startup trials, 7 кандидатов")
     print("  • MedianPruner: 80 startup trials, 20 warmup steps")
     print("  • Упрощенная система баллов с приоритетом на выполнение задачи")
     print("  • МИНИМАЛЬНЫЕ фильтры - система скоринга сама отсеет плохие результаты!")
-    print("  • Параллельная обработка на 4 ядрах")
+    print("  • Режим: однопоточная оптимизация (n_jobs=1)")
     print("  • 🎯 УПРОЩЕННАЯ СИСТЕМА БАЛЛОВ: без потолка")
-    print("  • 🚀 ЦЕЛЬ: максимизировать прибыль И соотношение TP/SL одновременно!")
-    print("  • 💡 Принцип: Чем больше заработал И чем лучше соотношение TP/SL, тем лучше!")
+    print("  • 🚀 ЦЕЛЬ: максимизировать прибыль с минимальными убытками от SL!")
+    print("  • 💡 Принцип: Максимальная прибыль с правильным учетом убытков!")
     print("="*80)
     optimize_filters_anti_overfitting() 
