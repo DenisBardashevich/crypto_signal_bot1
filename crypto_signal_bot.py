@@ -711,7 +711,7 @@ def check_signals(df, symbol):
         
         # 4. Проверка открытых позиций убрана - используем только кулдаун
         
-        # 5. Временные фильтры убраны (как в оптимизаторе - тестируем во все часы)
+        # 5. Временные фильтры (работает в любое время суток)
         hour_utc = current_time_utc.hour
         
         # 6. Базовые фильтры ADX и RSI (как в оптимизаторе)
@@ -1182,7 +1182,7 @@ async def process_symbol(symbol):
         signals = check_signals(df, symbol)
         price = df['close'].iloc[-1]
         time = df['timestamp'].iloc[-1]
-        
+        atr = df['atr'].iloc[-1] if 'atr' in df.columns else price * 0.01
         
         return signals, symbol, price, time, df, atr
     except Exception as e:
