@@ -42,6 +42,7 @@ import optuna
 import json
 from typing import Dict, Any
 import time
+import ta
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -49,6 +50,77 @@ EXCHANGE = ccxt.bybit({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'}
 })
+
+def analyze_with_params(df, params):
+    """Анализ данных с параметрами индикаторов из оптимизатора"""
+    try:
+        if df.empty or len(df) < MA_SLOW:
+            return pd.DataFrame()
+        
+        # Извлекаем параметры индикаторов (используем значения из config.py как fallback)
+        rsi_window = params.get('RSI_WINDOW', RSI_WINDOW)
+        rsi_extreme_oversold = params.get('RSI_EXTREME_OVERSOLD', RSI_EXTREME_OVERSOLD)
+        rsi_extreme_overbought = params.get('RSI_EXTREME_OVERBOUGHT', RSI_EXTREME_OVERBOUGHT)
+        atr_window = params.get('ATR_WINDOW', ATR_WINDOW)
+        adx_window = params.get('ADX_WINDOW', ADX_WINDOW)
+        bb_window = params.get('BB_WINDOW', BB_WINDOW)
+        bb_std_dev = params.get('BB_STD_DEV', BB_STD_DEV)
+        macd_fast = params.get('MACD_FAST', MACD_FAST)
+        macd_slow = params.get('MACD_SLOW', MACD_SLOW)
+        macd_signal = params.get('MACD_SIGNAL', MACD_SIGNAL)
+        stoch_rsi_k = params.get('STOCH_RSI_K', STOCH_RSI_K)
+        stoch_rsi_d = params.get('STOCH_RSI_D', STOCH_RSI_D)
+        stoch_rsi_length = params.get('STOCH_RSI_LENGTH', STOCH_RSI_LENGTH)
+        
+        # EMA с обновленными периодами
+        df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=MA_FAST)  # 9
+        df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=MA_SLOW)  # 21
+        
+        # MACD через класс ta.trend.MACD (используем параметры из оптимизатора)
+        macd_obj = ta.trend.MACD(
+            close=df['close'],
+            window_slow=macd_slow,
+            window_fast=macd_fast,
+            window_sign=macd_signal
+        )
+        df['macd_line'] = macd_obj.macd()
+        df['macd_signal'] = macd_obj.macd_signal()
+        df['macd'] = macd_obj.macd_diff()  # гистограмма
+        
+        # RSI (используем параметр из оптимизатора)
+        df['rsi'] = ta.momentum.rsi(df['close'], window=rsi_window)
+        
+        # Stochastic RSI (используем параметры из оптимизатора)
+        stoch_rsi = ta.momentum.stochrsi(df['close'], window=stoch_rsi_length, smooth1=stoch_rsi_k, smooth2=stoch_rsi_d)
+        df['stoch_rsi_k'] = stoch_rsi
+        
+        # ADX (используем параметр из оптимизатора)
+        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=adx_window)
+        
+        # ATR (используем параметр из оптимизатора)
+        df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=atr_window)
+        
+        # Bollinger Bands (используем параметры из оптимизатора)
+        bb_indicator = ta.volatility.BollingerBands(df['close'], window=bb_window, window_dev=bb_std_dev)
+        df['bb_upper'] = bb_indicator.bollinger_hband()
+        df['bb_lower'] = bb_indicator.bollinger_lband()
+        df['bb_middle'] = bb_indicator.bollinger_mavg()
+        
+        # VWAP (если включен)
+        if USE_VWAP:
+            df['vwap'] = ta.volume.volume_weighted_average_price(df['high'], df['low'], df['close'], df['volume'])
+            df['vwap_deviation'] = (df['close'] - df['vwap']) / df['vwap'] * 100
+        
+        # Объёмные фильтры (если включены)
+        if USE_VOLUME_FILTER:
+            df['volume_ma_usdt'] = df['volume_usdt'].rolling(window=bb_window).mean()
+            df['volume_ratio_usdt'] = df['volume_usdt'] / df['volume_ma_usdt']
+        
+        return df
+        
+    except Exception as e:
+        logging.error(f"Ошибка в анализе данных: {e}")
+        return pd.DataFrame()
 
 # Инициализация рынков Bybit для стабильной работы символов/рынков
 try:
@@ -139,13 +211,13 @@ def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
     """УПРОЩЕННЫЕ параметры для 15-минутной торговли с приоритетом на количество сигналов"""
     return {
         # Основные пороги (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'MIN_COMPOSITE_SCORE': trial.suggest_float('MIN_COMPOSITE_SCORE', 0.5, 4.0, step=0.5),  # ПОНИЖЕНО: для больше сигналов
+        'MIN_COMPOSITE_SCORE': trial.suggest_float('MIN_COMPOSITE_SCORE', 0.5, 2.0, step=0.5),  # ПОНИЖЕНО: для больше сигналов
         'MIN_ADX': trial.suggest_int('MIN_ADX', 6, 40, step=2),  # ПОНИЖЕНО: для больше сигналов
-        'SHORT_MIN_ADX': trial.suggest_int('SHORT_MIN_ADX', 8, 52, step=2),  # ПОНИЖЕНО: для больше сигналов
+        'SHORT_MIN_ADX': trial.suggest_int('SHORT_MIN_ADX', 20, 52, step=2),  # ПОНИЖЕНО: для больше сигналов
         
         # RSI фильтры (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'SHORT_MIN_RSI': trial.suggest_int('SHORT_MIN_RSI', 24, 90, step=2),  # ПОНИЖЕНО: для больше сигналов
-        'LONG_MAX_RSI': trial.suggest_int('LONG_MAX_RSI', 8, 60, step=2),   # ПОНИЖЕНО: больше сигналов
+        'SHORT_MIN_RSI': trial.suggest_int('SHORT_MIN_RSI', 44, 92, step=2),  # ПОНИЖЕНО: для больше сигналов
+        'LONG_MAX_RSI': trial.suggest_int('LONG_MAX_RSI', 20, 60, step=2),   # ПОНИЖЕНО: больше сигналов
         'RSI_MIN': trial.suggest_int('RSI_MIN', 6, 50, step=2),             # ПОНИЖЕНО: больше сигналов
         'RSI_MAX': trial.suggest_int('RSI_MAX', 50, 90, step=2),             # ПОНИЖЕНО: больше сигналов
         
@@ -157,13 +229,12 @@ def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
         'MIN_TRIGGERS_ACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0.1, 6.0, step=0.3),   # ПОНИЖЕНО: больше сигналов
         
         # Временные фильтры (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
-        'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 0, 60, step=5),  # Разрешаем 0 и до 90
+        'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 15, 60, step=15),  # Разрешаем 0 и до 60
         
         # Объем (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
         'MIN_VOLUME_MA_RATIO': trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.05, 3.0, step=0.05),  # Верх до 3.0
 
-        # MACD подтверждение (опционально)
-        'REQUIRE_MACD_HISTOGRAM_CONFIRMATION': trial.suggest_categorical('REQUIRE_MACD_HISTOGRAM_CONFIRMATION', [False, True]),
+        # MACD подтверждение убрано - система скоринга сама отсеет плохие сигналы
         
         # Веса скоринга (ОПТИМИЗИРОВАНО ДЛЯ БОЛЬШЕ СИГНАЛОВ)
         'WEIGHT_RSI': trial.suggest_float('WEIGHT_RSI', 0.0, 10.0, step=0.2),
@@ -182,9 +253,38 @@ def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
         # Минимальные TP/SL (проценты) - ОПТИМИЗИРОВАНО ДЛЯ ЛУЧШИХ СООТНОШЕНИЙ
         'TP_MIN': trial.suggest_float('TP_MIN', 0.006, 0.10, step=0.002),
         'SL_MIN': trial.suggest_float('SL_MIN', 0.006, 0.10, step=0.002),
+        
+        # === ПАРАМЕТРЫ ИНДИКАТОРОВ (ОПТИМИЗИРОВАНО ДЛЯ НАДЁЖНОСТИ) ===
+        # RSI параметры
+        'RSI_WINDOW': trial.suggest_int('RSI_WINDOW', 5, 20, step=1),
+        'RSI_EXTREME_OVERSOLD': trial.suggest_int('RSI_EXTREME_OVERSOLD', 10, 30, step=2),
+        'RSI_EXTREME_OVERBOUGHT': trial.suggest_int('RSI_EXTREME_OVERBOUGHT', 70, 90, step=2),
+        
+        # ATR параметры
+        'ATR_WINDOW': trial.suggest_int('ATR_WINDOW', 7, 21, step=1),
+        
+        # ADX параметры
+        'ADX_WINDOW': trial.suggest_int('ADX_WINDOW', 7, 21, step=1),
+        
+        # Bollinger Bands параметры
+        'BB_WINDOW': trial.suggest_int('BB_WINDOW', 10, 30, step=2),
+        'BB_STD_DEV': trial.suggest_float('BB_STD_DEV', 1.5, 3.0, step=0.1),
+        
+        # MACD параметры
+        'MACD_FAST': trial.suggest_int('MACD_FAST', 8, 16, step=1),
+        'MACD_SLOW': trial.suggest_int('MACD_SLOW', 20, 32, step=2),
+        'MACD_SIGNAL': trial.suggest_int('MACD_SIGNAL', 6, 12, step=1),
+        
+        # VWAP параметры
+        'VWAP_DEVIATION_THRESHOLD': trial.suggest_float('VWAP_DEVIATION_THRESHOLD', 0.2, 1.0, step=0.1),
+        
+        # Stochastic RSI параметры
+        'STOCH_RSI_K': trial.suggest_int('STOCH_RSI_K', 8, 20, step=2),
+        'STOCH_RSI_D': trial.suggest_int('STOCH_RSI_D', 2, 5, step=1),
+        'STOCH_RSI_LENGTH': trial.suggest_int('STOCH_RSI_LENGTH', 8, 20, step=2),
     }
 
-def evaluate_signal_strength_optimized(df, current_index, symbol, action, weights):
+def evaluate_signal_strength_optimized(df, current_index, symbol, action, weights, params):
     """УПРОЩЕННАЯ оценка силы сигнала без копирования DataFrame"""
     try:
         if current_index < 5 or current_index >= len(df):
@@ -194,36 +294,41 @@ def evaluate_signal_strength_optimized(df, current_index, symbol, action, weight
         last = df.iloc[current_index]
         prev = df.iloc[current_index-1] if current_index > 0 else last
         
-        return evaluate_signal_strength_with_weights_fast(last, prev, action, weights)
+        return evaluate_signal_strength_with_weights_fast(last, prev, action, weights, params)
         
     except Exception as e:
         logging.error(f"Ошибка в evaluate_signal_strength_optimized: {e}")
         return 0
 
-def evaluate_signal_strength_with_weights_fast(last, prev, action, weights):
+def evaluate_signal_strength_with_weights_fast(last, prev, action, weights, params):
     """УПРОЩЕННАЯ быстрая оценка силы сигнала"""
     try:
         score = 0
         
-        # 1. RSI анализ с переданными весами
+        # 1. RSI анализ с переданными весами (используем параметры из оптимизатора)
         rsi_score = 0
+        rsi_extreme_oversold = params.get('RSI_EXTREME_OVERSOLD', RSI_EXTREME_OVERSOLD)
+        rsi_extreme_overbought = params.get('RSI_EXTREME_OVERBOUGHT', RSI_EXTREME_OVERBOUGHT)
+        rsi_oversold = params.get('RSI_MIN', RSI_MIN)
+        rsi_overbought = params.get('RSI_MAX', RSI_MAX)
+        
         if action == 'BUY':
-            if last['rsi'] < RSI_EXTREME_OVERSOLD:
+            if last['rsi'] < rsi_extreme_oversold:
                 rsi_score = 3.0
-            elif last['rsi'] < RSI_OVERSOLD:
+            elif last['rsi'] < rsi_oversold:
                 rsi_score = 2.5
-            elif RSI_OVERSOLD < last['rsi'] < 50:
+            elif rsi_oversold < last['rsi'] < 50:
                 rsi_score = 1.5
-            elif last['rsi'] > RSI_OVERBOUGHT:
+            elif last['rsi'] > rsi_overbought:
                 rsi_score = -0.5
         elif action == 'SELL':
-            if last['rsi'] > RSI_EXTREME_OVERBOUGHT:
+            if last['rsi'] > rsi_extreme_overbought:
                 rsi_score = 3.0
-            elif last['rsi'] > RSI_OVERBOUGHT:
+            elif last['rsi'] > rsi_overbought:
                 rsi_score = 2.5
-            elif 50 < last['rsi'] < RSI_OVERBOUGHT:
+            elif 50 < last['rsi'] < rsi_overbought:
                 rsi_score = 1.5
-            elif last['rsi'] < RSI_OVERSOLD:
+            elif last['rsi'] < rsi_oversold:
                 rsi_score = -0.5
                 
         # Применяем вес RSI к базовому скору
@@ -281,21 +386,22 @@ def evaluate_signal_strength_with_weights_fast(last, prev, action, weights):
         bb_weight = weights.get('WEIGHT_BB', 2.0)
         score += bb_score * bb_weight
         
-        # 4. ОПТИМИЗИРОВАНО: VWAP анализ
+        # 4. ОПТИМИЗИРОВАНО: VWAP анализ (используем параметр из оптимизатора)
         vwap_score = 0
         if 'vwap' in last:
+            vwap_deviation_threshold = params.get('VWAP_DEVIATION_THRESHOLD', VWAP_DEVIATION_THRESHOLD)
             vwap_dev = last.get('vwap_deviation', 0)
             if action == 'BUY':
-                if vwap_dev <= -VWAP_DEVIATION_THRESHOLD * 1.5:
+                if vwap_dev <= -vwap_deviation_threshold * 1.5:
                     vwap_score = 1.5
-                elif vwap_dev <= -VWAP_DEVIATION_THRESHOLD:
+                elif vwap_dev <= -vwap_deviation_threshold:
                     vwap_score = 1.0
                 elif vwap_dev <= 0:
                     vwap_score = 0.3
             elif action == 'SELL':
-                if vwap_dev >= VWAP_DEVIATION_THRESHOLD * 1.5:
+                if vwap_dev >= vwap_deviation_threshold * 1.5:
                     vwap_score = 1.5
-                elif vwap_dev >= VWAP_DEVIATION_THRESHOLD:
+                elif vwap_dev >= vwap_deviation_threshold:
                     vwap_score = 1.0
                 elif vwap_dev >= 0:
                     vwap_score = 0.3
@@ -364,11 +470,11 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
     if df.empty or len(df) < MIN_15M_CANDLES:
         return []
     
-    # Анализируем данные один раз
+    # Анализируем данные один раз с параметрами из оптимизатора
     if 'ema_fast' in df.columns and 'atr' in df.columns:
         df_analyzed = df.copy()
     else:
-        df_analyzed = analyze(df.copy())
+        df_analyzed = analyze_with_params(df.copy(), params)
     
     if df_analyzed.empty:
         logging.warning(f"🚫 {symbol}: Пустой DataFrame после анализа")
@@ -395,6 +501,8 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
     sl_mult = params['SL_ATR_MULT']
     signal_cooldown_minutes = params['SIGNAL_COOLDOWN_MINUTES']
     min_triggers_active_hours = params['MIN_TRIGGERS_ACTIVE_HOURS']
+    
+    # Параметры индикаторов уже обработаны в analyze_with_params()
 
     # УБРАНО: Любые соотношения TP/SL допустимы, главное - общая прибыльность!
     
@@ -431,12 +539,15 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
         buy_triggers = 0
         sell_triggers = 0
         
-        # RSI триггеры (оптимизированы для 15м)
-        if last['rsi'] <= RSI_EXTREME_OVERSOLD:
+        # RSI триггеры (оптимизированы для 15м, используем параметры из оптимизатора)
+        rsi_extreme_oversold = params.get('RSI_EXTREME_OVERSOLD', RSI_EXTREME_OVERSOLD)
+        rsi_extreme_overbought = params.get('RSI_EXTREME_OVERBOUGHT', RSI_EXTREME_OVERBOUGHT)
+        
+        if last['rsi'] <= rsi_extreme_oversold:
             buy_triggers += 2.0
         elif last['rsi'] < rsi_min:
             buy_triggers += 1.0
-        if last['rsi'] >= RSI_EXTREME_OVERBOUGHT:
+        if last['rsi'] >= rsi_extreme_overbought:
             sell_triggers += 2.0
         elif last['rsi'] > rsi_max:
             sell_triggers += 1.0
@@ -481,19 +592,12 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
         if signal_type == 'SELL' and last['adx'] < short_min_adx:
             continue
             
-        # ОПТИМИЗИРОВАНО: Упрощенная MACD Histogram проверка (только для высоких скоров)
-        if signal_type and params.get('REQUIRE_MACD_HISTOGRAM_CONFIRMATION', False) and ('macd_hist' in last) and i > 0:
-            current_hist = last.get('macd_hist', last.get('macd', 0))
-            prev_hist = df_analyzed.iloc[i-1].get('macd_hist', df_analyzed.iloc[i-1].get('macd', 0))
-            if signal_type == 'BUY' and not (current_hist > 0 and prev_hist <= 0):
-                signal_type = None
-            elif signal_type == 'SELL' and not (current_hist < 0 and prev_hist >= 0):
-                signal_type = None
+        # MACD Histogram проверка убрана - система скоринга сама отсеет плохие сигналы
 
         if signal_type:
             try:
                 # ОПТИМИЗИРОВАНО: Оценка силы сигнала без копирования DataFrame
-                score = evaluate_signal_strength_optimized(df_analyzed, i, symbol, signal_type, params)
+                score = evaluate_signal_strength_optimized(df_analyzed, i, symbol, signal_type, params, params)
                 if score >= min_composite_score:
                     entry_price = last['close']
                     entry_time = now
@@ -691,9 +795,9 @@ def calculate_advanced_score(result: dict, trial_number: int) -> float:
     winrate_decimal = winrate / 100.0
     expected_return_per_trade = winrate_decimal * net_tp_pct - (1 - winrate_decimal) * net_sl_pct
     
-    # Рассчитываем финальный капитал через компаундинг с математическим ожиданием
-    # Используем формулу сложного процента с учетом мат. ожидания
-    final_capital = STARTING_CAPITAL * (1 + expected_return_per_trade) ** total_trades
+    # ИСПРАВЛЕНО: Простой расчет финального капитала без неправильного компаундинга
+    # Просто умножаем мат. ожидание на количество сделок
+    final_capital = STARTING_CAPITAL + (expected_return_per_trade * STARTING_CAPITAL * total_trades)
     
     # Общая прибыль/убыток в долларах и процентах
     total_profit_usd = final_capital - STARTING_CAPITAL
@@ -893,7 +997,7 @@ def optimize_filters_anti_overfitting():
         return
     print(f"✅ Подготовлено символов: {loaded} (кэш индикаторов готов)")
     
-    N_TRIALS = 1000  # УВЕЛИЧЕНО: больше попыток для поиска лучших параметров
+    N_TRIALS = 60  # УВЕЛИЧЕНО: больше попыток для поиска лучших параметров
     
     print(f"🛡️ ОПТИМИЗИРОВАННЫЕ ЗАЩИТНЫЕ МЕРЫ:")
     print(f"  📊 Минимум сделок: 3 (было 8)")
@@ -987,7 +1091,7 @@ def optimize_filters_anti_overfitting():
             'MIN_COMPOSITE_SCORE','MIN_ADX','SHORT_MIN_ADX','SHORT_MIN_RSI','LONG_MAX_RSI',
             'RSI_MIN','RSI_MAX','TP_ATR_MULT','SL_ATR_MULT',
             'MIN_TRIGGERS_ACTIVE_HOURS',
-            'SIGNAL_COOLDOWN_MINUTES','MIN_VOLUME_MA_RATIO','REQUIRE_MACD_HISTOGRAM_CONFIRMATION',
+            'SIGNAL_COOLDOWN_MINUTES','MIN_VOLUME_MA_RATIO',
             'TP_MIN','SL_MIN','WEIGHT_RSI','WEIGHT_MACD','WEIGHT_BB','WEIGHT_VWAP',
             'WEIGHT_VOLUME','WEIGHT_ADX','SHORT_BOOST_MULTIPLIER','LONG_PENALTY_IN_DOWNTREND']:
             if key in study.best_trial.params:

@@ -19,18 +19,18 @@ LIMIT = 400
 
 
 # === ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ===
-MIN_COMPOSITE_SCORE = 0.5
+MIN_COMPOSITE_SCORE = 1.0
 MIN_ADX = 30
-RSI_MIN = 20
-RSI_MAX = 68
-SHORT_MIN_ADX = 46
-SHORT_MIN_RSI = 88
-LONG_MAX_RSI = 46
+RSI_MIN = 34
+RSI_MAX = 70
+SHORT_MIN_ADX = 40
+SHORT_MIN_RSI = 70
+LONG_MAX_RSI = 40
 
-TP_ATR_MULT = 2.0
-SL_ATR_MULT = 5.8
+TP_ATR_MULT = 2.2
+SL_ATR_MULT = 3.6
 TP_MIN = 0.028
-SL_MIN = 0.014
+SL_MIN = 0.03
 
 # === ВРЕМЕННЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
 SIGNAL_COOLDOWN_MINUTES = 15
@@ -41,30 +41,30 @@ MIN_VOLUME_MA_RATIO = 0.1
 REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False
 
 # === RSI ПАРАМЕТРЫ ===
-RSI_WINDOW = 9  # Оптимизировано Optuna для стабильного расчета
-RSI_EXTREME_OVERSOLD = 20  # Более реалистичное значение для экстремальной перепроданности
-RSI_EXTREME_OVERBOUGHT = 80  # Более реалистичное значение для экстремальной перекупленности
-RSI_OVERSOLD = RSI_MIN       # 46 
-RSI_OVERBOUGHT = RSI_MAX     # 60
+RSI_WINDOW = 12  # Оптимизировано Optuna для стабильного расчета
+RSI_EXTREME_OVERSOLD = 14  # Более реалистичное значение для экстремальной перепроданности
+RSI_EXTREME_OVERBOUGHT = 86  # Более реалистичное значение для экстремальной перекупленности
+RSI_OVERSOLD = RSI_MIN       # 34 
+RSI_OVERBOUGHT = RSI_MAX     # 70
 
 # --- ATR ---
-ATR_WINDOW = 14  # Стандартное значение для надежного расчета волатильности
+ATR_WINDOW = 21  # Стандартное значение для надежного расчета волатильности
 
 # --- ADX ---
-ADX_WINDOW = 14  # Стандартное значение для определения силы тренда
+ADX_WINDOW = 8  # Стандартное значение для определения силы тренда
 
 # --- Bollinger Bands ---
 BB_WINDOW = 20   # Стандартное значение для стабильных полос
-BB_STD_DEV = 2.0 # Стандартное отклонение для классических полос
+BB_STD_DEV = 1.9 # Стандартное отклонение для классических полос
 
 # --- MACD ---
-MACD_FAST = 12   # Стандартное значение для быстрого MACD
-MACD_SLOW = 26   # Стандартное значение для медленного MACD
-MACD_SIGNAL = 9  # Стандартное значение для сигнальной линии
+MACD_FAST = 8   # Стандартное значение для быстрого MACD
+MACD_SLOW = 28   # Стандартное значение для медленного MACD
+MACD_SIGNAL = 12  # Стандартное значение для сигнальной линии
 
 # --- VWAP ---
 USE_VWAP = True
-VWAP_DEVIATION_THRESHOLD = 0.5  
+VWAP_DEVIATION_THRESHOLD = 0.4  
 
 # --- Telegram ---
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
@@ -83,18 +83,18 @@ ACTIVE_HOURS_UTC = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 
 USE_VOLUME_FILTER = True
 
 # --- Стохастический RSI ---
-STOCH_RSI_K = 14   # Стандартное значение для %K
+STOCH_RSI_K = 20   # Стандартное значение для %K
 STOCH_RSI_D = 3    # Стандартное значение для %D
-STOCH_RSI_LENGTH = 14  # Стандартная длина для стабильного расчета
+STOCH_RSI_LENGTH = 10  # Стандартная длина для стабильного расчета
 
 # === СИСТЕМА СКОРИНГА (ОПТИМИЗИРОВАНЫ) ===
-WEIGHT_RSI = 0.2
-WEIGHT_MACD = 3.2
-WEIGHT_BB = 5.8
-WEIGHT_VWAP = 1.2
-WEIGHT_VOLUME = 5.6
-WEIGHT_ADX = 6.6
+WEIGHT_RSI = 7.0
+WEIGHT_MACD = 8.2
+WEIGHT_BB = 5.2
+WEIGHT_VWAP = 1.0
+WEIGHT_VOLUME = 1.6
+WEIGHT_ADX = 12.0
 
 # === СИСТЕМА ДЛЯ SHORT/LONG (ОПТИМИЗИРОВАНЫ) ===
-SHORT_BOOST_MULTIPLIER = 1.8
-LONG_PENALTY_IN_DOWNTREND = 0.1
+SHORT_BOOST_MULTIPLIER = 3.0
+LONG_PENALTY_IN_DOWNTREND = 0.15
