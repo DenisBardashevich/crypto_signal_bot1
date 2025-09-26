@@ -26,24 +26,13 @@ EXCHANGE = ccxt.bybit({
     }
 })
 
-# РЕКОМЕНДОВАННЫЙ СПИСОК МОНЕТ (расширенный аудит, лучшие 34)
+# ОПТИМИЗИРОВАННЫЙ СПИСОК МОНЕТ (топ-5 прибыльных символов)
 TOP_SYMBOLS = [
-    'BTC/USDT:USDT',
-    'ETH/USDT:USDT',
-    'BNB/USDT:USDT',
-    'SOL/USDT:USDT',
-    'TON/USDT:USDT',
-    'INJ/USDT:USDT',
-    'OP/USDT:USDT',
-    'STX/USDT:USDT',
-    'SUI/USDT:USDT',
-    'IMX/USDT:USDT',
-    'UNI/USDT:USDT',
-    'ADA/USDT:USDT',
-    'LTC/USDT:USDT',
-    'ORDI/USDT:USDT',
-    'TIA/USDT:USDT',
-    'SEI/USDT:USDT'
+    'BNB/USDT:USDT',  # +81.6% прибыль (скор: 72.47)
+    'LTC/USDT:USDT',  # +39.7% прибыль (скор: 24.00)
+    'IMX/USDT:USDT',  # +25.2% прибыль (скор: 9.01)
+    'SUI/USDT:USDT',  # +16.3% прибыль (скор: 2.60)
+    'ORDI/USDT:USDT'  # +10.3% прибыль (скор: -4.09)
 ]
 markets = EXCHANGE.load_markets()
 # Фильтруем только те пары, которые есть на фьючерсах (swap) и активны
@@ -323,6 +312,9 @@ def analyze(df):
         
         # Объём с улучшенной фильтрацией (как в оптимизаторе)
         if USE_VOLUME_FILTER:
+            # ИСПРАВЛЕНО: Создаем volume_usdt если его нет
+            if 'volume_usdt' not in df.columns:
+                df['volume_usdt'] = df['volume'] * df['close']
             df['volume_ma_usdt'] = df['volume_usdt'].rolling(window=BB_WINDOW).mean()
             df['volume_ratio_usdt'] = df['volume_usdt'] / df['volume_ma_usdt']
         
@@ -414,11 +406,11 @@ def evaluate_signal_strength(df, symbol, action):
                 
         score += rsi_score * WEIGHT_RSI
         
-        # 2. MACD анализ (более мягкие условия как в оптимизаторе)
+        # 2. ИСПРАВЛЕНО: MACD анализ (используем правильные компоненты)
         macd_score = 0
-        if 'macd' in df.columns and 'macd_signal' in df.columns:
-            macd_cross = last['macd'] - last['macd_signal']
-            prev_macd_cross = prev['macd'] - prev['macd_signal']
+        if 'macd_line' in df.columns and 'macd_signal' in df.columns:
+            macd_cross = last['macd_line'] - last['macd_signal']  # ИСПРАВЛЕНО: основная линия - сигнальная линия
+            prev_macd_cross = prev['macd_line'] - prev['macd_signal']  # ИСПРАВЛЕНО: основная линия - сигнальная линия
             macd_momentum = last['macd'] - prev['macd']
             
             if action == 'BUY':
@@ -775,11 +767,11 @@ def check_signals(df, symbol):
         elif last['close'] < last['ema_fast'] and last['close'] < prev['close']:
             sell_triggers += 0.5
             
-        # MACD (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
-        if hasattr(last, 'macd') and hasattr(last, 'macd_signal'):
-            if last['macd'] > last['macd_signal']:
+        # ИСПРАВЛЕНО: MACD триггеры (используем правильные компоненты)
+        if hasattr(last, 'macd_line') and hasattr(last, 'macd_signal'):
+            if last['macd_line'] > last['macd_signal']:  # ИСПРАВЛЕНО: основная линия > сигнальная линия
                 buy_triggers += 0.5
-            if last['macd'] < last['macd_signal']:
+            if last['macd_line'] < last['macd_signal']:  # ИСПРАВЛЕНО: основная линия < сигнальная линия
                 sell_triggers += 0.5
                 
         # Bollinger Bands (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
@@ -1554,11 +1546,14 @@ def check_tp_sl(symbol, price, time, df):
 def simple_stats():
     """
     Формирует простую статистику: для каждой завершённой сделки — только монета и результат (УДАЧНО/НЕУДАЧНО),
-    внизу — общий итог по удачным и неудачным сделкам.
+    внизу — общий итог по удачным и неудачным сделкам с общим P&L.
     """
     report = []
     total_win = 0
     total_loss = 0
+    total_pnl_pct = 0.0  # Общий P&L в процентах
+    total_trades = 0
+    
     for symbol, trades in virtual_portfolio.items():
         if symbol == 'open_trades':
             continue
@@ -1605,16 +1600,34 @@ def simple_stats():
             else:
                 total_loss += 1
             
+            # Накапливаем общий P&L
+            total_pnl_pct += pnl_pct
+            total_trades += 1
+            
             # Монета, результат и процент прибыли/убытка
             report.append(f"{symbol}: {result} ({pnl_pct:+.2f}%)")
+    
     # Добавляем общую статистику
     if total_win + total_loss > 0:
         winrate = (total_win / (total_win + total_loss)) * 100
+        avg_pnl_pct = total_pnl_pct / total_trades if total_trades > 0 else 0
+        
         report.append(f"\nВсего удачных: {total_win}")
         report.append(f"Всего неудачных: {total_loss}")
         report.append(f"Винрейт: {winrate:.1f}%")
+        report.append(f"Общий P&L: {total_pnl_pct:+.2f}%")
+        report.append(f"Средний P&L: {avg_pnl_pct:+.2f}%")
+        
+        # Добавляем общую оценку результата
+        if total_pnl_pct > 0:
+            report.append(f"💰 Общий результат: ПРИБЫЛЬ (+{total_pnl_pct:.2f}%)")
+        elif total_pnl_pct < 0:
+            report.append(f"📉 Общий результат: УБЫТОК ({total_pnl_pct:.2f}%)")
+        else:
+            report.append(f"⚖️ Общий результат: БЕЗУБЫТОЧНО (0.00%)")
     else:
         report.append("\nНет завершённых сделок.")
+    
     return report, total_win, total_loss
 
 logging.basicConfig(level=logging.ERROR,
