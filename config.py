@@ -30,8 +30,8 @@ LONG_MAX_RSI = 30
 
 TP_ATR_MULT = 3.2
 SL_ATR_MULT = 4.8
-TP_MIN = 0.064
-SL_MIN = 0.01
+TP_MIN = 0.034  # Оптимизировано: 3.4% (было 6.4%)
+SL_MIN = 0.01   # Оптимально: 1.0%
 
 # === ВРЕМЕННЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
 SIGNAL_COOLDOWN_MINUTES = 15
