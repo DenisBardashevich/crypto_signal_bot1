@@ -694,14 +694,7 @@ def check_signals(df, symbol):
             if last['macd_line'] < last['macd_signal']:  # ИСПРАВЛЕНО: основная линия < сигнальная линия
                 sell_triggers += 0.5
                 
-        # Bollinger Bands (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
-        if 'bollinger_low' in df.columns:
-            denom = max((last['bollinger_high'] - last['bollinger_low']), 1e-12)
-            bb_position = (last['close'] - last['bollinger_low']) / denom
-            if bb_position <= 0.25:  # Более строго для 15м (как в оптимизаторе)
-                buy_triggers += 0.5
-            if bb_position >= 0.75:  # Более строго для 15м (как в оптимизаторе)
-                sell_triggers += 0.5
+        # Bollinger Bands убраны - исключены для упрощения
                 
         # VWAP триггеры отключены (упрощение и снижение шума)
                 
@@ -795,9 +788,6 @@ def check_signals(df, symbol):
                     signal += f"Триггеры: {triggers:.1f}"
                     if USE_VWAP and 'vwap' in df.columns:
                         signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
-                    if 'bb_width' in df.columns:
-                        bb_width = (last['bollinger_high'] - last['bollinger_low']) / last['close']
-                        signal += f" | BB: {bb_width*100:.1f}%"
                     
                     signals.append(signal)
                     
