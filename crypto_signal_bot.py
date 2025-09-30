@@ -284,9 +284,7 @@ def analyze(df):
         # RSI с оптимизированным окном
         df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)  # 9
         
-        # Stochastic RSI для дополнительного подтверждения
-        stoch_rsi = ta.momentum.stochrsi(df['close'], window=STOCH_RSI_LENGTH, smooth1=STOCH_RSI_K, smooth2=STOCH_RSI_D)
-        df['stoch_rsi_k'] = stoch_rsi * 100  # Приводим к шкале 0-100
+        # Stochastic RSI убран - исключен для упрощения
         
         # ADX для определения силы тренда
         df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=ADX_WINDOW)
@@ -294,29 +292,11 @@ def analyze(df):
         # ATR для расчёта TP/SL
         df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
         
-        # Bollinger Bands с новыми настройками
-        bb_indicator = ta.volatility.BollingerBands(df['close'], window=BB_WINDOW, window_dev=BB_STD_DEV)
-        df['bollinger_mid'] = bb_indicator.bollinger_mavg()
-        df['bollinger_high'] = bb_indicator.bollinger_hband()
-        df['bollinger_low'] = bb_indicator.bollinger_lband()
-        df['bb_width'] = (df['bollinger_high'] - df['bollinger_low']) / df['bollinger_mid']
+        # Bollinger Bands убраны - исключены для упрощения
         
-        # VWAP (критически важен для 15м)
-        if USE_VWAP:
-            # Простой расчет VWAP
-            df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
-            df['vwap_numerator'] = (df['typical_price'] * df['volume']).cumsum()
-            df['vwap_denominator'] = df['volume'].cumsum()
-            df['vwap'] = df['vwap_numerator'] / df['vwap_denominator']
-            df['vwap_deviation'] = (df['close'] - df['vwap']) / df['vwap']
+        # VWAP убран - исключен для упрощения
         
-        # Объём с улучшенной фильтрацией (как в оптимизаторе)
-        if USE_VOLUME_FILTER:
-            # ИСПРАВЛЕНО: Создаем volume_usdt если его нет
-            if 'volume_usdt' not in df.columns:
-                df['volume_usdt'] = df['volume'] * df['close']
-            df['volume_ma_usdt'] = df['volume_usdt'].rolling(window=BB_WINDOW).mean()
-            df['volume_ratio_usdt'] = df['volume_usdt'] / df['volume_ma_usdt']
+        # Объемные фильтры убраны - исключены для упрощения
         
         
         # Очистка данных
@@ -436,64 +416,11 @@ def evaluate_signal_strength(df, symbol, action):
                     macd_score = 0  # Нет штрафа
         score += macd_score * WEIGHT_MACD
         
-        # 3. Bollinger Bands (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
-        bb_score = 0
-        if 'bollinger_low' in df.columns and 'bollinger_high' in df.columns:
-            close = last['close']
-            bb_position = (close - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
-            
-            if action == 'BUY':
-                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
-                if bb_position <= 0.05:  # как в оптимизаторе
-                    bb_score = 1.5
-                elif bb_position <= 0.15:  # как в оптимизаторе
-                    bb_score = 1.0
-                elif bb_position <= 0.3:  # как в оптимизаторе
-                    bb_score = 0.5
-            elif action == 'SELL':
-                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
-                if bb_position >= 0.95:  # как в оптимизаторе
-                    bb_score = 1.5
-                elif bb_position >= 0.85:  # как в оптимизаторе
-                    bb_score = 1.0
-                elif bb_position >= 0.7:  # как в оптимизаторе
-                    bb_score = 0.5
-        score += bb_score * WEIGHT_BB
+        # 3. Bollinger Bands убраны - исключены для упрощения
         
-        # 4. VWAP анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
-        vwap_score = 0
-        if USE_VWAP and 'vwap' in df.columns:
-            vwap_dev = last.get('vwap_deviation', 0)
-            if action == 'BUY':
-                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
-                if vwap_dev <= -VWAP_DEVIATION_THRESHOLD * 1.5:  # как в оптимизаторе
-                    vwap_score = 1.5
-                elif vwap_dev <= -VWAP_DEVIATION_THRESHOLD:  # как в оптимизаторе
-                    vwap_score = 1.0
-                elif vwap_dev <= 0:  # как в оптимизаторе
-                    vwap_score = 0.3
-            elif action == 'SELL':
-                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
-                if vwap_dev >= VWAP_DEVIATION_THRESHOLD * 1.5:  # как в оптимизаторе
-                    vwap_score = 1.5
-                elif vwap_dev >= VWAP_DEVIATION_THRESHOLD:  # как в оптимизаторе
-                    vwap_score = 1.0
-                elif vwap_dev >= 0:  # как в оптимизаторе
-                    vwap_score = 0.3
-        score += vwap_score * WEIGHT_VWAP
+        # 4. VWAP анализ убран - исключен для упрощения
         
-        # 5. Объём анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
-        volume_score = 0
-        if USE_VOLUME_FILTER and 'volume_ratio_usdt' in df.columns:
-            vol_ratio = last.get('volume_ratio_usdt', 1.0)
-            # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
-            if vol_ratio >= 2.0:  # как в оптимизаторе
-                volume_score = 1.5
-            elif vol_ratio >= 1.5:  # как в оптимизаторе
-                volume_score = 1.0
-            elif vol_ratio >= 1.2:  # как в оптимизаторе
-                volume_score = 0.5
-        score += volume_score * WEIGHT_VOLUME
+        # 5. Объемный анализ убран - исключен для упрощения
         
         # 6. ADX анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         adx_score = 0
@@ -529,14 +456,7 @@ def evaluate_signal_strength(df, symbol, action):
             elif action == 'SELL' and price_trend > 0.01 and rsi_trend < -0.02:  # Строже
                 bonus_score += 0.5  # было 1.0, теперь 0.5
         
-        # Stochastic RSI (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
-        if 'stoch_rsi_k' in df.columns:
-            stoch_k = last.get('stoch_rsi_k', 50)
-            # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
-            if action == 'BUY' and stoch_k <= 15:  # как в оптимизаторе
-                bonus_score += 0.3
-            elif action == 'SELL' and stoch_k >= 85:  # как в оптимизаторе
-                bonus_score += 0.3
+        # Stochastic RSI убран - исключен для упрощения
         
         score += bonus_score
         

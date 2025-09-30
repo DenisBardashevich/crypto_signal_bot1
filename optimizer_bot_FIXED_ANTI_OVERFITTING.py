@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+УПРОЩЕННЫЙ ОПТИМИЗАТОР ПАРАМЕТРОВ ДЛЯ 15М КРИПТОТОРГОВЛИ
+========================================================
+🎯 ФОКУС: Только основные индикаторы для надежных сигналов
+🛡️ УБРАНО: Bollinger Bands, VWAP, Stochastic RSI, объемные фильтры
+⚡ ОСТАВЛЕНО: EMA, RSI, MACD, ADX, ATR
+📊 КОМБИНАЦИИ: Используются проверенные комбинации EMA и MACD
+🚀 РЕЗУЛЬТАТ: Быстрая оптимизация, меньше переоптимизации
+"""
 
 import ccxt
 import pandas as pd
@@ -29,8 +38,17 @@ EMA_COMBINATIONS = [
     (10, 20),  # 🎯 ПЯТАЯ: Универсальная, проверенная временем
 ]
 
+# Проверенные MACD комбинации для 15м
+MACD_COMBINATIONS = [
+    (12, 26, 9),   # 🏆 Классическая MACD
+    (8, 21, 5),    # 🥈 Быстрая MACD
+    (10, 24, 7),   # 🥉 Сбалансированная MACD
+    (14, 28, 11),  # 🎯 Медленная MACD
+    (9, 18, 6),    # 🎯 Универсальная MACD
+]
+
 def analyze_with_params(df, params):
-    """Анализ данных с параметрами индикаторов"""
+    """УПРОЩЕННЫЙ анализ данных - только основные индикаторы"""
     try:
         ma_slow = params['MA_SLOW']
         if df.empty or len(df) < ma_slow:
@@ -42,14 +60,9 @@ def analyze_with_params(df, params):
         rsi_extreme_overbought = params['RSI_EXTREME_OVERBOUGHT']
         atr_window = params['ATR_WINDOW']
         adx_window = params['ADX_WINDOW']
-        bb_window = params['BB_WINDOW']
-        bb_std_dev = params['BB_STD_DEV']
         macd_fast = params['MACD_FAST']
         macd_slow = params['MACD_SLOW']
         macd_signal = params['MACD_SIGNAL']
-        stoch_rsi_k = params['STOCH_RSI_K']
-        stoch_rsi_d = params['STOCH_RSI_D']
-        stoch_rsi_length = params['STOCH_RSI_LENGTH']
         
         # EMA с оптимизируемыми периодами
         ma_fast = params['MA_FAST']
@@ -71,35 +84,11 @@ def analyze_with_params(df, params):
         # RSI
         df['rsi'] = ta.momentum.rsi(df['close'], window=rsi_window)
         
-        # Stochastic RSI
-        stoch_rsi = ta.momentum.stochrsi(df['close'], window=stoch_rsi_length, smooth1=stoch_rsi_k, smooth2=stoch_rsi_d)
-        df['stoch_rsi_k'] = stoch_rsi
-        
         # ADX
         df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=adx_window)
         
         # ATR
         df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=atr_window)
-        
-        # Bollinger Bands
-        bb_indicator = ta.volatility.BollingerBands(df['close'], window=bb_window, window_dev=bb_std_dev)
-        df['bb_upper'] = bb_indicator.bollinger_hband()
-        df['bb_lower'] = bb_indicator.bollinger_lband()
-        df['bb_middle'] = bb_indicator.bollinger_mavg()
-        df['bollinger_high'] = df['bb_upper']
-        df['bollinger_low'] = df['bb_lower']
-        
-        # VWAP (если включен)
-        if USE_VWAP:
-            df['vwap'] = ta.volume.volume_weighted_average_price(df['high'], df['low'], df['close'], df['volume'])
-            df['vwap_deviation'] = (df['close'] - df['vwap']) / df['vwap'] * 100
-        
-        # Объёмные фильтры (если включены)
-        if USE_VOLUME_FILTER:
-            if 'volume_usdt' not in df.columns:
-                df['volume_usdt'] = df['volume'] * df['close']
-            df['volume_ma_usdt'] = df['volume_usdt'].rolling(window=bb_window).mean()
-            df['volume_ratio_usdt'] = df['volume_usdt'] / df['volume_ma_usdt']
         
         return df
         
@@ -114,14 +103,13 @@ except Exception as e:
     logging.warning(f"Не удалось загрузить рынки: {e}")
 
 # --- ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ ---
-GLOBAL_HOURS_BACK = 1200  # УВЕЛИЧЕНО: ~50 дней истории для более надежной оптимизации
-GLOBAL_ACTIVE_HOURS_UTC = ACTIVE_HOURS_UTC  # из config.py
+GLOBAL_HOURS_BACK = 1000  # УВЕЛИЧЕНО: ~50 дней истории для более надежной оптимизации
  
 GLOBAL_ALL_SYMBOLS = []
 DATA_CACHE_ANALYZED: Dict[str, pd.DataFrame] = {}
 
 # --- УПРОЩЕННЫЕ ОГРАНИЧЕНИЯ ДЛЯ 15М ФЬЮЧЕРСОВ ---
-MIN_SL_COUNT = 2      # Минимум SL сделок для статистики
+MIN_SL_COUNT = 3      # Минимум сделок для базовой статистики
 
 def get_all_symbols_from_data():
     """Используем те же символы что и в crypto_signal_bot.py"""
@@ -183,29 +171,36 @@ def get_historical_data(symbol, hours_back=72):
         return pd.DataFrame()
 
 def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
-    """Параметры для оптимизации"""
+    """УПРОЩЕННЫЕ параметры для оптимизации - только нужные фильтры"""
     
     # EMA периоды: ТОП-5 комбинаций
     ma_idx = trial.suggest_int('MA_COMBINATION', 0, len(EMA_COMBINATIONS) - 1)
     ma_fast, ma_slow = EMA_COMBINATIONS[ma_idx]
     
+    # MACD периоды: ТОП-5 комбинаций
+    macd_idx = trial.suggest_int('MACD_COMBINATION', 0, len(MACD_COMBINATIONS) - 1)
+    macd_fast, macd_slow, macd_signal = MACD_COMBINATIONS[macd_idx]
+    
     params = {
         'MA_FAST': ma_fast,
         'MA_SLOW': ma_slow,
+        'MACD_FAST': macd_fast,
+        'MACD_SLOW': macd_slow,
+        'MACD_SIGNAL': macd_signal,
     }
     
     # RSI фильтры
     rsi_min = trial.suggest_int('RSI_MIN', 20, 80, step=2)
     rsi_max = trial.suggest_int('RSI_MAX', rsi_min + 2, 96, step=2)
     
-    long_max_rsi = trial.suggest_int('LONG_MAX_RSI', 10, 80, step=2)
-    short_min_rsi = trial.suggest_int('SHORT_MIN_RSI', 20, 90, step=2)
+    long_max_rsi = trial.suggest_int('LONG_MAX_RSI', 30, 90, step=2)
+    short_min_rsi = trial.suggest_int('SHORT_MIN_RSI', 30, 90, step=2)
     
     params.update({
         # Основные пороги
-        'MIN_COMPOSITE_SCORE': trial.suggest_float('MIN_COMPOSITE_SCORE', 0, 1.5, step=0.5),
-        'MIN_ADX': trial.suggest_int('MIN_ADX', 6, 40, step=2),
-        'SHORT_MIN_ADX': trial.suggest_int('SHORT_MIN_ADX', 20, 52, step=2),
+        'MIN_COMPOSITE_SCORE': trial.suggest_float('MIN_COMPOSITE_SCORE', 0, 1, step=0.5),
+        'MIN_ADX': trial.suggest_int('MIN_ADX', 6, 22, step=2),
+        'SHORT_MIN_ADX': trial.suggest_int('SHORT_MIN_ADX', 6, 28, step=2),
         
         # RSI фильтры
         'RSI_MIN': rsi_min,
@@ -214,54 +209,35 @@ def suggest_parameters_anti_overfitting(trial: optuna.Trial) -> Dict[str, Any]:
         'SHORT_MIN_RSI': short_min_rsi,
         
         # TP/SL
-        'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.8, 6.0, step=0.2),
-        'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 1.0, 8.0, step=0.2),
+        'TP_ATR_MULT': trial.suggest_float('TP_ATR_MULT', 0.5, 6.0, step=0.5),
+        'SL_ATR_MULT': trial.suggest_float('SL_ATR_MULT', 1.0, 8.0, step=0.5),
 
         # Триггеры
-        'MIN_TRIGGERS_ACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0, 6.0, step=0.3),
+        'MIN_TRIGGERS_ACTIVE_HOURS': trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0, 6.0, step=0.5),
         
         # Временные фильтры
-        'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 15, 60, step=15),
+        'SIGNAL_COOLDOWN_MINUTES': trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 40, 80, step=20),
         
-        # Объем
-        'MIN_VOLUME_MA_RATIO': trial.suggest_float('MIN_VOLUME_MA_RATIO', 0, 3.0, step=0.05),
-        
-        # Веса скоринга
-        'WEIGHT_RSI': trial.suggest_float('WEIGHT_RSI', 0.0, 10.0, step=0.2),
-        'WEIGHT_MACD': trial.suggest_float('WEIGHT_MACD', 0.0, 9.0, step=0.2),
-        'WEIGHT_BB': trial.suggest_float('WEIGHT_BB', 0.0, 6.0, step=0.2),
-        'WEIGHT_VWAP': trial.suggest_float('WEIGHT_VWAP', 0.0, 12.0, step=0.2),
-        'WEIGHT_VOLUME': trial.suggest_float('WEIGHT_VOLUME', 0.0, 6.0, step=0.2),
-        'WEIGHT_ADX': trial.suggest_float('WEIGHT_ADX', 0.0, 12.0, step=0.2),
+        # УПРОЩЕННЫЕ веса скоринга (только основные)
+        'WEIGHT_RSI': trial.suggest_float('WEIGHT_RSI', 0.0, 10.0, step=0.5),
+        'WEIGHT_MACD': trial.suggest_float('WEIGHT_MACD', 0.0, 9.0, step=0.5),
+        'WEIGHT_ADX': trial.suggest_float('WEIGHT_ADX', 0.0, 12.0, step=0.5),
         
         # Множители направления
-        'SHORT_BOOST_MULTIPLIER': trial.suggest_float('SHORT_BOOST_MULTIPLIER', 0, 5.0, step=0.2),
+        'SHORT_BOOST_MULTIPLIER': trial.suggest_float('SHORT_BOOST_MULTIPLIER', 0, 5.0, step=0.5),
         'LONG_PENALTY_IN_DOWNTREND': trial.suggest_float('LONG_PENALTY_IN_DOWNTREND', 0.0, 1.0, step=0.05),
 
         # Минимальные TP/SL
-        'TP_MIN': trial.suggest_float('TP_MIN', 0.006, 0.10, step=0.002),
-        'SL_MIN': trial.suggest_float('SL_MIN', 0.01, 0.10, step=0.002),
+        'TP_MIN': trial.suggest_float('TP_MIN', 0.006, 0.10, step=0.003),
+        'SL_MIN': trial.suggest_float('SL_MIN', 0.01, 0.10, step=0.003),
         
-        # Параметры индикаторов
-        'RSI_WINDOW': trial.suggest_categorical('RSI_WINDOW', [5, 7, 9, 12, 14, 18, 21, 24]),
-        'RSI_EXTREME_OVERSOLD': trial.suggest_categorical('RSI_EXTREME_OVERSOLD', [10, 12, 15, 18, 20, 22, 25, 28]),
-        'RSI_EXTREME_OVERBOUGHT': trial.suggest_categorical('RSI_EXTREME_OVERBOUGHT', [72, 75, 78, 80, 82, 85, 88, 90]),
+        # УПРОЩЕННЫЕ параметры индикаторов (только основные)
+        'RSI_WINDOW': trial.suggest_categorical('RSI_WINDOW', [9, 12, 14, 18, 21]),
+        'RSI_EXTREME_OVERSOLD': trial.suggest_categorical('RSI_EXTREME_OVERSOLD', [15, 18, 20, 22, 25]),
+        'RSI_EXTREME_OVERBOUGHT': trial.suggest_categorical('RSI_EXTREME_OVERBOUGHT', [75, 78, 80, 82, 85]),
         
-        'ATR_WINDOW': trial.suggest_categorical('ATR_WINDOW', [5,7, 10, 12, 14, 16, 18, 20, 24]),
-        'ADX_WINDOW': trial.suggest_categorical('ADX_WINDOW', [7, 10, 12, 14, 16, 18, 20, 24]),
-        
-        'BB_WINDOW': trial.suggest_categorical('BB_WINDOW', [10, 12, 15, 18, 20, 22, 25, 28, 30]),
-        'BB_STD_DEV': trial.suggest_categorical('BB_STD_DEV', [1.2, 1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0, 3.2]),
-        
-        'MACD_FAST': trial.suggest_categorical('MACD_FAST', [4, 6, 8, 10, 12, 14, 16, 18, 20]),
-        'MACD_SLOW': trial.suggest_categorical('MACD_SLOW', [18, 21, 24, 26, 28, 30, 32, 35]),
-        'MACD_SIGNAL': trial.suggest_categorical('MACD_SIGNAL', [4, 6, 8, 9, 10, 12, 14, 16]),
-        
-        'VWAP_DEVIATION_THRESHOLD': trial.suggest_categorical('VWAP_DEVIATION_THRESHOLD', [0, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 1.0, 1.2]),
-        
-        'STOCH_RSI_K': trial.suggest_categorical('STOCH_RSI_K', [1,     2, 3, 4, 5, 6, 8, 10, 12]),
-        'STOCH_RSI_D': trial.suggest_categorical('STOCH_RSI_D', [0, 1, 2, 3, 4, 5, 6, 7, 8]),
-        'STOCH_RSI_LENGTH': trial.suggest_categorical('STOCH_RSI_LENGTH', [6, 8, 10, 12, 14, 16, 18, 20, 22, 24]),
+        'ATR_WINDOW': trial.suggest_categorical('ATR_WINDOW', [10, 14, 20]),
+        'ADX_WINDOW': trial.suggest_categorical('ADX_WINDOW', [10, 14, 20]),
     })
     
     return params
@@ -282,7 +258,7 @@ def evaluate_signal_strength_optimized(df, current_index, symbol, action, weight
         return 0
 
 def evaluate_signal_strength_with_weights_fast(last, prev, action, weights, params):
-    """Быстрая оценка силы сигнала"""
+    """УПРОЩЕННАЯ оценка силы сигнала - только основные индикаторы"""
     try:
         score = 0
         
@@ -337,66 +313,7 @@ def evaluate_signal_strength_with_weights_fast(last, prev, action, weights, para
                     
         score += macd_score * weights['WEIGHT_MACD']
         
-        # Bollinger Bands
-        bb_score = 0
-        if ('bollinger_low' in last) and ('bollinger_high' in last):
-            close = last['close']
-            bb_denom = max((last['bollinger_high'] - last['bollinger_low']), 1e-12)
-            bb_position = (close - last['bollinger_low']) / bb_denom
-            
-            if action == 'BUY':
-                if bb_position <= 0.05:
-                    bb_score = 1.5
-                elif bb_position <= 0.15:
-                    bb_score = 1.0
-                elif bb_position <= 0.3:
-                    bb_score = 0.5
-            elif action == 'SELL':
-                if bb_position >= 0.95:
-                    bb_score = 1.5
-                elif bb_position >= 0.85:
-                    bb_score = 1.0
-                elif bb_position >= 0.7:
-                    bb_score = 0.5
-                    
-        score += bb_score * weights['WEIGHT_BB']
-        
-        # VWAP анализ
-        vwap_score = 0
-        if 'vwap' in last:
-            vwap_deviation_threshold = params['VWAP_DEVIATION_THRESHOLD']
-            vwap_dev = last.get('vwap_deviation', 0)
-            if action == 'BUY':
-                if vwap_dev <= -vwap_deviation_threshold * 1.5:
-                    vwap_score = 1.5
-                elif vwap_dev <= -vwap_deviation_threshold:
-                    vwap_score = 1.0
-                elif vwap_dev <= 0:
-                    vwap_score = 0.3
-            elif action == 'SELL':
-                if vwap_dev >= vwap_deviation_threshold * 1.5:
-                    vwap_score = 1.5
-                elif vwap_dev >= vwap_deviation_threshold:
-                    vwap_score = 1.0
-                elif vwap_dev >= 0:
-                    vwap_score = 0.3
-                    
-        score += vwap_score * weights['WEIGHT_VWAP']
-        
-        # Объём анализ
-        volume_score = 0
-        if 'volume_ratio_usdt' in last:
-            vol_ratio = last.get('volume_ratio_usdt', 1.0)
-            if vol_ratio >= 2.0:
-                volume_score = 1.5
-            elif vol_ratio >= 1.5:
-                volume_score = 1.0
-            elif vol_ratio >= 1.2:
-                volume_score = 0.5
-                
-        score += volume_score * weights['WEIGHT_VOLUME']
-        
-        # ADX анализ
+        # ADX анализ (сила тренда)
         adx_score = 0
         min_adx = params['MIN_ADX']
         
@@ -429,9 +346,9 @@ def evaluate_signal_strength_with_weights_fast(last, prev, action, weights, para
         logging.error(f"Ошибка в evaluate_signal_strength_with_weights_fast: {e}")
         return 0
 
-def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
+def simulate_signals_anti_overfitting(df, symbol, params):
     """Симуляция сигналов"""
-    min_candles_needed = MIN_15M_CANDLES + 96
+    min_candles_needed = MIN_15M_CANDLES + 50
     if df.empty or len(df) < min_candles_needed:
         logging.warning(f"🚫 {symbol}: Недостаточно данных для симуляции ({len(df)} < {min_candles_needed})")
         return []
@@ -458,23 +375,18 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
     signal_cooldown_minutes = params['SIGNAL_COOLDOWN_MINUTES']
     min_triggers_active_hours = params['MIN_TRIGGERS_ACTIVE_HOURS']
     
-    # Исключаем последние 96 свечей для предотвращения look-ahead bias
-    for i in range(MIN_15M_CANDLES, len(df_analyzed) - 96):
+    # Исключаем последние 4 свечи для предотвращения look-ahead bias
+    for i in range(MIN_15M_CANDLES, len(df_analyzed) - 4):
         last = df_analyzed.iloc[i]
         prev = df_analyzed.iloc[i-1] if i > 0 else df_analyzed.iloc[i]
         now = last['timestamp']
-            
+        
         # Кулдаун
         if last_signal_time and (now - last_signal_time).total_seconds() < signal_cooldown_minutes * 60:
             continue
             
         # Базовые фильтры
         if last['adx'] < min_adx:
-            continue
-            
-        # Проверка объёма
-        min_volume_ratio = params['MIN_VOLUME_MA_RATIO']
-        if 'volume_ratio_usdt' in last and last.get('volume_ratio_usdt', 1.0) < min_volume_ratio:
             continue
         
         # Триггеры
@@ -494,31 +406,18 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
         elif last['rsi'] > rsi_max:
             sell_triggers += 1.0
         
-        # EMA кроссовер
+        # EMA кроссовер - только чистые пересечения
         if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-            buy_triggers += 1.5
-        elif last['close'] > last['ema_fast'] and last['close'] > prev['close']:
-            buy_triggers += 0.5
+            buy_triggers += 2.0
         if prev['ema_fast'] >= prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-            sell_triggers += 1.5
-        elif last['close'] < last['ema_fast'] and last['close'] < prev['close']:
-            sell_triggers += 0.5
+            sell_triggers += 2.0
             
-        # MACD триггеры
-        if ('macd_line' in last) and ('macd_signal' in last):
-            if last['macd_line'] > last['macd_signal']:
-                buy_triggers += 0.5
-            if last['macd_line'] < last['macd_signal']:
-                sell_triggers += 0.5
-        
-        # Bollinger Bands
-        if ('bollinger_low' in last) and ('bollinger_high' in last):
-            denom = max((last['bollinger_high'] - last['bollinger_low']), 1e-12)
-            bb_position = (last['close'] - last['bollinger_low']) / denom
-            if bb_position <= 0.25:
-                buy_triggers += 0.5
-            if bb_position >= 0.75:
-                sell_triggers += 0.5
+        # MACD кроссовер - только чистые пересечения
+        if ('macd_line' in last) and ('macd_signal' in last) and ('macd_line' in prev) and ('macd_signal' in prev):
+            if prev['macd_line'] <= prev['macd_signal'] and last['macd_line'] > last['macd_signal']:
+                buy_triggers += 1.5
+            if prev['macd_line'] >= prev['macd_signal'] and last['macd_line'] < last['macd_signal']:
+                sell_triggers += 1.5
                 
         # Минимальные триггеры
         min_triggers = min_triggers_active_hours
@@ -560,17 +459,16 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
                         sl_pct_min = params['SL_MIN']
 
                         # Применяем минимальные проценты
-                        def enforce_min_levels(entry, tp_price, sl_price, side):
-                            if side == 'BUY':
-                                tp_eff = max((tp_price - entry) / entry, tp_pct_min)
-                                sl_eff = max((entry - sl_price) / entry, sl_pct_min)
-                                return entry * (1 + tp_eff), entry * (1 - sl_eff)
-                            else:
-                                tp_eff = max((entry - tp_price) / entry, tp_pct_min)
-                                sl_eff = max((sl_price - entry) / entry, sl_pct_min)
-                                return entry * (1 - tp_eff), entry * (1 + sl_eff)
-
-                        tp_price, sl_price = enforce_min_levels(entry_price, tp_price, sl_price, signal_type)
+                        if signal_type == 'BUY':
+                            tp_eff = max((tp_price - entry_price) / entry_price, tp_pct_min)
+                            sl_eff = max((entry_price - sl_price) / entry_price, sl_pct_min)
+                            tp_price = entry_price * (1 + tp_eff)
+                            sl_price = entry_price * (1 - sl_eff)
+                        else:
+                            tp_eff = max((entry_price - tp_price) / entry_price, tp_pct_min)
+                            sl_eff = max((sl_price - entry_price) / entry_price, sl_pct_min)
+                            tp_price = entry_price * (1 - tp_eff)
+                            sl_price = entry_price * (1 + sl_eff)
 
                         # Векторизованный поиск TP/SL
                         result = None
@@ -619,24 +517,29 @@ def simulate_signals_anti_overfitting(df, symbol, params, active_hours_utc):
 
     return signals
 
-def restore_ema_params_from_combination(params):
-    """Восстанавливает MA_FAST и MA_SLOW из MA_COMBINATION"""
+def restore_params_from_combinations(params):
+    """Восстанавливает MA и MACD параметры из комбинаций"""
     if 'MA_COMBINATION' in params:
         ma_idx = params['MA_COMBINATION']
         ma_fast, ma_slow = EMA_COMBINATIONS[ma_idx]
         params['MA_FAST'] = ma_fast
         params['MA_SLOW'] = ma_slow
     
+    if 'MACD_COMBINATION' in params:
+        macd_idx = params['MACD_COMBINATION']
+        macd_fast, macd_slow, macd_signal = MACD_COMBINATIONS[macd_idx]
+        params['MACD_FAST'] = macd_fast
+        params['MACD_SLOW'] = macd_slow
+        params['MACD_SIGNAL'] = macd_signal
+    
     return params
 
-def test_single_params_anti_overfitting(params, hours_back=None, active_hours_utc=None):
+def test_single_params_anti_overfitting(params, hours_back=None):
     """Тестирует один набор параметров"""
     if hours_back is None:
         hours_back = GLOBAL_HOURS_BACK
-    if active_hours_utc is None:
-        active_hours_utc = GLOBAL_ACTIVE_HOURS_UTC
     
-    params = restore_ema_params_from_combination(params)
+    params = restore_params_from_combinations(params)
         
     all_signals = []
     
@@ -644,7 +547,7 @@ def test_single_params_anti_overfitting(params, hours_back=None, active_hours_ut
         df_raw = DATA_CACHE_ANALYZED.get(symbol)
         if df_raw is None or df_raw.empty:
             continue
-        signals = simulate_signals_anti_overfitting(df_raw, symbol, params, active_hours_utc)
+        signals = simulate_signals_anti_overfitting(df_raw, symbol, params)
         all_signals.extend(signals)
     
     if not all_signals:
@@ -694,48 +597,35 @@ def test_single_params_anti_overfitting(params, hours_back=None, active_hours_ut
     }
 
 def calculate_advanced_score(result: dict, trial_number: int) -> float:
-    """Упрощенная система баллов без комиссий"""
+    """Улучшенная система баллов - учитывает общую прибыльность и количество сигналов"""
     
     winrate = result['winrate']
     tp_count = result['tp_count']
     sl_count = result['sl_count']
     avg_tp_pct = result.get('avg_tp_pct', 0)
     avg_sl_pct = result.get('avg_sl_pct', 0)
+    total_signals = result['signals']
+    signals_per_day = result['signals_per_day']
     
     total_trades = tp_count + sl_count
     if total_trades == 0:
         return 0.0
     
-    # Простое математическое ожидание (в процентах)
+    # Математическое ожидание на сделку (в процентах)
     winrate_decimal = winrate / 100.0
-    expected_return = winrate_decimal * avg_tp_pct - (1 - winrate_decimal) * avg_sl_pct
+    expected_return_per_trade = winrate_decimal * avg_tp_pct - (1 - winrate_decimal) * avg_sl_pct
     
-    # Базовый скор - математическое ожидание
-    base_score = expected_return
+    # Общая прибыльность = мат. ожидание * количество сделок
+    total_profitability = expected_return_per_trade * total_signals
     
-    # Бонус за количество сделок
-    trades_bonus = min(total_trades * 0.1, 20)
-    
-    # Бонус за винрейт
-    winrate_bonus = 0
-    if winrate >= 70:
-        winrate_bonus = 8
-    elif winrate >= 60:
-        winrate_bonus = 6
-    elif winrate >= 55:
-        winrate_bonus = 4
-    elif winrate >= 50:
-        winrate_bonus = 2
-    
-    # Финальный скор
-    final_score = base_score + trades_bonus + winrate_bonus
+    # Если мало сделок, то и прибыль будет маленькая - никаких штрафов не нужно
+    final_score = total_profitability
     
     # Логирование
-    if final_score > 10 and trial_number % 20 == 0:
-        logging.info(f"Trial {trial_number}: Score={final_score:.1f} | "
-                    f"Expected: {expected_return:.2f}% | "
+    if total_profitability > 10 and trial_number % 50 == 0:
+        logging.info(f"Trial {trial_number}: Total Profit: {total_profitability:.1f}% | "
                     f"Trades: {total_trades} ({tp_count} TP / {sl_count} SL) | "
-                    f"Winrate: {winrate:.1f}%")
+                    f"Winrate: {winrate:.1f}% | Signals/day: {signals_per_day:.1f}")
     
     return final_score
 
@@ -748,7 +638,7 @@ def objective_anti_overfitting(trial: optuna.Trial) -> float:
         if result is None or result['signals'] == 0:
             return 0.0
         
-        # Минимальная проверка
+        # Минимальная проверка - хотя бы 3 сделки для базовой статистики
         if result['tp_count'] + result['sl_count'] < 3:
             return 0.0
         
@@ -771,7 +661,7 @@ def check_data_quality():
     return True
 
 def optimize_filters_anti_overfitting():
-    """Оптимизация параметров для 15м торговли"""
+    """УПРОЩЕННАЯ оптимизация параметров для 15м торговли - только основные индикаторы"""
     global GLOBAL_ALL_SYMBOLS
     
     print("🎯 ЗАПУСК ОПТИМИЗАЦИИ ПАРАМЕТРОВ")
@@ -799,10 +689,16 @@ def optimize_filters_anti_overfitting():
     
     N_TRIALS = 3000
     
-    print(f"\n🛡️ ПАРАМЕТРЫ ОПТИМИЗАЦИИ:")
-    print(f"  📊 Минимум сделок: 3")
+    print(f"\n🛡️ УПРОЩЕННЫЕ ПАРАМЕТРЫ ОПТИМИЗАЦИИ:")
+    print(f"  📊 Минимум сделок: 3 (базовая статистика)")
+    print(f"  💰 Фокус на ОБЩУЮ ПРИБЫЛЬНОСТЬ (мат.ожидание × количество)")
+    print(f"  🎯 Без штрафов за количество сделок - мало сделок = мало прибыли")
     print(f"  🎯 TP диапазон: 0.8-6.0 ATR")
     print(f"  🛡️ SL диапазон: 1.0-8.0 ATR")
+    print(f"  ⚡ Индикаторы: EMA, RSI, MACD, ADX, ATR")
+    print(f"  🎯 EMA комбинации: 5 проверенных")
+    print(f"  🎯 MACD комбинации: 5 проверенных")
+    print(f"  🚫 Убрано: Bollinger Bands, VWAP, Stochastic RSI, объемные фильтры")
     
     study = optuna.create_study(
         direction='maximize',
@@ -853,16 +749,17 @@ def optimize_filters_anti_overfitting():
         print(f"  💸 SL: -{best_result['avg_sl_pct']:.3f}%")
         print(f"  📅 Месячная доходность: {best_result.get('monthly_net_pct', 0):.1f}%")
             
-        # Сохраняем результаты
+        # Сохраняем результаты (УПРОЩЕННЫЕ параметры)
         compatible_params = {}
         for key in [
             'MIN_COMPOSITE_SCORE','MIN_ADX','SHORT_MIN_ADX','SHORT_MIN_RSI','LONG_MAX_RSI',
             'RSI_MIN','RSI_MAX','TP_ATR_MULT','SL_ATR_MULT',
             'MIN_TRIGGERS_ACTIVE_HOURS',
-            'SIGNAL_COOLDOWN_MINUTES','MIN_VOLUME_MA_RATIO',
-            'TP_MIN','SL_MIN','WEIGHT_RSI','WEIGHT_MACD','WEIGHT_BB','WEIGHT_VWAP',
-            'WEIGHT_VOLUME','WEIGHT_ADX','SHORT_BOOST_MULTIPLIER','LONG_PENALTY_IN_DOWNTREND',
-            'MA_FAST','MA_SLOW']:  # Добавлены EMA периоды
+            'SIGNAL_COOLDOWN_MINUTES',
+            'TP_MIN','SL_MIN','WEIGHT_RSI','WEIGHT_MACD','WEIGHT_ADX',
+            'SHORT_BOOST_MULTIPLIER','LONG_PENALTY_IN_DOWNTREND',
+            'MA_FAST','MA_SLOW','MACD_FAST','MACD_SLOW','MACD_SIGNAL',
+            'RSI_EXTREME_OVERSOLD','RSI_EXTREME_OVERBOUGHT']:  # Основные параметры + MACD
             if key in study.best_trial.params:
                 compatible_params[key] = study.best_trial.params[key]
 
