@@ -114,7 +114,7 @@ def check_signal_direction_quality(df: pd.DataFrame, symbol: str, params: Dict) 
         last_signal_time = {}
         
         # Проходим по всем свечам
-        for i in range(params['MIN_15M_CANDLES'], len(df_analyzed) - 8):  # Нужно 8 свечей для проверки направления
+        for i in range(params['MIN_15M_CANDLES'], len(df_analyzed) - 50):  # Нужно 50 свечей для проверки направления (12.5 часов)
             current_df = df_analyzed.iloc[:i+1].copy()
             last = current_df.iloc[-1]
             prev = current_df.iloc[-2]
@@ -194,11 +194,11 @@ def check_signal_direction_quality(df: pd.DataFrame, symbol: str, params: Dict) 
                         
                         # Проверяем движение в течение периода (более реалистично)
                         entry_price = last['close']
-                        max_candles_to_check = min(12, len(df_analyzed) - i - 1)  # 3 часа максимум
+                        max_candles_to_check = min(48, len(df_analyzed) - i - 1)  # 12 часов максимум
                         direction_score = 0.0
                         
                         # Проверяем движение в течение периода
-                        if max_candles_to_check >= 4:  # Минимум 4 свечи (1 час)
+                        if max_candles_to_check >= 24:  # Минимум 24 свечи (6 часов)
                             # Ищем максимальное движение в нужном направлении за весь период
                             max_favorable_move = 0.0
                             max_drawdown = 0.0
@@ -225,9 +225,9 @@ def check_signal_direction_quality(df: pd.DataFrame, symbol: str, params: Dict) 
                                     max_drawdown = max(max_drawdown, drawdown)
                             
                             # Сигнал правильный если:
-                            # 1. Реалистичное движение >= 0.3% (по close ценам)
-                            # 2. Реалистичная просадка <= 1.5% (по close ценам)
-                            if max_favorable_move >= 0.003 and max_drawdown <= 0.015:
+                            # 1. Реалистичное движение >= 0.5% (по close ценам)
+                            # 2. Реалистичная просадка <= 1.0% (по close ценам)
+                            if max_favorable_move >= 0.005 and max_drawdown <= 0.01:
                                 # Бонус за стабильность движения
                                 stability_bonus = 1.0 if max_drawdown <= 0.005 else 0.5
                                 direction_score = max_favorable_move * stability_bonus
@@ -267,7 +267,7 @@ def simulate_trading_with_tp_sl(df: pd.DataFrame, symbol: str, params: Dict) -> 
         total_pnl = 0
         
         # Проходим по всем свечам
-        for i in range(params['MIN_15M_CANDLES'], len(df_analyzed) - 20):
+        for i in range(params['MIN_15M_CANDLES'], len(df_analyzed) - 100):  # Нужно 100 свечей для проверки TP/SL (25 часов)
             current_df = df_analyzed.iloc[:i+1].copy()
             last = current_df.iloc[-1]
             prev = current_df.iloc[-2]
@@ -354,8 +354,8 @@ def simulate_trading_with_tp_sl(df: pd.DataFrame, symbol: str, params: Dict) -> 
                         entry_price = last['close']
                         trade_result = None
                         
-                        # Ищем следующую свечу для закрытия (максимум 50 свечей вперед = 12.5 часов)
-                        for j in range(i + 1, min(i + 50, len(df_analyzed))):
+                        # Ищем следующую свечу для закрытия (максимум 80 свечей вперед = 20 часов)
+                        for j in range(i + 1, min(i + 80, len(df_analyzed))):
                             future_candle = df_analyzed.iloc[j]
                             
                             # Проверяем TP/SL
@@ -382,13 +382,13 @@ def simulate_trading_with_tp_sl(df: pd.DataFrame, symbol: str, params: Dict) -> 
                                     trade_result = {'type': 'LOSS', 'pnl': pnl_pct, 'rr': 0}
                                     break
                         
-                        # Если сделка не закрылась за 50 свечей, считаем убыток
+                        # Если сделка не закрылась за 80 свечей, считаем убыток
                         if trade_result is None:
                             if direction == 'LONG':
-                                exit_price = df_analyzed.iloc[min(i + 50, len(df_analyzed) - 1)]['close']
+                                exit_price = df_analyzed.iloc[min(i + 80, len(df_analyzed) - 1)]['close']
                                 pnl_pct = (exit_price - entry_price) / entry_price
                             else:
-                                exit_price = df_analyzed.iloc[min(i + 50, len(df_analyzed) - 1)]['close']
+                                exit_price = df_analyzed.iloc[min(i + 80, len(df_analyzed) - 1)]['close']
                                 pnl_pct = (entry_price - exit_price) / entry_price
                             
                             trade_result = {'type': 'TIMEOUT', 'pnl': pnl_pct, 'rr': 0}
@@ -515,7 +515,7 @@ def stage1_objective(trial: optuna.Trial) -> float:
         params = CURRENT_PARAMS.copy()
         
         # Оптимизируем только фильтры сигналов (НЕ TP/SL) с ограниченной точностью
-        params['MIN_COMPOSITE_SCORE'] = trial.suggest_float('MIN_COMPOSITE_SCORE', 0.0, 1.0, step=0.2)
+        params['MIN_COMPOSITE_SCORE'] = trial.suggest_float('MIN_COMPOSITE_SCORE', 0.0, 1.0, step=0.5)
         params['MIN_ADX'] = trial.suggest_int('MIN_ADX', 3, 25)
         params['SHORT_MIN_ADX'] = trial.suggest_int('SHORT_MIN_ADX', 15, 60)
         params['RSI_MIN'] = trial.suggest_int('RSI_MIN', 15, 50)
@@ -536,14 +536,15 @@ def stage1_objective(trial: optuna.Trial) -> float:
         params['MACD_SIGNAL'] = trial.suggest_int('MACD_SIGNAL', 3, 12)
         params['MA_FAST'] = trial.suggest_int('MA_FAST', 5, 25)
         params['MA_SLOW'] = trial.suggest_int('MA_SLOW', 15, 35)
-        params['WEIGHT_RSI'] = trial.suggest_float('WEIGHT_RSI', 1.0, 15.0, step=0.1)
-        params['WEIGHT_MACD'] = trial.suggest_float('WEIGHT_MACD', 1.0, 10.0, step=0.1)
-        params['WEIGHT_ADX'] = trial.suggest_float('WEIGHT_ADX', 1.0, 15.0, step=0.1)
+        params['WEIGHT_RSI'] = trial.suggest_float('WEIGHT_RSI', 1.0, 15.0, step=0.5)
+        params['WEIGHT_MACD'] = trial.suggest_float('WEIGHT_MACD', 1.0, 10.0, step=0.5)
+        params['WEIGHT_ADX'] = trial.suggest_float('WEIGHT_ADX', 1.0, 15.0, step=0.5)
         # WEIGHT_BB, WEIGHT_VWAP, WEIGHT_VOLUME убраны - не используются в скоринге
-        params['SHORT_BOOST_MULTIPLIER'] = trial.suggest_float('SHORT_BOOST_MULTIPLIER', 0.5, 5.0, step=0.1)
-        params['LONG_PENALTY_IN_DOWNTREND'] = trial.suggest_float('LONG_PENALTY_IN_DOWNTREND', 0.1, 1.0, step=0.01)
+        params['SHORT_BOOST_MULTIPLIER'] = trial.suggest_float('SHORT_BOOST_MULTIPLIER', 0.5, 5.0, step=0.5)
+        params['LONG_PENALTY_IN_DOWNTREND'] = trial.suggest_float('LONG_PENALTY_IN_DOWNTREND', 0.1, 1.0, step=0.1)
         params['REQUIRE_MACD_HISTOGRAM_CONFIRMATION'] = trial.suggest_categorical('REQUIRE_MACD_HISTOGRAM_CONFIRMATION', [True, False])
         
+
         # Тестируем качество сигналов
         result = test_signal_quality(params)
         
@@ -570,9 +571,9 @@ def stage1_objective(trial: optuna.Trial) -> float:
         # 4. Комбинированный score с приоритетом количества
         base_score = direction_score + winning_signals_bonus * 0.6 + total_signals_bonus * 0.4
         
-        # 5. Мягкий штраф за очень низкую точность (только если < 70%)
-        if accuracy < 0.7:
-            accuracy_penalty = (0.7 - accuracy) * 1.0  # Мягкий штраф
+        # 5. Мягкий штраф за очень низкую точность (только если < 75%)
+        if accuracy < 0.75:
+            accuracy_penalty = (0.75 - accuracy) * 1.0  # Мягкий штраф
             score = base_score - accuracy_penalty
         else:
             score = base_score
@@ -732,7 +733,7 @@ async def run_two_stage_optimization():
     )
     
     logging.info("🔍 Ищем лучшие фильтры для качества сигналов...")
-    study1.optimize(stage1_objective, n_trials=500)
+    study1.optimize(stage1_objective, n_trials=2000)
     
     best_filters = study1.best_params
     best_accuracy = study1.best_value
@@ -765,7 +766,7 @@ async def run_two_stage_optimization():
     )
     
     logging.info("🔍 Ищем TP/SL для максимальной прибыли...")
-    study_max_profit.optimize(stage2_objective_max_profit, n_trials=200)
+    study_max_profit.optimize(stage2_objective_max_profit, n_trials=400)
     
     best_max_profit = study_max_profit.best_params
     best_max_profit_value = study_max_profit.best_value
@@ -785,7 +786,7 @@ async def run_two_stage_optimization():
     )
     
     logging.info("🔍 Ищем TP/SL для максимального винрейте...")
-    study_max_winrate.optimize(stage2_objective_max_winrate, n_trials=200)
+    study_max_winrate.optimize(stage2_objective_max_winrate, n_trials=400)
     
     best_max_winrate = study_max_winrate.best_params
     best_max_winrate_value = study_max_winrate.best_value
@@ -805,7 +806,7 @@ async def run_two_stage_optimization():
     )
     
     logging.info("🔍 Ищем TP/SL для сбалансированного результата...")
-    study_balanced.optimize(stage2_objective_balanced, n_trials=200)
+    study_balanced.optimize(stage2_objective_balanced, n_trials=400)
     
     best_balanced = study_balanced.best_params
     best_balanced_value = study_balanced.best_value
