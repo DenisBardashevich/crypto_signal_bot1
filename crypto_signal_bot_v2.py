@@ -124,28 +124,35 @@ def calculate_tp_sl(price, atr, signal_type):
     return tp, sl
 
 def check_signal(df, symbol):
-    """RSI обязателен + подтверждение (EMA или MACD) - синхронизировано с optimizer_v2.py"""
+    """УЛУЧШЕННАЯ ЛОГИКА: баланс между количеством и качеством сигналов - синхронизировано с optimizer_v2.py"""
     if df.empty or len(df) < 2:
         return None
     last = df.iloc[-1]
     if last['adx'] < MIN_ADX:
         return None
     
-    # RSI ОБЯЗАТЕЛЕН
+    # RSI условия (основные)
     rsi_long = last['rsi'] <= RSI_MIN
     rsi_short = last['rsi'] >= RSI_MAX
     
-    # Подтверждения (нужно хотя бы 1)
-    ema_bull = last['ema_fast'] > last['ema_slow']
-    ema_bear = last['ema_fast'] < last['ema_slow']
-    macd_bull = last['macd_line'] > last['macd_signal']
-    macd_bear = last['macd_line'] < last['macd_signal']
+    # Дополнительные условия
+    ema_bullish = last['ema_fast'] > last['ema_slow']
+    ema_bearish = last['ema_fast'] < last['ema_slow']
+    macd_bullish = last['macd_line'] > last['macd_signal']
+    macd_bearish = last['macd_line'] < last['macd_signal']
+    adx_strong = last['adx'] >= MIN_ADX
     
-    # RSI + (EMA или MACD)
-    if rsi_long and (ema_bull or macd_bull):
+    # УЛУЧШЕННАЯ ЛОГИКА: баланс между количеством и качеством сигналов
+    # LONG: RSI низкий ИЛИ (RSI умеренный + EMA вверх) ИЛИ (сильный тренд вверх + RSI не перекуплен)
+    if (rsi_long or 
+        (last['rsi'] <= RSI_MIN + 15 and ema_bullish) or
+        (ema_bullish and adx_strong and last['rsi'] <= 45)):
         signal_type = 'LONG'
         logging.info(f"🟢 {symbol}: LONG (RSI+подтв) | RSI={last['rsi']:.1f} ADX={last['adx']:.1f}")
-    elif rsi_short and (ema_bear or macd_bear):
+    # SHORT: RSI высокий ИЛИ (RSI умеренный + EMA вниз) ИЛИ (сильный тренд вниз + RSI не перепродан)
+    elif (rsi_short or 
+          (last['rsi'] >= RSI_MAX - 15 and ema_bearish) or
+          (ema_bearish and adx_strong and last['rsi'] >= 55)):
         signal_type = 'SHORT'
         logging.info(f"🔴 {symbol}: SHORT (RSI+подтв) | RSI={last['rsi']:.1f} ADX={last['adx']:.1f}")
     else:
@@ -284,12 +291,12 @@ async def telegram_bot():
 
 async def main():
     logging.info("🚀 Crypto Signal Bot V2")
-    logging.info(f"📊 Логика: RSI обязателен + подтверждение (EMA или MACD)")
+    logging.info(f"📊 Логика: УЛУЧШЕННАЯ - баланс между количеством и качеством сигналов")
     logging.info(f"⏱️ Cooldown: {SIGNAL_COOLDOWN_MINUTES} мин")
     
     # Отправляем уведомление о запуске
     startup_msg = f"🚀 Бот V2 запущен!\n\n"
-    startup_msg += f"📊 Логика: RSI обязателен + подтверждение\n"
+    startup_msg += f"📊 Логика: УЛУЧШЕННАЯ - баланс между количеством и качеством сигналов\n"
     startup_msg += f"⏱️ Cooldown: {SIGNAL_COOLDOWN_MINUTES} мин\n"
     startup_msg += f"🎯 Отслеживаем: {len(SYMBOLS)} монет\n"
     startup_msg += f"📈 Параметры:\n"
