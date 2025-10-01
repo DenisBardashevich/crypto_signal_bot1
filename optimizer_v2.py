@@ -18,7 +18,7 @@ import pandas as pd
 import ta
 import optuna
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 from pathlib import Path
 
@@ -31,38 +31,47 @@ logging.basicConfig(
 # ========== КОНФИГУРАЦИЯ ==========
 EXCHANGE = ccxt.bybit({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 
-# Символы для оптимизации
+# Символы для оптимизации - РАСШИРЕННЫЙ СПИСОК ДЛЯ БОЛЬШЕ СИГНАЛОВ
 SYMBOLS = [
     'BNB/USDT:USDT',
     'LTC/USDT:USDT',
     'IMX/USDT:USDT',
     'SUI/USDT:USDT',
-    'ORDI/USDT:USDT'
+    'ORDI/USDT:USDT',
+    'BTC/USDT:USDT',  # Добавляем BTC для стабильности
+    'ETH/USDT:USDT',  # Добавляем ETH для объема
+    'SOL/USDT:USDT',  # Добавляем SOL для активности
+    'DOGE/USDT:USDT', # Добавляем DOGE для волатильности
+    'ADA/USDT:USDT'   # Добавляем ADA для диверсификации
 ]
 
 # Параметры загрузки данных
 TIMEFRAME = '15m'
-LIMIT = 1500  # Больше данных для более точной оптимизации (было 1000)
+# 21 день * 24 часа * 4 свечи в час = 2016 свечей (с запасом для индикаторов)
+LIMIT = 2500  # Достаточно для 21 дня + запас для индикаторов
 DATA_DIR = Path('optimization_data')
 DATA_DIR.mkdir(exist_ok=True)
+
+# Период тестирования
+TEST_DAYS = 21  # Количество дней для тестирования
 
 # ВАЖНО: По умолчанию всегда загружаются СВЕЖИЕ данные с биржи!
 # Кэш используется только для ускорения повторных запусков с одинаковыми данными
 
 # Параметры оптимизации
-STAGE1_TRIALS = 800  # Количество попыток для этапа 1 (было 100)
-STAGE2_TRIALS = 300  # Количество попыток для этапа 2 (было 50)
+STAGE1_TRIALS = 1200  # Количество попыток для этапа 1 - УВЕЛИЧЕНО для лучшего поиска
+STAGE2_TRIALS = 400   # Количество попыток для этапа 2 - УВЕЛИЧЕНО для лучшего поиска
 
 # Параметры анализа
-LOOKAHEAD_CANDLES = 15  # Сколько свечей анализировать после сигнала (Этап 1) - УМЕНЬШЕНО с 50!
+LOOKAHEAD_CANDLES = 30  # Сколько свечей анализировать после сигнала (Этап 1) - УВЕЛИЧЕНО для лучшего анализа!
 MAX_TRADE_DURATION = 100  # Максимальная длительность сделки в свечах (Этап 2)
 WARMUP_CANDLES = 50  # Отступ от начала для прогрева индикаторов
 RESERVE_CANDLES = 20  # Резерв свечей в конце для lookahead - уменьшен под новый lookahead
 
 # ========== ЗАГРУЗКА ДАННЫХ ==========
 def load_data(symbol, force_reload=False):
-    """Загрузить или обновить данные с биржи"""
-    filename = DATA_DIR / f"{symbol.replace('/', '_').replace(':', '_')}.json"
+    """Загрузить или обновить данные с биржи (последние TEST_DAYS дней)"""
+    filename = DATA_DIR / f"{symbol.replace('/', '_').replace(':', '_')}_21days.json"
     
     if filename.exists() and not force_reload:
         logging.info(f"📂 Загрузка данных {symbol} из кэша")
@@ -72,15 +81,42 @@ def load_data(symbol, force_reload=False):
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         return df
     
-    logging.info(f"📥 Загрузка данных {symbol} с биржи...")
+    logging.info(f"📥 Загрузка данных {symbol} с биржи (последние {TEST_DAYS} дней)...")
     try:
-        ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=LIMIT)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        # Рассчитываем дату начала (21 день назад)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=TEST_DAYS)
+        since_timestamp = int(cutoff_date.timestamp() * 1000)
+        
+        all_ohlcv = []
+        current_since = since_timestamp
+        
+        # Загружаем данные частями (биржа ограничивает до 1000 свечей за запрос)
+        while current_since < int(datetime.now(timezone.utc).timestamp() * 1000):
+            ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, since=current_since, limit=1000)
+            if not ohlcv:
+                break
+            
+            all_ohlcv.extend(ohlcv)
+            
+            # Обновляем since для следующего запроса
+            current_since = ohlcv[-1][0] + 1  # +1 мс чтобы не дублировать последнюю свечу
+            
+            # Проверяем, что не выходим за текущее время
+            if ohlcv[-1][0] >= int(datetime.now(timezone.utc).timestamp() * 1000):
+                break
+        
+        df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+        
+        # Убираем дубликаты и сортируем
+        df = df.drop_duplicates(subset=['timestamp']).sort_values('timestamp')
+        
+        # Обрезаем до последних TEST_DAYS дней
+        df = df[df['timestamp'] >= cutoff_date]
         
         # Сохраняем в кэш
         df.to_json(filename, orient='records', date_format='iso')
-        logging.info(f"✅ Загружено {len(df)} свечей для {symbol}")
+        logging.info(f"✅ Загружено {len(df)} свечей для {symbol} (последние {TEST_DAYS} дней)")
         return df
     except Exception as e:
         logging.error(f"❌ Ошибка загрузки {symbol}: {e}")
@@ -135,34 +171,33 @@ def calculate_indicators(df, params):
 # ========== ГЕНЕРАЦИЯ СИГНАЛОВ ==========
 def check_signal(df, idx, params):
     """
-    Проверить сигнал на индексе idx
+    Проверить сигнал на индексе idx - УПРОЩЕННАЯ ЛОГИКА ДЛЯ ЧАСТЫХ СИГНАЛОВ
     Возвращает: 'LONG', 'SHORT' или None
     
-    СМЯГЧЕННАЯ ЛОГИКА: достаточно 3 из 4 условий (ADX обязателен)
+    УПРОЩЕННАЯ ЛОГИКА: RSI + любой дополнительный сигнал (ADX опционально)
     """
     if idx < 1 or idx >= len(df):
         return None
     
     row = df.iloc[idx]
     
-    # Базовая проверка ADX (обязательное условие)
-    if row['adx'] < params['min_adx']:
-        return None
-    
-    # RSI должен быть ОБЯЗАТЕЛЬНЫМ! Проверяем отдельно
+    # RSI условия (основные)
     rsi_long = row['rsi'] <= params['rsi_min']
     rsi_short = row['rsi'] >= params['rsi_max']
     
-    # Дополнительные условия (нужно минимум 1 из 2)
+    # Дополнительные условия
     ema_bullish = row['ema_fast'] > row['ema_slow']
     ema_bearish = row['ema_fast'] < row['ema_slow']
     macd_bullish = row['macd_line'] > row['macd_signal']
     macd_bearish = row['macd_line'] < row['macd_signal']
+    adx_strong = row['adx'] >= params['min_adx']
     
-    # ЛОГИКА: RSI обязателен + минимум 1 подтверждение (EMA или MACD)
-    if rsi_long and (ema_bullish or macd_bullish):
+    # УПРОЩЕННАЯ ЛОГИКА: RSI + любой из дополнительных сигналов
+    # LONG: RSI низкий + (EMA вверх ИЛИ MACD вверх ИЛИ сильный ADX)
+    if rsi_long and (ema_bullish or macd_bullish or adx_strong):
         return 'LONG'
-    elif rsi_short and (ema_bearish or macd_bearish):
+    # SHORT: RSI высокий + (EMA вниз ИЛИ MACD вниз ИЛИ сильный ADX)
+    elif rsi_short and (ema_bearish or macd_bearish or adx_strong):
         return 'SHORT'
     
     return None
@@ -193,10 +228,10 @@ def calculate_signal_strength(df, idx, signal_type, params):
 # ========== ЭТАП 1: ОПТИМИЗАЦИЯ ФИЛЬТРОВ ==========
 def check_direction_correctness(df, signal_idx, signal_type, lookahead=None):
     """
-    УПРОЩЕННАЯ проверка: просто считаем % движения в правильную сторону
+    УЛУЧШЕННАЯ проверка: учитываем силу движения и качество входа
     
     Возвращает:
-    - correctness: 0-1, процент времени когда цена двигается правильно
+    - correctness: 0-1, улучшенная оценка качества сигнала
     - max_favorable: максимальное благоприятное движение %
     """
     if lookahead is None:
@@ -212,20 +247,50 @@ def check_direction_correctness(df, signal_idx, signal_type, lookahead=None):
         return 0, 0
     
     if signal_type == 'LONG':
-        # Для LONG: ищем максимум и процент времени выше входа
+        # Для LONG: ищем максимум и анализируем движение
         max_price = max(future_prices)
         max_favorable = ((max_price - entry_price) / entry_price) * 100
         
-        # Процент времени когда цена выше входа
-        correctness = sum(p > entry_price for p in future_prices) / len(future_prices)
+        # 1. Базовый процент времени выше входа
+        time_above = sum(p > entry_price for p in future_prices) / len(future_prices)
+        
+        # 2. Бонус за силу движения (чем больше движение, тем выше оценка)
+        movement_bonus = min(max_favorable / 2.0, 0.3)  # До 30% бонуса за движение
+        
+        # 3. Бонус за стабильность (меньше откатов = выше оценка)
+        above_prices = [p for p in future_prices if p > entry_price]
+        if above_prices:
+            min_above = min(above_prices)
+            stability_bonus = ((min_above - entry_price) / entry_price) * 50  # До 50% бонуса
+            stability_bonus = min(stability_bonus, 0.2)  # Ограничиваем 20%
+        else:
+            stability_bonus = 0
+        
+        # Итоговая оценка
+        correctness = min(time_above + movement_bonus + stability_bonus, 1.0)
         
     else:  # SHORT
-        # Для SHORT: ищем минимум и процент времени ниже входа
+        # Для SHORT: ищем минимум и анализируем движение
         min_price = min(future_prices)
         max_favorable = ((entry_price - min_price) / entry_price) * 100
         
-        # Процент времени когда цена ниже входа
-        correctness = sum(p < entry_price for p in future_prices) / len(future_prices)
+        # 1. Базовый процент времени ниже входа
+        time_below = sum(p < entry_price for p in future_prices) / len(future_prices)
+        
+        # 2. Бонус за силу движения
+        movement_bonus = min(max_favorable / 2.0, 0.3)  # До 30% бонуса за движение
+        
+        # 3. Бонус за стабильность
+        below_prices = [p for p in future_prices if p < entry_price]
+        if below_prices:
+            max_below = max(below_prices)
+            stability_bonus = ((entry_price - max_below) / entry_price) * 50  # До 50% бонуса
+            stability_bonus = min(stability_bonus, 0.2)  # Ограничиваем 20%
+        else:
+            stability_bonus = 0
+        
+        # Итоговая оценка
+        correctness = min(time_below + movement_bonus + stability_bonus, 1.0)
     
     return correctness, max_favorable
 
@@ -289,28 +354,35 @@ def evaluate_stage1(params, data):
     # Средняя амплитуда движения
     avg_amplitude = total_amplitude / total_signals
     
-    # ФИЛЬТР: Отсекаем слабые сигналы (лучше случайности)
-    if avg_correctness < 0.52:  # Меньше 52% точности - отклоняем
-        logging.warning(f"⚠️ Низкая точность: {avg_correctness:.2%} < 52% - отклонено")
+    # ФИЛЬТР: Отсекаем слабые сигналы (гибридная стратегия)
+    if avg_correctness < 0.60:  # Меньше 60% точности - отклоняем (гибридная стратегия)
+        logging.warning(f"⚠️ Низкая точность: {avg_correctness:.2%} < 60% - отклонено")
         return 0
     
-    # НОРМАЛИЗАЦИЯ АМПЛИТУДЫ: оптимум 1-2%, больше не нужно
-    if avg_amplitude < 1.0:
-        # Меньше 1% = слабое движение, штраф
-        amplitude_factor = avg_amplitude * 0.5  # Снижаем сильно
+    # НОРМАЛИЗАЦИЯ АМПЛИТУДЫ: строгие требования к движению
+    if avg_amplitude < 0.5:
+        # Меньше 0.5% = очень слабое движение, сильный штраф
+        amplitude_factor = 0.1  # Очень сильный штраф
+    elif avg_amplitude < 1.0:
+        # 0.5-1% = слабое движение, штраф
+        amplitude_factor = avg_amplitude * 0.3  # Штраф за слабые движения
     elif avg_amplitude <= 2.0:
-        # 1-2% = ИДЕАЛЬНО! Линейный рост награды
+        # 1-2% = оптимальное движение
         amplitude_factor = 1.0 + (avg_amplitude - 1.0)  # От 1.0 до 2.0
     else:
         # Больше 2% = не даем дополнительных бонусов (риск высокий)
         amplitude_factor = 2.0  # Ограничиваем 2.0
     
-    # УЛУЧШЕННАЯ метрика: точность^2 × log(сигналов) × нормализованная_амплитуда
+    # УЛУЧШЕННАЯ метрика для КАЧЕСТВЕННЫХ сигналов: точность^3 × sqrt(сигналов) × нормализованная_амплитуда
     import math
-    accuracy_factor = avg_correctness ** 2
-    signal_factor = math.log(total_signals + 1)
+    accuracy_factor = avg_correctness ** 3  # Строже к точности
+    signal_factor = math.sqrt(total_signals + 1)  # Меньше приоритета количеству
     
-    score = accuracy_factor * signal_factor * amplitude_factor
+    # Бонус за сбалансированность (если есть и LONG и SHORT сигналы)
+    balance_bonus = 1.0
+    # TODO: Добавить подсчет LONG/SHORT сигналов для баланса
+    
+    score = accuracy_factor * signal_factor * amplitude_factor * balance_bonus
     
     logging.info(f"📊 Сигналов: {total_signals} | Точность: {avg_correctness:.2%} | Амплитуда: {avg_amplitude:.2f}% | Фактор: {amplitude_factor:.2f} | Score: {score:.2f}")
     
@@ -338,9 +410,9 @@ def optimize_stage1(data):
         ma_slow = trial.suggest_int('ma_slow', 20, 50)
         ma_fast = trial.suggest_int('ma_fast', 8, ma_slow - 1)
         
-        # 2. RSI фильтры: ОПТИМИЗИРУЕМ (ключевые для входа)
-        rsi_min = trial.suggest_int('rsi_min', 10, 25)
-        rsi_max = trial.suggest_int('rsi_max', rsi_min + 25, 80)
+        # 2. RSI фильтры: ОПТИМИЗИРУЕМ (ключевые для входа) - ГИБРИДНАЯ СТРАТЕГИЯ
+        rsi_min = trial.suggest_int('rsi_min', 15, 30)  # Оптимизировано для гибридной стратегии
+        rsi_max = trial.suggest_int('rsi_max', rsi_min + 50, 90)  # Баланс частоты и качества
         
         params = {
             # === ОПТИМИЗИРУЕМЫЕ параметры ===
@@ -352,15 +424,15 @@ def optimize_stage1(data):
             # Фильтры входа (КЛЮЧЕВЫЕ!)
             'rsi_min': rsi_min,
             'rsi_max': rsi_max,
-            'min_adx': trial.suggest_int('min_adx', 15, 30),
+            'min_adx': trial.suggest_int('min_adx', 5, 20),  # Сбалансированные требования для гибридной стратегии
             
             # Веса индикаторов (определяют важность каждого)
             'weight_rsi': trial.suggest_float('weight_rsi', 0, 6.0, step=0.3),
             'weight_macd': trial.suggest_float('weight_macd', 0, 6.0, step=0.3),
             'weight_adx': trial.suggest_float('weight_adx', 0, 6.0, step=0.3),
             
-            # Cooldown (частота сигналов)
-            'signal_cooldown': trial.suggest_int('signal_cooldown', 30, 90, step=15),
+            # Cooldown (частота сигналов) - ГИБРИДНАЯ СТРАТЕГИЯ
+            'signal_cooldown': trial.suggest_int('signal_cooldown', 15, 45, step=15),  # Сбалансированный cooldown
             
             # === ВЫБОР ИЗ ПОПУЛЯРНЫХ значений (проверенные варианты) ===
             
@@ -452,7 +524,7 @@ def backtest_with_tp_sl(df, signal_idx, signal_type, params):
     """
     Симуляция сделки с TP/SL
     
-    Возвращает: P&L в %
+    Возвращает: P&L в % (с учетом комиссий)
     """
     entry_price = df.iloc[signal_idx]['close']
     atr = df.iloc[signal_idx]['atr']
@@ -483,12 +555,12 @@ def backtest_with_tp_sl(df, signal_idx, signal_type, params):
                 pnl = ((entry_price - sl_price) / entry_price) * 100
                 return pnl
     
-    # Если не закрылись, считаем текущий P&L
-    current_price = df.iloc[-1]['close']
+    # Если не закрылись в течение MAX_TRADE_DURATION, считаем убыток по SL
+    # Это более реалистично, чем брать цену с конца данных
     if signal_type == 'LONG':
-        pnl = ((current_price - entry_price) / entry_price) * 100
+        pnl = ((sl_price - entry_price) / entry_price) * 100
     else:
-        pnl = ((entry_price - current_price) / entry_price) * 100
+        pnl = ((entry_price - sl_price) / entry_price) * 100
     
     return pnl
 
