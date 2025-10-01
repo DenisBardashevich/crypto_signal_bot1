@@ -38,7 +38,6 @@ SYMBOLS = [
     'IMX/USDT:USDT',
     'SUI/USDT:USDT',
     'ORDI/USDT:USDT',
-    'BTC/USDT:USDT',  # Добавляем BTC для стабильности
     'ETH/USDT:USDT',  # Добавляем ETH для объема
     'SOL/USDT:USDT',  # Добавляем SOL для активности
     'DOGE/USDT:USDT', # Добавляем DOGE для волатильности
@@ -202,28 +201,6 @@ def check_signal(df, idx, params):
     
     return None
 
-def calculate_signal_strength(df, idx, signal_type, params):
-    """Рассчитать силу сигнала"""
-    row = df.iloc[idx]
-    score = 0
-    
-    # RSI компонент
-    if signal_type == 'LONG':
-        rsi_normalized = 1 - (row['rsi'] / 100)
-    else:
-        rsi_normalized = row['rsi'] / 100
-    
-    score += rsi_normalized * params['weight_rsi']
-    
-    # MACD компонент
-    macd_diff = abs(row['macd_line'] - row['macd_signal'])
-    score += macd_diff * params['weight_macd']
-    
-    # ADX компонент
-    adx_normalized = row['adx'] / 100
-    score += adx_normalized * params['weight_adx']
-    
-    return score
 
 # ========== ЭТАП 1: ОПТИМИЗАЦИЯ ФИЛЬТРОВ ==========
 def check_direction_correctness(df, signal_idx, signal_type, lookahead=None):
@@ -408,11 +385,11 @@ def optimize_stage1(data):
         
         # 1. EMA: оптимизируем (сильно влияют на тренд)
         ma_slow = trial.suggest_int('ma_slow', 20, 50)
-        ma_fast = trial.suggest_int('ma_fast', 8, ma_slow - 1)
+        ma_fast = trial.suggest_int('ma_fast', 6, ma_slow - 1)
         
         # 2. RSI фильтры: ОПТИМИЗИРУЕМ (ключевые для входа) - ГИБРИДНАЯ СТРАТЕГИЯ
-        rsi_min = trial.suggest_int('rsi_min', 15, 30)  # Оптимизировано для гибридной стратегии
-        rsi_max = trial.suggest_int('rsi_max', rsi_min + 50, 90)  # Баланс частоты и качества
+        rsi_min = trial.suggest_int('rsi_min', 5, 30)  # Оптимизировано для гибридной стратегии
+        rsi_max = trial.suggest_int('rsi_max', rsi_min + 10, 90)  # Баланс частоты и качества
         
         params = {
             # === ОПТИМИЗИРУЕМЫЕ параметры ===
@@ -424,15 +401,11 @@ def optimize_stage1(data):
             # Фильтры входа (КЛЮЧЕВЫЕ!)
             'rsi_min': rsi_min,
             'rsi_max': rsi_max,
-            'min_adx': trial.suggest_int('min_adx', 5, 20),  # Сбалансированные требования для гибридной стратегии
+            'min_adx': trial.suggest_int('min_adx', 5, 25),  # Сбалансированные требования для гибридной стратегии
             
-            # Веса индикаторов (определяют важность каждого)
-            'weight_rsi': trial.suggest_float('weight_rsi', 0, 6.0, step=0.3),
-            'weight_macd': trial.suggest_float('weight_macd', 0, 6.0, step=0.3),
-            'weight_adx': trial.suggest_float('weight_adx', 0, 6.0, step=0.3),
             
-            # Cooldown (частота сигналов) - ГИБРИДНАЯ СТРАТЕГИЯ
-            'signal_cooldown': trial.suggest_int('signal_cooldown', 15, 45, step=15),  # Сбалансированный cooldown
+            # Cooldown (частота сигналов)
+            'signal_cooldown': trial.suggest_int('signal_cooldown', 30, 90, step=15),
             
             # === ВЫБОР ИЗ ПОПУЛЯРНЫХ значений (проверенные варианты) ===
             

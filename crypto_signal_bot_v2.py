@@ -55,10 +55,10 @@ def save_portfolio():
     with open(PORTFOLIO_FILE, 'w') as f:
         json.dump(portfolio, f, indent=2)
 
-def open_position(symbol, side, price, timestamp, atr, score):
+def open_position(symbol, side, price, timestamp, atr):
     portfolio['open_positions'][symbol] = {
         'side': side, 'entry_price': price, 'timestamp': timestamp.isoformat(),
-        'atr': atr, 'score': score
+        'atr': atr
     }
     save_portfolio()
     logging.info(f"📈 Открыта: {symbol} {side.upper()} @ {price:.6f}")
@@ -70,7 +70,7 @@ def close_position(symbol, price, timestamp, pnl_pct):
     trade = {
         'symbol': symbol, 'side': pos['side'], 'entry_price': pos['entry_price'],
         'exit_price': price, 'entry_time': pos['timestamp'], 'exit_time': timestamp.isoformat(),
-        'pnl_pct': pnl_pct, 'score': pos.get('score', 0)
+        'pnl_pct': pnl_pct
     }
     portfolio['trades'].append(trade)
     del portfolio['open_positions'][symbol]
@@ -108,15 +108,6 @@ def calculate_indicators(df):
         logging.error(f"❌ Индикаторы: {e}")
         return pd.DataFrame()
 
-def calculate_signal_strength(df, signal_type):
-    """Расчет силы сигнала (синхронизировано с optimizer_v2.py)"""
-    last = df.iloc[-1]
-    score = 0
-    rsi_norm = (1 - last['rsi'] / 100) if signal_type == 'LONG' else (last['rsi'] / 100)
-    score += rsi_norm * WEIGHT_RSI
-    score += abs(last['macd_line'] - last['macd_signal']) * WEIGHT_MACD
-    score += (last['adx'] / 100) * WEIGHT_ADX
-    return round(score, 2)
 
 def calculate_tp_sl(price, atr, signal_type):
     """Расчет TP/SL (синхронизировано с optimizer_v2.py)"""
@@ -159,11 +150,10 @@ def check_signal(df, symbol):
         logging.info(f"🔴 {symbol}: SHORT (RSI+подтв) | RSI={last['rsi']:.1f} ADX={last['adx']:.1f}")
     else:
         return None
-    score = calculate_signal_strength(df, signal_type)
     tp_price, sl_price = calculate_tp_sl(last['close'], last['atr'], signal_type)
     return {
         'symbol': symbol, 'type': signal_type, 'price': last['close'], 'timestamp': last['timestamp'],
-        'score': score, 'tp_price': tp_price, 'sl_price': sl_price,
+        'tp_price': tp_price, 'sl_price': sl_price,
         'rsi': last['rsi'], 'adx': last['adx'], 'atr': last['atr']
     }
 
@@ -263,7 +253,6 @@ async def scan_markets():
                             signals.append(signal)
                             last_signal_time[symbol] = datetime.now(timezone.utc)
             if signals:
-                signals.sort(key=lambda x: x['score'], reverse=True)
                 msg = f"💰 Сигналы ({len(signals)}):\n\n"
                 for sig in signals:
                     e = "🟢" if sig['type'] == 'LONG' else "🔴"
@@ -273,8 +262,8 @@ async def scan_markets():
                     else:
                         tp_pct = ((sig['price'] - sig['tp_price']) / sig['price']) * 100
                         sl_pct = ((sig['sl_price'] - sig['price']) / sig['price']) * 100
-                    msg += f"{e} {sig['symbol']} {sig['type']}\nЦена: {sig['price']:.6f}\nСила: {sig['score']:.1f}\nTP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\nR:R = {tp_pct/sl_pct:.2f}:1\nRSI: {sig['rsi']:.1f} ADX: {sig['adx']:.1f}\n\n"
-                    open_position(sig['symbol'], sig['type'], sig['price'], sig['timestamp'], sig['atr'], sig['score'])
+                    msg += f"{e} {sig['symbol']} {sig['type']}\nЦена: {sig['price']:.6f}\nTP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\nR:R = {tp_pct/sl_pct:.2f}:1\nRSI: {sig['rsi']:.1f} ADX: {sig['adx']:.1f}\n\n"
+                    open_position(sig['symbol'], sig['type'], sig['price'], sig['timestamp'], sig['atr'])
                 await send_telegram(msg)
             await asyncio.sleep(300)
         except Exception as e:
@@ -308,7 +297,6 @@ async def main():
     startup_msg += f"  • ADX: ≥{MIN_ADX} (окно {ADX_WINDOW})\n"
     startup_msg += f"  • EMA: {MA_FAST}/{MA_SLOW}\n"
     startup_msg += f"  • MACD: {MACD_FAST}/{MACD_SLOW}/{MACD_SIGNAL}\n"
-    startup_msg += f"  • Веса: RSI={WEIGHT_RSI} MACD={WEIGHT_MACD} ADX={WEIGHT_ADX}\n"
     startup_msg += f"\n✅ Готов к работе!"
     
     await send_telegram(startup_msg)
