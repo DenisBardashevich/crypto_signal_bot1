@@ -25,7 +25,7 @@ from config import *
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.ERROR,  # Только ошибки (как в старом боте)
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.FileHandler('bot_v2.log', encoding='utf-8'),
@@ -33,8 +33,7 @@ logging.basicConfig(
     ]
 )
 
-# Отключаем спам от HTTP запросов Telegram
-logging.getLogger("httpx").setLevel(logging.WARNING)
+# HTTP логи отключены через ERROR level
 
 EXCHANGE = ccxt.bybit({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 
