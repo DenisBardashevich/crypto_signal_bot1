@@ -17,228 +17,247 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Tuple, Optional
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Импортируем функции из основного скрипта
-from test_current_vs_new_filters import (
-    CURRENT_PARAMS, SYMBOLS,
-    calculate_ema, calculate_rsi, calculate_macd, calculate_adx, 
-    calculate_atr, 
-    evaluate_signal_strength, calculate_tp_sl, get_historical_data
+# Создаем отдельный логгер для оптимизатора
+opt_logger = logging.getLogger('optimizer')
+opt_logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(message)s'))
+opt_logger.addHandler(handler)
+
+# Отключаем логи Optuna
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+# Импортируем из РЕАЛЬНОГО БОТА
+from crypto_signal_bot import (
+    analyze,
+    evaluate_signal_strength, 
+    calculate_tp_sl,
+    check_signals,
+    SYMBOLS,
+    EXCHANGE
 )
 
-def analyze_with_all_filters(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
-    """Анализ данных со всеми фильтрами"""
+# Импортируем параметры из config.py
+from config import *
+
+# Собираем текущие параметры из config.py
+CURRENT_PARAMS = {
+    'MIN_COMPOSITE_SCORE': MIN_COMPOSITE_SCORE,
+    'MIN_ADX': MIN_ADX,
+    'RSI_MIN': RSI_MIN,
+    'RSI_MAX': RSI_MAX,
+    'SHORT_MIN_ADX': SHORT_MIN_ADX,
+    'SHORT_MIN_RSI': SHORT_MIN_RSI,
+    'LONG_MAX_RSI': LONG_MAX_RSI,
+    'TP_ATR_MULT': TP_ATR_MULT,
+    'SL_ATR_MULT': SL_ATR_MULT,
+    'TP_MIN': TP_MIN,
+    'SL_MIN': SL_MIN,
+    'SIGNAL_COOLDOWN_MINUTES': SIGNAL_COOLDOWN_MINUTES,
+    'MIN_TRIGGERS_ACTIVE_HOURS': MIN_TRIGGERS_ACTIVE_HOURS,
+    'MIN_VOLUME_MA_RATIO': MIN_VOLUME_MA_RATIO,
+    'RSI_WINDOW': RSI_WINDOW,
+    'RSI_EXTREME_OVERSOLD': RSI_EXTREME_OVERSOLD,
+    'RSI_EXTREME_OVERBOUGHT': RSI_EXTREME_OVERBOUGHT,
+    'ATR_WINDOW': ATR_WINDOW,
+    'ADX_WINDOW': ADX_WINDOW,
+    'MACD_FAST': MACD_FAST,
+    'MACD_SLOW': MACD_SLOW,
+    'MACD_SIGNAL': MACD_SIGNAL,
+    'WEIGHT_RSI': WEIGHT_RSI,
+    'WEIGHT_MACD': WEIGHT_MACD,
+    'WEIGHT_ADX': WEIGHT_ADX,
+    'SHORT_BOOST_MULTIPLIER': SHORT_BOOST_MULTIPLIER,
+    'LONG_PENALTY_IN_DOWNTREND': LONG_PENALTY_IN_DOWNTREND,
+    'MA_FAST': MA_FAST,
+    'MA_SLOW': MA_SLOW,
+    'LIMIT': LIMIT,
+    'MIN_15M_CANDLES': MIN_15M_CANDLES,
+    'FEE_RATE': FEE_RATE
+}
+
+def apply_params_to_config(params: Dict):
+    """Применяет параметры к config.py"""
+    import config
+    for key, value in params.items():
+        if hasattr(config, key):
+            setattr(config, key, value)
+
+def analyze_with_params(df: pd.DataFrame, params: Dict) -> pd.DataFrame:
+    """
+    Анализ данных с оптимизируемыми параметрами
+    ВАЖНО: Использует analyze() из реального бота
+    """
     try:
-        if df.empty or len(df) < params['MA_SLOW']:
+        if df.empty:
             return pd.DataFrame()
         
-        df = df.copy()
+        # Применяем параметры к config
+        apply_params_to_config(params)
         
-        # EMA с оптимизируемыми периодами
-        df['ema_fast'] = calculate_ema(df['close'], params['MA_FAST'])
-        df['ema_slow'] = calculate_ema(df['close'], params['MA_SLOW'])
+        # Используем реальную функцию analyze() из бота
+        df_analyzed = analyze(df.copy())
         
-        # MACD с оптимизируемыми параметрами
-        macd_line, macd_signal, macd_hist = calculate_macd(
-            df['close'], 
-            params['MACD_FAST'], 
-            params['MACD_SLOW'], 
-            params['MACD_SIGNAL']
-        )
-        df['macd_line'] = macd_line
-        df['macd_signal'] = macd_signal
-        df['macd'] = macd_hist
-        df['macd_hist'] = macd_hist
-        
-        # RSI с оптимизируемым окном
-        df['rsi'] = calculate_rsi(df['close'], params['RSI_WINDOW'])
-        
-        # ADX с оптимизируемым окном
-        df['adx'] = calculate_adx(df['high'], df['low'], df['close'], params['ADX_WINDOW'])
-        
-        # ATR с оптимизируемым окном
-        df['atr'] = calculate_atr(df['high'], df['low'], df['close'], params['ATR_WINDOW'])
-        
-        # Bollinger Bands и VWAP убраны - не используются в скоринге реального бота
-        # Volume ratio остается только для фильтрации
-        if 'volume' in df.columns:
-            df['volume_ma'] = df['volume'].rolling(window=20).mean()
-            df['volume_ratio'] = df['volume'] / df['volume_ma']
-        
-        # Очистка данных
-        df = df.dropna().reset_index(drop=True)
-        
-        if len(df) < 2:
-            return pd.DataFrame()
-        
-        return df
+        return df_analyzed
         
     except Exception as e:
         logging.error(f"Ошибка в анализе данных: {e}")
         return pd.DataFrame()
 
+def evaluate_signal_strength_with_params(df: pd.DataFrame, symbol: str, action: str, params: Dict):
+    """Обертка для evaluate_signal_strength с параметрами"""
+    apply_params_to_config(params)
+    return evaluate_signal_strength(df, symbol, action)
+
+def calculate_tp_sl_with_params(df: pd.DataFrame, price: float, atr: float, direction: str, params: Dict):
+    """Обертка для calculate_tp_sl с параметрами"""
+    apply_params_to_config(params)
+    return calculate_tp_sl(df, price, atr, direction)
+
+def check_signals_with_params(df: pd.DataFrame, symbol: str, params: Dict):
+    """Обертка для check_signals с параметрами"""
+    apply_params_to_config(params)
+    return check_signals(df, symbol)
+
 # Кэш данных для оптимизации
 DATA_CACHE = {}
+
+def get_historical_data_sync(symbol: str, days: int = 30) -> pd.DataFrame:
+    """Загрузка исторических данных через EXCHANGE (синхронно)"""
+    try:
+        import time
+        
+        # 15m: 96 свечей в день
+        limit = 1000
+        all_data = []
+        candles_needed = days * 96
+        requests_needed = (candles_needed // limit) + 1
+        
+        since = None
+        
+        for i in range(min(requests_needed, 3)):  # Максимум 3 запроса
+            try:
+                if since:
+                    ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe='15m', limit=limit, since=since)
+                else:
+                    ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe='15m', limit=limit)
+                
+                if not ohlcv:
+                    break
+                
+                all_data.extend(ohlcv)
+                
+                # Следующий запрос
+                since = ohlcv[-1][0] + 1
+                
+                # Пауза между запросами
+                time.sleep(0.2)
+                
+                if len(all_data) >= candles_needed:
+                    break
+                    
+            except Exception as e:
+                logging.error(f"Ошибка загрузки {symbol}: {e}")
+                break
+        
+        if not all_data:
+            return pd.DataFrame()
+        
+        # Создаем DataFrame как в боте
+        df = pd.DataFrame(all_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
+        df['volume_usdt'] = df['volume'] * df['close']
+        
+        # Удаляем дубликаты
+        df = df.drop_duplicates(subset=['timestamp']).reset_index(drop=True)
+        
+        return df
+        
+    except Exception as e:
+        logging.error(f"Ошибка get_historical_data_sync для {symbol}: {e}")
+        return pd.DataFrame()
 
 async def load_data_for_optimization():
     """Загружаем данные для оптимизации"""
     global DATA_CACHE
     
-    logging.info("📊 Загружаем данные для оптимизации...")
+    opt_logger.info("📊 Загружаем данные для оптимизации...")
     
     for symbol in SYMBOLS:
-        logging.info(f"📈 Загружаем {symbol}...")
-        df = await get_historical_data(symbol, hours_back=720)  # 30 дней
+        opt_logger.info(f"📈 Загружаем {symbol}...")
+        df = get_historical_data_sync(symbol, days=30)  # 30 дней
         if not df.empty:
             DATA_CACHE[symbol] = df
-            logging.info(f"✅ {symbol}: {len(df)} свечей")
+            opt_logger.info(f"✅ {symbol}: {len(df)} свечей (~{len(df)/96:.1f} дней)")
         else:
-            logging.warning(f"⚠️ Нет данных для {symbol}")
+            opt_logger.info(f"⚠️ Нет данных для {symbol}")
     
-    logging.info(f"📊 Загружено {len(DATA_CACHE)} символов")
+    opt_logger.info(f"📊 Загружено {len(DATA_CACHE)} символов")
 
 def check_signal_direction_quality(df: pd.DataFrame, symbol: str, params: Dict) -> Dict:
     """Проверка качества сигналов - правильное ли направление"""
     try:
-        if df.empty or len(df) < params['MIN_15M_CANDLES']:
+        if df.empty or len(df) < 100:
             return {'correct_signals': 0, 'total_signals': 0, 'accuracy': 0}
         
-        df_analyzed = analyze_with_all_filters(df.copy(), params)
-        if df_analyzed.empty:
+        df_analyzed = analyze_with_params(df.copy(), params)
+        if df_analyzed.empty or len(df_analyzed) < 100:
             return {'correct_signals': 0, 'total_signals': 0, 'accuracy': 0}
         
         correct_signals = 0
         total_signals = 0
         total_direction_score = 0.0
-        last_signal_time = {}
         
         # Проходим по всем свечам
-        for i in range(params['MIN_15M_CANDLES'], len(df_analyzed) - 50):  # Нужно 50 свечей для проверки направления (12.5 часов)
+        for i in range(100, len(df_analyzed) - 50, 10):  # Шаг 10 свечей для ускорения
             current_df = df_analyzed.iloc[:i+1].copy()
             last = current_df.iloc[-1]
-            prev = current_df.iloc[-2]
-            
             current_time = last['timestamp']
             
-            # Проверяем cooldown
-            if symbol in last_signal_time:
-                time_diff = current_time - last_signal_time[symbol]
-                if time_diff < timedelta(minutes=params['SIGNAL_COOLDOWN_MINUTES']):
-                    continue
-            
-            # Проверяем базовые фильтры
-            if last['adx'] < params['MIN_ADX']:
+            # УПРОЩЕНО: Используем check_signals из бота напрямую!
+            try:
+                signals = check_signals_with_params(current_df, symbol, params)
+                
+                if signals:
+                    total_signals += 1
+                    
+                    # Определяем тип сигнала из текста
+                    signal_text = signals[0]
+                    if 'LONG' in signal_text or '🟢' in signal_text:
+                        signal_type = 'BUY'
+                    else:
+                        signal_type = 'SELL'
+                    
+                    entry_price = last['close']  # Цена входа
+                    
+                    # Проверяем движение в следующих 48 свечах (12 часов)
+                    max_candles = min(48, len(df_analyzed) - i - 1)
+                    direction_score = 0.0
+                    
+                    if max_candles >= 24:  # Минимум 6 часов
+                        max_favorable_move = 0.0
+                        
+                        for j in range(i + 1, i + 1 + max_candles):
+                            future_price = df_analyzed.iloc[j]['close']
+                            
+                            if signal_type == 'BUY':
+                                price_change = (future_price - entry_price) / entry_price
+                            else:  # SELL
+                                price_change = (entry_price - future_price) / entry_price
+                            
+                            max_favorable_move = max(max_favorable_move, price_change)
+                        
+                        # Сигнал правильный если движение >= 0.5%
+                        if max_favorable_move >= 0.005:
+                            direction_score = max_favorable_move
+                            correct_signals += 1
+                    
+                    total_direction_score += direction_score
+                    
+            except Exception as e:
                 continue
-            
-            # Volume фильтр
-            if 'volume_ratio' in current_df.columns:
-                volume_ratio = last.get('volume_ratio', 1.0)
-                if volume_ratio < params['MIN_VOLUME_MA_RATIO']:
-                    continue
-            
-            # Триггеры
-            buy_triggers = 0
-            sell_triggers = 0
-            
-            # RSI триггеры
-            if last['rsi'] <= params['RSI_EXTREME_OVERSOLD']:
-                buy_triggers += 2.0
-            elif last['rsi'] < params['RSI_MIN']:
-                buy_triggers += 1.0
-                
-            if last['rsi'] >= params['RSI_EXTREME_OVERBOUGHT']:
-                sell_triggers += 2.0
-            elif last['rsi'] > params['RSI_MAX']:
-                sell_triggers += 1.0
-            
-            # EMA триггеры
-            if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-                buy_triggers += 1.5
-            elif last['close'] > last['ema_fast'] and last['close'] > prev['close']:
-                buy_triggers += 0.5
-                
-            if prev['ema_fast'] >= prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-                sell_triggers += 1.5
-            elif last['close'] < last['ema_fast'] and last['close'] < prev['close']:
-                sell_triggers += 0.5
-            
-            # MACD триггеры
-            if 'macd_line' in current_df.columns and 'macd_signal' in current_df.columns:
-                if last['macd_line'] > last['macd_signal']:
-                    buy_triggers += 0.5
-                if last['macd_line'] < last['macd_signal']:
-                    sell_triggers += 0.5
-            
-            # Bollinger Bands убраны - не используются в скоринге реального бота
-            
-            min_triggers = params['MIN_TRIGGERS_ACTIVE_HOURS']
-            
-            # Определяем тип сигнала
-            signal_type = None
-            if buy_triggers >= min_triggers and last['rsi'] <= params['LONG_MAX_RSI']:
-                signal_type = 'BUY'
-            elif sell_triggers >= min_triggers and last['rsi'] >= params['SHORT_MIN_RSI']:
-                signal_type = 'SELL'
-            
-            if signal_type:
-                # Дополнительные фильтры
-                if signal_type == 'SELL' and last['adx'] < params['SHORT_MIN_ADX']:
-                    continue
-                
-                # Проверяем score
-                try:
-                    score, pattern = evaluate_signal_strength(current_df, symbol, signal_type, params)
-                    if score >= params['MIN_COMPOSITE_SCORE']:
-                        total_signals += 1
-                        
-                        # Проверяем движение в течение периода (более реалистично)
-                        entry_price = last['close']
-                        max_candles_to_check = min(48, len(df_analyzed) - i - 1)  # 12 часов максимум
-                        direction_score = 0.0
-                        
-                        # Проверяем движение в течение периода
-                        if max_candles_to_check >= 24:  # Минимум 24 свечи (6 часов)
-                            # Ищем максимальное движение в нужном направлении за весь период
-                            max_favorable_move = 0.0
-                            max_drawdown = 0.0
-                            
-                            for j in range(i + 1, i + 1 + max_candles_to_check):
-                                future_candle = df_analyzed.iloc[j]
-                                
-                                if signal_type == 'BUY':
-                                    # Реалистичное движение вверх за период (по close ценам)
-                                    price_change = (future_candle['close'] - entry_price) / entry_price
-                                    max_favorable_move = max(max_favorable_move, price_change)
-                                    
-                                    # Реалистичная просадка (по close ценам)
-                                    drawdown = (entry_price - future_candle['close']) / entry_price
-                                    max_drawdown = max(max_drawdown, drawdown)
-                                    
-                                else:  # SELL
-                                    # Реалистичное движение вниз за период (по close ценам)
-                                    price_change = (entry_price - future_candle['close']) / entry_price
-                                    max_favorable_move = max(max_favorable_move, price_change)
-                                    
-                                    # Реалистичная просадка (по close ценам)
-                                    drawdown = (future_candle['close'] - entry_price) / entry_price
-                                    max_drawdown = max(max_drawdown, drawdown)
-                            
-                            # Сигнал правильный если:
-                            # 1. Реалистичное движение >= 0.5% (по close ценам)
-                            # 2. Реалистичная просадка <= 1.0% (по close ценам)
-                            if max_favorable_move >= 0.005 and max_drawdown <= 0.01:
-                                # Бонус за стабильность движения
-                                stability_bonus = 1.0 if max_drawdown <= 0.005 else 0.5
-                                direction_score = max_favorable_move * stability_bonus
-                                correct_signals += 1
-                        
-                        total_direction_score += direction_score
-                        
-                        last_signal_time[symbol] = current_time
-                        
-                except Exception as e:
-                    continue
         
         accuracy = correct_signals / total_signals if total_signals > 0 else 0
         
@@ -253,157 +272,97 @@ def check_signal_direction_quality(df: pd.DataFrame, symbol: str, params: Dict) 
         return {'correct_signals': 0, 'total_signals': 0, 'accuracy': 0}
 
 def simulate_trading_with_tp_sl(df: pd.DataFrame, symbol: str, params: Dict) -> Dict:
-    """Симуляция торговли с TP/SL"""
+    """Симуляция торговли с TP/SL используя check_signals из бота"""
     try:
-        if df.empty or len(df) < params['MIN_15M_CANDLES']:
+        if df.empty or len(df) < 100:
             return {'total_pnl': 0, 'win_rate': 0, 'total_trades': 0, 'avg_rr': 0, 'wins': 0, 'losses': 0}
         
-        df_analyzed = analyze_with_all_filters(df.copy(), params)
-        if df_analyzed.empty:
+        df_analyzed = analyze_with_params(df.copy(), params)
+        if df_analyzed.empty or len(df_analyzed) < 100:
             return {'total_pnl': 0, 'win_rate': 0, 'total_trades': 0, 'avg_rr': 0, 'wins': 0, 'losses': 0}
         
         trades = []
-        last_signal_time = {}
         total_pnl = 0
         
-        # Проходим по всем свечам
-        for i in range(params['MIN_15M_CANDLES'], len(df_analyzed) - 100):  # Нужно 100 свечей для проверки TP/SL (25 часов)
+        # Проходим по всем свечам с шагом 10 для ускорения
+        for i in range(100, len(df_analyzed) - 100, 10):  # Шаг 10 свечей
             current_df = df_analyzed.iloc[:i+1].copy()
             last = current_df.iloc[-1]
-            prev = current_df.iloc[-2]
             
-            current_time = last['timestamp']
-            
-            # Проверяем cooldown
-            if symbol in last_signal_time:
-                time_diff = current_time - last_signal_time[symbol]
-                if time_diff < timedelta(minutes=params['SIGNAL_COOLDOWN_MINUTES']):
-                    continue
-            
-            # Проверяем базовые фильтры
-            if last['adx'] < params['MIN_ADX']:
+            # УПРОЩЕНО: Используем check_signals из бота!
+            try:
+                signals = check_signals_with_params(current_df, symbol, params)
+                
+                if signals:
+                    # Определяем тип
+                    signal_text = signals[0]
+                    if 'LONG' in signal_text or '🟢' in signal_text:
+                        direction = 'LONG'
+                    else:
+                        direction = 'SHORT'
+                    
+                    entry_price = last['close']
+                    atr = last['atr']
+                    
+                    # Рассчитываем TP/SL
+                    tp_price, sl_price = calculate_tp_sl_with_params(current_df, entry_price, atr, direction, params)
+                    
+                    if tp_price is None or sl_price is None:
+                        continue
+                    
+                    # Симулируем результат сделки
+                    trade_result = None
+                    
+                    # Ищем выход в следующих 80 свечах (20 часов)
+                    for j in range(i + 1, min(i + 80, len(df_analyzed))):
+                        future_candle = df_analyzed.iloc[j]
+                        
+                        # Проверяем TP/SL
+                        if direction == 'LONG':
+                            if future_candle['high'] >= tp_price:
+                                pnl_pct = (tp_price - entry_price) / entry_price
+                                trade_type = 'WIN' if pnl_pct > 0 else 'LOSS'
+                                trade_result = {'type': trade_type, 'pnl': pnl_pct, 'rr': abs(pnl_pct / ((entry_price - sl_price) / entry_price)) if pnl_pct > 0 else 0}
+                                break
+                            elif future_candle['low'] <= sl_price:
+                                pnl_pct = (sl_price - entry_price) / entry_price
+                                trade_type = 'WIN' if pnl_pct > 0 else 'LOSS'
+                                trade_result = {'type': trade_type, 'pnl': pnl_pct, 'rr': 0}
+                                break
+                        else:  # SHORT
+                            if future_candle['low'] <= tp_price:
+                                pnl_pct = (entry_price - tp_price) / entry_price
+                                trade_type = 'WIN' if pnl_pct > 0 else 'LOSS'
+                                trade_result = {'type': trade_type, 'pnl': pnl_pct, 'rr': abs(pnl_pct / ((sl_price - entry_price) / entry_price)) if pnl_pct > 0 else 0}
+                                break
+                            elif future_candle['high'] >= sl_price:
+                                pnl_pct = (entry_price - sl_price) / entry_price
+                                trade_type = 'WIN' if pnl_pct > 0 else 'LOSS'
+                                trade_result = {'type': trade_type, 'pnl': pnl_pct, 'rr': 0}
+                                break
+                    
+                    # Если не закрылась за 80 свечей, закрываем по текущей цене
+                    if trade_result is None:
+                        if direction == 'LONG':
+                            exit_price = df_analyzed.iloc[min(i + 80, len(df_analyzed) - 1)]['close']
+                            pnl_pct = (exit_price - entry_price) / entry_price
+                        else:
+                            exit_price = df_analyzed.iloc[min(i + 80, len(df_analyzed) - 1)]['close']
+                            pnl_pct = (entry_price - exit_price) / entry_price
+                        
+                        trade_type = 'WIN' if pnl_pct > 0 else 'LOSS'
+                        trade_result = {'type': trade_type, 'pnl': pnl_pct, 'rr': 0}
+                    
+                    trades.append(trade_result)
+                    total_pnl += trade_result['pnl']
+                    
+            except Exception as e:
                 continue
-            
-            # Volume фильтр
-            if 'volume_ratio' in current_df.columns:
-                volume_ratio = last.get('volume_ratio', 1.0)
-                if volume_ratio < params['MIN_VOLUME_MA_RATIO']:
-                    continue
-            
-            # Триггеры (та же логика что и в check_signal_direction_quality)
-            buy_triggers = 0
-            sell_triggers = 0
-            
-            # RSI триггеры
-            if last['rsi'] <= params['RSI_EXTREME_OVERSOLD']:
-                buy_triggers += 2.0
-            elif last['rsi'] < params['RSI_MIN']:
-                buy_triggers += 1.0
-                
-            if last['rsi'] >= params['RSI_EXTREME_OVERBOUGHT']:
-                sell_triggers += 2.0
-            elif last['rsi'] > params['RSI_MAX']:
-                sell_triggers += 1.0
-            
-            # EMA триггеры
-            if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-                buy_triggers += 1.5
-            elif last['close'] > last['ema_fast'] and last['close'] > prev['close']:
-                buy_triggers += 0.5
-                
-            if prev['ema_fast'] >= prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-                sell_triggers += 1.5
-            elif last['close'] < last['ema_fast'] and last['close'] < prev['close']:
-                sell_triggers += 0.5
-            
-            # MACD триггеры
-            if 'macd_line' in current_df.columns and 'macd_signal' in current_df.columns:
-                if last['macd_line'] > last['macd_signal']:
-                    buy_triggers += 0.5
-                if last['macd_line'] < last['macd_signal']:
-                    sell_triggers += 0.5
-            
-            # Bollinger Bands убраны - не используются в скоринге реального бота
-            
-            min_triggers = params['MIN_TRIGGERS_ACTIVE_HOURS']
-            
-            # Определяем тип сигнала
-            signal_type = None
-            if buy_triggers >= min_triggers and last['rsi'] <= params['LONG_MAX_RSI']:
-                signal_type = 'BUY'
-            elif sell_triggers >= min_triggers and last['rsi'] >= params['SHORT_MIN_RSI']:
-                signal_type = 'SELL'
-            
-            if signal_type:
-                # Дополнительные фильтры
-                if signal_type == 'SELL' and last['adx'] < params['SHORT_MIN_ADX']:
-                    continue
-                
-                # Проверяем score
-                try:
-                    score, pattern = evaluate_signal_strength(current_df, symbol, signal_type, params)
-                    if score >= params['MIN_COMPOSITE_SCORE']:
-                        # Рассчитываем TP/SL
-                        direction = 'SHORT' if signal_type == 'SELL' else 'LONG'
-                        tp_price, sl_price = calculate_tp_sl(current_df, last['close'], last['atr'], direction, params)
-                        
-                        if tp_price is None or sl_price is None:
-                            continue
-                        
-                        # Симулируем результат сделки
-                        entry_price = last['close']
-                        trade_result = None
-                        
-                        # Ищем следующую свечу для закрытия (максимум 80 свечей вперед = 20 часов)
-                        for j in range(i + 1, min(i + 80, len(df_analyzed))):
-                            future_candle = df_analyzed.iloc[j]
-                            
-                            # Проверяем TP/SL
-                            if direction == 'LONG':
-                                if future_candle['high'] >= tp_price:
-                                    # TP достигнут
-                                    pnl_pct = (tp_price - entry_price) / entry_price
-                                    trade_result = {'type': 'WIN', 'pnl': pnl_pct, 'rr': abs(pnl_pct / ((entry_price - sl_price) / entry_price))}
-                                    break
-                                elif future_candle['low'] <= sl_price:
-                                    # SL достигнут
-                                    pnl_pct = (sl_price - entry_price) / entry_price
-                                    trade_result = {'type': 'LOSS', 'pnl': pnl_pct, 'rr': 0}
-                                    break
-                            else:  # SHORT
-                                if future_candle['low'] <= tp_price:
-                                    # TP достигнут
-                                    pnl_pct = (entry_price - tp_price) / entry_price
-                                    trade_result = {'type': 'WIN', 'pnl': pnl_pct, 'rr': abs(pnl_pct / ((sl_price - entry_price) / entry_price))}
-                                    break
-                                elif future_candle['high'] >= sl_price:
-                                    # SL достигнут
-                                    pnl_pct = (entry_price - sl_price) / entry_price
-                                    trade_result = {'type': 'LOSS', 'pnl': pnl_pct, 'rr': 0}
-                                    break
-                        
-                        # Если сделка не закрылась за 80 свечей, считаем убыток
-                        if trade_result is None:
-                            if direction == 'LONG':
-                                exit_price = df_analyzed.iloc[min(i + 80, len(df_analyzed) - 1)]['close']
-                                pnl_pct = (exit_price - entry_price) / entry_price
-                            else:
-                                exit_price = df_analyzed.iloc[min(i + 80, len(df_analyzed) - 1)]['close']
-                                pnl_pct = (entry_price - exit_price) / entry_price
-                            
-                            trade_result = {'type': 'TIMEOUT', 'pnl': pnl_pct, 'rr': 0}
-                        
-                        trades.append(trade_result)
-                        total_pnl += trade_result['pnl']
-                        last_signal_time[symbol] = current_time
-                        
-                except Exception as e:
-                    continue
         
         # Рассчитываем статистику
         if trades:
             wins = [t for t in trades if t['type'] == 'WIN']
-            losses = [t for t in trades if t['type'] in ['LOSS', 'TIMEOUT']]
+            losses = [t for t in trades if t['type'] == 'LOSS']
             win_rate = len(wins) / len(trades) if trades else 0
             avg_rr = sum(t['rr'] for t in trades) / len(trades) if trades else 0
             
@@ -477,9 +436,10 @@ def test_trading_performance(params: Dict) -> Optional[Dict]:
             total_wins += result['wins']
             total_losses += result['losses']
         
-        # Правильный расчет общего P&L (средний по символам)
+        # ИСПРАВЛЕНО: Правильный расчет общего P&L (СУММА, а не среднее!)
         if symbol_results:
-            total_pnl = sum(r['total_pnl'] for r in symbol_results) / len(symbol_results)
+            # Общий P&L = сумма P&L по всем символам
+            total_pnl = sum(r['total_pnl'] for r in symbol_results)
         else:
             total_pnl = 0
         
@@ -487,6 +447,7 @@ def test_trading_performance(params: Dict) -> Optional[Dict]:
             return None
         
         win_rate = total_wins / total_trades
+        # Средний P&L на сделку = общий P&L / количество сделок
         avg_pnl_per_trade = total_pnl / total_trades
         
         return {
@@ -505,8 +466,8 @@ def test_trading_performance(params: Dict) -> Optional[Dict]:
 # Глобальная переменная для хранения лучших фильтров из этапа 1
 BEST_FILTERS_STAGE1 = None
 
-# Минимальное количество сигналов для Stage 1
-MIN_REQUIRED_SIGNALS = 30  # Минимум 30 сигналов за период тестирования (более мягкое требование)
+# Минимальное количество сделок для Stage 1
+MIN_REQUIRED_TRADES = 5  # Минимум 5 сделок (ищем баланс: МНОГО прибыльных сигналов)
 
 def stage1_objective(trial: optuna.Trial) -> float:
     """ЭТАП 1: Оптимизация качества сигналов"""
@@ -514,17 +475,17 @@ def stage1_objective(trial: optuna.Trial) -> float:
         # Создаем параметры на основе текущих
         params = CURRENT_PARAMS.copy()
         
-        # Оптимизируем только фильтры сигналов (НЕ TP/SL) с ограниченной точностью
-        params['MIN_COMPOSITE_SCORE'] = trial.suggest_float('MIN_COMPOSITE_SCORE', 0.0, 1.0, step=0.5)
-        params['MIN_ADX'] = trial.suggest_int('MIN_ADX', 3, 25)
-        params['SHORT_MIN_ADX'] = trial.suggest_int('SHORT_MIN_ADX', 15, 60)
-        params['RSI_MIN'] = trial.suggest_int('RSI_MIN', 15, 50)
-        params['RSI_MAX'] = trial.suggest_int('RSI_MAX', 50, 95)
-        params['LONG_MAX_RSI'] = trial.suggest_int('LONG_MAX_RSI', 25, 90)
-        params['SHORT_MIN_RSI'] = trial.suggest_int('SHORT_MIN_RSI', 10, 95)
-        params['SIGNAL_COOLDOWN_MINUTES'] = trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 30, 90)
-        params['MIN_TRIGGERS_ACTIVE_HOURS'] = trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0.5, 2.0, step=0.1)
-        params['MIN_VOLUME_MA_RATIO'] = trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.1, 2.0, step=0.1)
+        # ОЧЕНЬ МЯГКИЕ диапазоны для максимума возможностей
+        params['MIN_COMPOSITE_SCORE'] = trial.suggest_float('MIN_COMPOSITE_SCORE', 0.0, 2.0, step=0.2)  # Начинаем с 0!
+        params['MIN_ADX'] = trial.suggest_int('MIN_ADX', 5, 20)  # Еще мягче
+        params['SHORT_MIN_ADX'] = trial.suggest_int('SHORT_MIN_ADX', 10, 30)  # Еще мягче
+        params['RSI_MIN'] = trial.suggest_int('RSI_MIN', 10, 40)  # Очень широкий
+        params['RSI_MAX'] = trial.suggest_int('RSI_MAX', 60, 90)  # Очень широкий
+        params['LONG_MAX_RSI'] = trial.suggest_int('LONG_MAX_RSI', 25, 50)  # Еще шире!
+        params['SHORT_MIN_RSI'] = trial.suggest_int('SHORT_MIN_RSI', 10, 30)  # Шире
+        params['SIGNAL_COOLDOWN_MINUTES'] = trial.suggest_int('SIGNAL_COOLDOWN_MINUTES', 15, 60)  # Короче!
+        params['MIN_TRIGGERS_ACTIVE_HOURS'] = trial.suggest_float('MIN_TRIGGERS_ACTIVE_HOURS', 0.3, 1.5, step=0.1)  # Еще мягче!
+        params['MIN_VOLUME_MA_RATIO'] = trial.suggest_float('MIN_VOLUME_MA_RATIO', 0.1, 2.0, step=0.1)  # Очень мягкий
         params['RSI_WINDOW'] = trial.suggest_int('RSI_WINDOW', 5, 21)
         params['RSI_EXTREME_OVERSOLD'] = trial.suggest_int('RSI_EXTREME_OVERSOLD', 10, 30)
         params['RSI_EXTREME_OVERBOUGHT'] = trial.suggest_int('RSI_EXTREME_OVERBOUGHT', 70, 90)
@@ -542,51 +503,50 @@ def stage1_objective(trial: optuna.Trial) -> float:
         # WEIGHT_BB, WEIGHT_VWAP, WEIGHT_VOLUME убраны - не используются в скоринге
         params['SHORT_BOOST_MULTIPLIER'] = trial.suggest_float('SHORT_BOOST_MULTIPLIER', 0.5, 5.0, step=0.5)
         params['LONG_PENALTY_IN_DOWNTREND'] = trial.suggest_float('LONG_PENALTY_IN_DOWNTREND', 0.1, 1.0, step=0.1)
-        params['REQUIRE_MACD_HISTOGRAM_CONFIRMATION'] = trial.suggest_categorical('REQUIRE_MACD_HISTOGRAM_CONFIRMATION', [True, False])
         
-
-        # Тестируем качество сигналов
+        # ПРАВИЛЬНО: Stage 1 проверяет НАПРАВЛЕНИЕ сигнала (не P&L!)
+        # Тестируем что сигналы идут в правильную сторону
         result = test_signal_quality(params)
         
-        if result is None:
+        if result is None or result['total_signals'] == 0:
             return 0.0
         
-        # Целевая функция: комбинированная оценка качества сигналов
-        accuracy = result['accuracy']
-        avg_direction_score = result.get('avg_direction_score', 0)
+        accuracy = result['accuracy']  # % сигналов что пошли в правильном направлении
         total_signals = result['total_signals']
-        correct_signals_count = result['correct_signals']
+        correct_signals = result['correct_signals']
+        avg_direction_score = result.get('avg_direction_score', 0)
         
-        # НОВАЯ ЛОГИКА: Приоритет надежности и количества сигналов
+        # 1. Требуем минимальную точность направления
+        if accuracy < 0.60:  # Минимум 60% правильных направлений
+            return 0.0
         
-        # 1. Базовая оценка: точность направления (более мягкая)
-        direction_score = accuracy * (1 + avg_direction_score * 0.5)  # Уменьшаем вес качества движения
+        # 2. Требуем минимум сигналов
+        if total_signals < 5:
+            return 0.0
         
-        # 2. Бонус за количество выигрышных сигналов (главный приоритет)
-        winning_signals_bonus = min(correct_signals_count / 200, 2.0)  # 200 выигрышных = бонус 2.0 (максимум)
+        # 3. Score: accuracy + качество движения + бонус за количество
+        base_score = accuracy * 100  # Главное - правильность направления!
         
-        # 3. Бонус за общее количество сигналов (второй приоритет)
-        total_signals_bonus = min(total_signals / 500, 1.5)  # 500 сигналов = бонус 1.5 (максимум)
+        # Бонус за сильное движение в правильном направлении
+        direction_bonus = avg_direction_score * 200  # Чем сильнее движение, тем лучше
         
-        # 4. Комбинированный score с приоритетом количества
-        base_score = direction_score + winning_signals_bonus * 0.6 + total_signals_bonus * 0.4
-        
-        # 5. Мягкий штраф за очень низкую точность (только если < 75%)
-        if accuracy < 0.75:
-            accuracy_penalty = (0.75 - accuracy) * 1.0  # Мягкий штраф
-            score = base_score - accuracy_penalty
+        # Бонус за МНОГО правильных сигналов
+        if correct_signals >= 30:
+            quantity_bonus = 50.0
+        elif correct_signals >= 20:
+            quantity_bonus = 30.0
+        elif correct_signals >= 10:
+            quantity_bonus = 20.0
+        elif correct_signals >= 5:
+            quantity_bonus = 10.0
         else:
-            score = base_score
+            quantity_bonus = 0
         
-        # КРИТИЧНО: Минимальное требование - не менее 30 сигналов
-        if total_signals < MIN_REQUIRED_SIGNALS:
-            logging.info(f"Stage 1 Trial {trial.number}: ОТКЛОНЕН - недостаточно сигналов: {total_signals} < {MIN_REQUIRED_SIGNALS}")
-            return 0.0  # Полностью отклоняем параметры с малым количеством сигналов
+        score = base_score + direction_bonus + quantity_bonus
         
-        # Логирование лучших результатов
-        if score > 2.0 and trial.number % 20 == 0:
-            avg_score = result.get('avg_direction_score', 0)
-            logging.info(f"Stage 1 Trial {trial.number}: Score={score:.3f}, Accuracy={accuracy:.1%}, WinningSignals={correct_signals_count}, TotalSignals={total_signals}, DirectionScore={avg_score:.3f}")
+        # Логирование хороших результатов
+        if score > 80:
+            opt_logger.info(f"✅ Trial {trial.number}: Score={score:.1f}, Accuracy={accuracy:.1%}, CorrectSignals={correct_signals}/{total_signals}, AvgMove={avg_direction_score:.3f}")
         
         return score
         
@@ -604,11 +564,11 @@ def stage2_objective_max_profit(trial: optuna.Trial) -> float:
         
         params = BEST_FILTERS_STAGE1.copy()
         
-        # Оптимизируем только TP/SL параметры с ограниченной точностью
-        params['TP_ATR_MULT'] = trial.suggest_float('TP_ATR_MULT', 1.0, 8.0, step=0.1)
-        params['SL_ATR_MULT'] = trial.suggest_float('SL_ATR_MULT', 1.0, 4.0, step=0.1)
-        params['TP_MIN'] = trial.suggest_float('TP_MIN', 0.005, 0.04, step=0.002)
-        params['SL_MIN'] = trial.suggest_float('SL_MIN', 0.005, 0.04, step=0.002)
+        # Оптимизируем TP/SL для МАКСИМАЛЬНОЙ ПРИБЫЛИ (агрессивные TP)
+        params['TP_ATR_MULT'] = trial.suggest_float('TP_ATR_MULT', 1.0, 8.0, step=0.3)  # Более высокие TP
+        params['SL_ATR_MULT'] = trial.suggest_float('SL_ATR_MULT', 1.0, 8.0, step=0.3)  # Умеренные SL
+        params['TP_MIN'] = trial.suggest_float('TP_MIN', 0.005, 0.06, step=0.003)  # Выше минимум (2.5-6%)
+        params['SL_MIN'] = trial.suggest_float('SL_MIN', 0.005, 0.06, step=0.003)  # 1.5-3.5%
         
         # Тестируем торговую производительность
         result = test_trading_performance(params)
@@ -620,8 +580,8 @@ def stage2_objective_max_profit(trial: optuna.Trial) -> float:
         score = result['total_pnl']
         
         # Логирование лучших результатов
-        if score > 20 and trial.number % 20 == 0:
-            logging.info(f"Stage 2 MaxProfit Trial {trial.number}: P&L={score:.1f}%, Winrate={result['win_rate']:.1%}, Trades={result['total_trades']}")
+        if score > 10:
+            opt_logger.info(f"✅ Stage 2 MaxProfit Trial {trial.number}: P&L={score:.1f}%, WR={result['win_rate']:.1%}, Trades={result['total_trades']}")
         
         return score
         
@@ -659,8 +619,8 @@ def stage2_objective_max_winrate(trial: optuna.Trial) -> float:
         score = winrate_score + profit_bonus
         
         # Логирование лучших результатов
-        if score > 30 and trial.number % 20 == 0:
-            logging.info(f"Stage 2 MaxWinrate Trial {trial.number}: Score={score:.1f}, Winrate={result['win_rate']:.1%}, P&L={result['total_pnl']:.1f}%, Trades={result['total_trades']}")
+        if score > 40:
+            opt_logger.info(f"✅ Stage 2 MaxWinrate Trial {trial.number}: Score={score:.1f}, WR={result['win_rate']:.1%}, P&L={result['total_pnl']:.1f}%")
         
         return score
         
@@ -698,8 +658,8 @@ def stage2_objective_balanced(trial: optuna.Trial) -> float:
         score = winrate_score + profit_score
         
         # Логирование лучших результатов
-        if score > 25 and trial.number % 20 == 0:
-            logging.info(f"Stage 2 Balanced Trial {trial.number}: Score={score:.1f}, Winrate={result['win_rate']:.1%}, P&L={result['total_pnl']:.1f}%, Trades={result['total_trades']}")
+        if score > 30:
+            opt_logger.info(f"✅ Stage 2 Balanced Trial {trial.number}: Score={score:.1f}, WR={result['win_rate']:.1%}, P&L={result['total_pnl']:.1f}%")
         
         return score
         
@@ -711,7 +671,7 @@ async def run_two_stage_optimization():
     """Запуск 2-этапной оптимизации"""
     global BEST_FILTERS_STAGE1
     
-    logging.info("🚀 Запускаем 2-этапную оптимизацию...")
+    opt_logger.info("🚀 Запускаем 2-этапную оптимизацию...")
     
     # Загружаем данные
     await load_data_for_optimization()
@@ -723,27 +683,27 @@ async def run_two_stage_optimization():
     # =============================================================================
     # ЭТАП 1: Оптимизация качества сигналов
     # =============================================================================
-    logging.info("\n" + "="*80)
-    logging.info("🎯 ЭТАП 1: ОПТИМИЗАЦИЯ КАЧЕСТВА СИГНАЛОВ")
-    logging.info("="*80)
+    opt_logger.info("\n" + "="*80)
+    opt_logger.info("🎯 ЭТАП 1: ОПТИМИЗАЦИЯ КАЧЕСТВА СИГНАЛОВ")
+    opt_logger.info("="*80)
     
     study1 = optuna.create_study(
         direction='maximize',
         sampler=optuna.samplers.TPESampler(seed=42)
     )
     
-    logging.info("🔍 Ищем лучшие фильтры для качества сигналов...")
+    opt_logger.info("🔍 Ищем лучшие фильтры для качества сигналов...")
     study1.optimize(stage1_objective, n_trials=2000)
     
     best_filters = study1.best_params
     best_accuracy = study1.best_value
     
-    logging.info(f"\n🏆 ЛУЧШИЕ ФИЛЬТРЫ ЭТАПА 1:")
-    logging.info(f"📊 Комбинированный score: {best_accuracy:.3f}")
-    logging.info(f"📈 Параметры фильтров:")
+    opt_logger.info(f"\n🏆 ЛУЧШИЕ ФИЛЬТРЫ ЭТАПА 1:")
+    opt_logger.info(f"📊 Комбинированный score: {best_accuracy:.3f}")
+    opt_logger.info(f"📈 Параметры фильтров:")
     
     for key, value in best_filters.items():
-        logging.info(f"  {key}: {value}")
+        opt_logger.info(f"  {key}: {value}")
     
     # Сохраняем лучшие фильтры для этапа 2
     BEST_FILTERS_STAGE1 = CURRENT_PARAMS.copy()
@@ -752,80 +712,80 @@ async def run_two_stage_optimization():
     # =============================================================================
     # ЭТАП 2: Оптимизация TP/SL (3 режима)
     # =============================================================================
-    logging.info("\n" + "="*80)
-    logging.info("💰 ЭТАП 2: ОПТИМИЗАЦИЯ TP/SL (3 РЕЖИМА)")
-    logging.info("="*80)
+    opt_logger.info("\n" + "="*80)
+    opt_logger.info("💰 ЭТАП 2: ОПТИМИЗАЦИЯ TP/SL (3 РЕЖИМА)")
+    opt_logger.info("="*80)
     
     # Режим 1: Максимальная прибыль
-    logging.info("\n🎯 РЕЖИМ 1: МАКСИМАЛЬНАЯ ПРИБЫЛЬ")
-    logging.info("-" * 50)
+    opt_logger.info("\n🎯 РЕЖИМ 1: МАКСИМАЛЬНАЯ ПРИБЫЛЬ")
+    opt_logger.info("-" * 50)
     
     study_max_profit = optuna.create_study(
         direction='maximize',
         sampler=optuna.samplers.TPESampler(seed=42)
     )
     
-    logging.info("🔍 Ищем TP/SL для максимальной прибыли...")
+    opt_logger.info("🔍 Ищем TP/SL для максимальной прибыли...")
     study_max_profit.optimize(stage2_objective_max_profit, n_trials=400)
     
     best_max_profit = study_max_profit.best_params
     best_max_profit_value = study_max_profit.best_value
     
-    logging.info(f"💰 Лучший P&L: {best_max_profit_value:.1f}%")
-    logging.info(f"📊 TP/SL параметры (максимальная прибыль):")
+    opt_logger.info(f"💰 Лучший P&L: {best_max_profit_value:.1f}%")
+    opt_logger.info(f"📊 TP/SL параметры (максимальная прибыль):")
     for key, value in best_max_profit.items():
-        logging.info(f"  {key}: {value}")
+        opt_logger.info(f"  {key}: {value}")
     
     # Режим 2: Максимальный винрейт
-    logging.info("\n🎯 РЕЖИМ 2: МАКСИМАЛЬНЫЙ ВИНРЕЙТ")
-    logging.info("-" * 50)
+    opt_logger.info("\n🎯 РЕЖИМ 2: МАКСИМАЛЬНЫЙ ВИНРЕЙТ")
+    opt_logger.info("-" * 50)
     
     study_max_winrate = optuna.create_study(
         direction='maximize',
         sampler=optuna.samplers.TPESampler(seed=43)
     )
     
-    logging.info("🔍 Ищем TP/SL для максимального винрейте...")
+    opt_logger.info("🔍 Ищем TP/SL для максимального винрейте...")
     study_max_winrate.optimize(stage2_objective_max_winrate, n_trials=400)
     
     best_max_winrate = study_max_winrate.best_params
     best_max_winrate_value = study_max_winrate.best_value
     
-    logging.info(f"🎯 Лучший Score: {best_max_winrate_value:.1f}")
-    logging.info(f"📊 TP/SL параметры (максимальный винрейт):")
+    opt_logger.info(f"🎯 Лучший Score: {best_max_winrate_value:.1f}")
+    opt_logger.info(f"📊 TP/SL параметры (максимальный винрейт):")
     for key, value in best_max_winrate.items():
-        logging.info(f"  {key}: {value}")
+        opt_logger.info(f"  {key}: {value}")
     
     # Режим 3: Сбалансированный
-    logging.info("\n🎯 РЕЖИМ 3: СБАЛАНСИРОВАННЫЙ")
-    logging.info("-" * 50)
+    opt_logger.info("\n🎯 РЕЖИМ 3: СБАЛАНСИРОВАННЫЙ")
+    opt_logger.info("-" * 50)
     
     study_balanced = optuna.create_study(
         direction='maximize',
         sampler=optuna.samplers.TPESampler(seed=44)
     )
     
-    logging.info("🔍 Ищем TP/SL для сбалансированного результата...")
+    opt_logger.info("🔍 Ищем TP/SL для сбалансированного результата...")
     study_balanced.optimize(stage2_objective_balanced, n_trials=400)
     
     best_balanced = study_balanced.best_params
     best_balanced_value = study_balanced.best_value
     
-    logging.info(f"⚖️ Лучший Score: {best_balanced_value:.1f}")
-    logging.info(f"📊 TP/SL параметры (сбалансированный):")
+    opt_logger.info(f"⚖️ Лучший Score: {best_balanced_value:.1f}")
+    opt_logger.info(f"📊 TP/SL параметры (сбалансированный):")
     for key, value in best_balanced.items():
-        logging.info(f"  {key}: {value}")
+        opt_logger.info(f"  {key}: {value}")
     
     # =============================================================================
     # ФИНАЛЬНЫЕ РЕЗУЛЬТАТЫ И СРАВНЕНИЕ
     # =============================================================================
-    logging.info("\n" + "="*80)
-    logging.info("🏆 ФИНАЛЬНЫЕ РЕЗУЛЬТАТЫ 2-ЭТАПНОЙ ОПТИМИЗАЦИИ")
-    logging.info("="*80)
+    opt_logger.info("\n" + "="*80)
+    opt_logger.info("🏆 ФИНАЛЬНЫЕ РЕЗУЛЬТАТЫ 2-ЭТАПНОЙ ОПТИМИЗАЦИИ")
+    opt_logger.info("="*80)
     
     # Тестируем все три режима
-    logging.info("\n📊 СРАВНЕНИЕ РЕЗУЛЬТАТОВ:")
-    logging.info("-" * 50)
+    opt_logger.info("\n📊 СРАВНЕНИЕ РЕЗУЛЬТАТОВ:")
+    opt_logger.info("-" * 50)
     
     # Режим 1: Максимальная прибыль
     params_max_profit = BEST_FILTERS_STAGE1.copy()
@@ -843,29 +803,29 @@ async def run_two_stage_optimization():
     result_balanced = test_trading_performance(params_balanced)
     
     # Выводим сравнение
-    logging.info(f"💰 РЕЖИМ 1 (Максимальная прибыль):")
+    opt_logger.info(f"💰 РЕЖИМ 1 (Максимальная прибыль):")
     if result_max_profit:
-        logging.info(f"   P&L: {result_max_profit['total_pnl']:.1f}%")
-        logging.info(f"   Винрейт: {result_max_profit['win_rate']:.1%}")
-        logging.info(f"   Сделок: {result_max_profit['total_trades']}")
-        logging.info(f"   R:R: {result_max_profit.get('avg_rr', 0):.2f}")
+        opt_logger.info(f"   P&L: {result_max_profit['total_pnl']:.1f}%")
+        opt_logger.info(f"   Винрейт: {result_max_profit['win_rate']:.1%}")
+        opt_logger.info(f"   Сделок: {result_max_profit['total_trades']}")
+        opt_logger.info(f"   R:R: {result_max_profit.get('avg_rr', 0):.2f}")
     
-    logging.info(f"\n🎯 РЕЖИМ 2 (Максимальный винрейт):")
+    opt_logger.info(f"\n🎯 РЕЖИМ 2 (Максимальный винрейт):")
     if result_max_winrate:
-        logging.info(f"   P&L: {result_max_winrate['total_pnl']:.1f}%")
-        logging.info(f"   Винрейт: {result_max_winrate['win_rate']:.1%}")
-        logging.info(f"   Сделок: {result_max_winrate['total_trades']}")
-        logging.info(f"   R:R: {result_max_winrate.get('avg_rr', 0):.2f}")
+        opt_logger.info(f"   P&L: {result_max_winrate['total_pnl']:.1f}%")
+        opt_logger.info(f"   Винрейт: {result_max_winrate['win_rate']:.1%}")
+        opt_logger.info(f"   Сделок: {result_max_winrate['total_trades']}")
+        opt_logger.info(f"   R:R: {result_max_winrate.get('avg_rr', 0):.2f}")
     
-    logging.info(f"\n⚖️ РЕЖИМ 3 (Сбалансированный):")
+    opt_logger.info(f"\n⚖️ РЕЖИМ 3 (Сбалансированный):")
     if result_balanced:
-        logging.info(f"   P&L: {result_balanced['total_pnl']:.1f}%")
-        logging.info(f"   Винрейт: {result_balanced['win_rate']:.1%}")
-        logging.info(f"   Сделок: {result_balanced['total_trades']}")
-        logging.info(f"   R:R: {result_balanced.get('avg_rr', 0):.2f}")
+        opt_logger.info(f"   P&L: {result_balanced['total_pnl']:.1f}%")
+        opt_logger.info(f"   Винрейт: {result_balanced['win_rate']:.1%}")
+        opt_logger.info(f"   Сделок: {result_balanced['total_trades']}")
+        opt_logger.info(f"   R:R: {result_balanced.get('avg_rr', 0):.2f}")
     
     # Рекомендация
-    logging.info(f"\n💡 РЕКОМЕНДАЦИИ:")
+    opt_logger.info(f"\n💡 РЕКОМЕНДАЦИИ:")
     if result_max_profit and result_max_winrate and result_balanced:
         max_profit_pnl = result_max_profit['total_pnl']
         max_winrate_pnl = result_max_winrate['total_pnl']
@@ -875,11 +835,11 @@ async def run_two_stage_optimization():
         max_winrate_wr = result_max_winrate['win_rate']
         balanced_wr = result_balanced['win_rate']
         
-        logging.info(f"   🏆 Лучший P&L: Режим 1 ({max_profit_pnl:.1f}%)")
-        logging.info(f"   🎯 Лучший винрейт: Режим 2 ({max_winrate_wr:.1%})")
+        opt_logger.info(f"   🏆 Лучший P&L: Режим 1 ({max_profit_pnl:.1f}%)")
+        opt_logger.info(f"   🎯 Лучший винрейт: Режим 2 ({max_winrate_wr:.1%})")
         
         # Выбираем сбалансированный как рекомендуемый
-        logging.info(f"   ⚖️ Рекомендуемый: Режим 3 (P&L: {balanced_pnl:.1f}%, WR: {balanced_wr:.1%})")
+        opt_logger.info(f"   ⚖️ Рекомендуемый: Режим 3 (P&L: {balanced_pnl:.1f}%, WR: {balanced_wr:.1%})")
     
     # Сохраняем результаты
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -902,7 +862,7 @@ async def run_two_stage_optimization():
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     
-    logging.info(f"\n💾 Результаты сохранены в {filename}")
+    opt_logger.info(f"\n💾 Результаты сохранены в {filename}")
     
     return results
 

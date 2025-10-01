@@ -363,25 +363,21 @@ def evaluate_signal_strength(df, symbol, action):
         rsi_momentum = last['rsi'] - prev['rsi']
         
         if action == 'BUY':
-            # Более мягкие условия для BUY как в оптимизаторе
-            if last['rsi'] < RSI_EXTREME_OVERSOLD:  # Убираем требование momentum
-                rsi_score = 3.0  # Возвращаем высокий балл
-            elif last['rsi'] < RSI_MIN:  # Упрощаем условие
-                rsi_score = 2.5  # Высокий балл за oversold
-            elif RSI_MIN < last['rsi'] < 50:  # Расширяем диапазон
-                rsi_score = 1.5  # Средний балл за умеренные значения
-            elif last['rsi'] > RSI_MAX:  # Уменьшаем штраф
+            # Упрощённые условия для BUY
+            if last['rsi'] <= RSI_MIN:
+                rsi_score = 3.0  # Высокий балл за oversold
+            elif RSI_MIN < last['rsi'] < 50:
+                rsi_score = 1.5  # Средний балл
+            elif last['rsi'] > RSI_MAX:
                 rsi_score = -0.5  # Небольшой штраф
                 
         elif action == 'SELL':
-            # Более мягкие условия для SELL как в оптимизаторе
-            if last['rsi'] > RSI_EXTREME_OVERBOUGHT:  # Убираем требование momentum
-                rsi_score = 3.0  # Возвращаем высокий балл
-            elif last['rsi'] > RSI_MAX:  # Упрощаем условие
-                rsi_score = 2.5  # Высокий балл за overbought
-            elif 50 < last['rsi'] < RSI_MAX:  # Расширяем диапазон
-                rsi_score = 1.5  # Средний балл за умеренные значения
-            elif last['rsi'] < RSI_MIN:  # Уменьшаем штраф
+            # Упрощённые условия для SELL
+            if last['rsi'] >= RSI_MAX:
+                rsi_score = 3.0  # Высокий балл за overbought
+            elif 50 < last['rsi'] < RSI_MAX:
+                rsi_score = 1.5  # Средний балл
+            elif last['rsi'] < RSI_MIN:
                 rsi_score = -0.5  # Небольшой штраф
                 
         score += rsi_score * WEIGHT_RSI
@@ -467,8 +463,7 @@ def evaluate_signal_strength(df, symbol, action):
         # Уменьшаем штраф для LONG в нисходящем тренде
         if action == 'BUY' and len(df) >= 10:
             price_trend = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
-            if price_trend < -0.05:  # Делаем условие строже (было -0.03)
-                score *= max(0.8, LONG_PENALTY_IN_DOWNTREND)  # Ограничиваем штраф
+            # LONG_PENALTY_IN_DOWNTREND удалён - избыточно при ADX+RSI
         
         
         # КРИТИЧНО: Убираем большинство штрафующих корректировок
@@ -646,100 +641,45 @@ def check_signals(df, symbol):
         if 'volume_ma_usdt' in df.columns:
             volume_ma = last.get('volume_ma_usdt', 0)
             if volume_ma > 0:
-                volume_ratio = last['volume_usdt'] / volume_ma
-                if volume_ratio < MIN_VOLUME_MA_RATIO:
-                    logging.info(f"🔍 {symbol}: ОТКЛОНЕН по объему MA ({volume_ratio:.2f} < {MIN_VOLUME_MA_RATIO})")
-                    return []
-        elif 'volume_ratio_usdt' in df.columns:
-            # Альтернативный способ проверки volume ratio если колонка есть
-            volume_ratio = last.get('volume_ratio_usdt', 1.0)
-            if volume_ratio < MIN_VOLUME_MA_RATIO:
-                logging.info(f"🔍 {symbol}: ОТКЛОНЕН по объему ratio ({volume_ratio:.2f} < {MIN_VOLUME_MA_RATIO})")
-                return []
+                # MIN_VOLUME_MA_RATIO удалён - объемные фильтры убраны
+        # Объёмные фильтры удалены
         
-        logging.info(f"🔍 {symbol}: Прошел фильтры. Объем_ratio={volume_ratio:.2f}")
         
         # 12-13. Удалены лишние фильтры (консистентность объёма, волатильность RSI)
         
-        # === ТРИГГЕРЫ (точно как в оптимизаторе) ===
-        buy_triggers = 0
-        sell_triggers = 0
-        
-        # КРИТИЧНО: RSI экстремальные значения дают СИЛЬНЫЕ триггеры (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
-        if last['rsi'] <= RSI_EXTREME_OVERSOLD:  # 12 из config.py
-            buy_triggers += 2.0  # Очень сильный сигнал покупки
-        elif last['rsi'] < RSI_MIN:  # 15 из config.py (как в оптимизаторе)
-            buy_triggers += 1.0  # Сильный сигнал покупки
-            
-        if last['rsi'] >= RSI_EXTREME_OVERBOUGHT:  # 89 из config.py
-            sell_triggers += 2.0  # Очень сильный сигнал продажи
-        elif last['rsi'] > RSI_MAX:  # 77 из config.py (как в оптимизаторе)
-            sell_triggers += 1.0  # Сильный сигнал продажи
-        
-        # EMA кроссовер (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
-        if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
-            buy_triggers += 1.5  # Основной триггер для 15м (как в оптимизаторе)
-        elif last['close'] > last['ema_fast'] and last['close'] > prev['close']:
-            buy_triggers += 0.5
-            
-        if prev['ema_fast'] >= prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
-            sell_triggers += 1.5  # Основной триггер для 15м (как в оптимизаторе)
-        elif last['close'] < last['ema_fast'] and last['close'] < prev['close']:
-            sell_triggers += 0.5
-            
-        # ИСПРАВЛЕНО: MACD триггеры (используем правильные компоненты)
-        if hasattr(last, 'macd_line') and hasattr(last, 'macd_signal'):
-            if last['macd_line'] > last['macd_signal']:  # ИСПРАВЛЕНО: основная линия > сигнальная линия
-                buy_triggers += 0.5
-            if last['macd_line'] < last['macd_signal']:  # ИСПРАВЛЕНО: основная линия < сигнальная линия
-                sell_triggers += 0.5
-                
-        # Bollinger Bands убраны - исключены для упрощения
-                
-        # VWAP триггеры отключены (упрощение и снижение шума)
-                
-        # Минимальные триггеры (как в оптимизаторе)
-        min_triggers = MIN_TRIGGERS_ACTIVE_HOURS
-        
-        # === ДИАГНОСТИКА ТРИГГЕРОВ ===
-        logging.info(f"🔍 {symbol}: Триггеры - BUY:{buy_triggers:.1f}, SELL:{sell_triggers:.1f}, мин_требуется:{min_triggers:.1f}")
-        logging.info(f"🔍 {symbol}: RSI_пороги - LONG_MAX_RSI:{LONG_MAX_RSI}, SHORT_MIN_RSI:{SHORT_MIN_RSI}")
-        
-        # === ОПРЕДЕЛЕНИЕ ТИПА СИГНАЛА (ПОЛНОСТЬЮ СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ) ===
+        # === ОПРЕДЕЛЕНИЕ ТИПА СИГНАЛА (УПРОЩЁННО) ===
         signal_type = None
-        # КРИТИЧНО: RSI фильтры применяются ПРИ определении типа сигнала (как в оптимизаторе)
-        # СИНХРОНИЗИРОВАНО: используем параметры из config.py как в оптимизаторе
-        if buy_triggers >= min_triggers and last['rsi'] <= LONG_MAX_RSI:  # 38 из config.py
+        
+        # Проверяем подтверждение от индикаторов
+        ema_bullish = last['ema_fast'] > last['ema_slow']
+        ema_bearish = last['ema_fast'] < last['ema_slow']
+        
+        macd_bullish = False
+        macd_bearish = False
+        if hasattr(last, 'macd_line') and hasattr(last, 'macd_signal'):
+            macd_bullish = last['macd_line'] > last['macd_signal']
+            macd_bearish = last['macd_line'] < last['macd_signal']
+        
+        # BUY: RSI низкий + подтверждение от EMA или MACD
+        if last['rsi'] <= RSI_MIN and (ema_bullish or macd_bullish):
             signal_type = 'BUY'
-            logging.info(f"🔍 {symbol}: ✅ НАЙДЕН BUY сигнал! RSI={last['rsi']:.1f} <= {LONG_MAX_RSI}")
-        elif sell_triggers >= min_triggers and last['rsi'] >= SHORT_MIN_RSI:  # 32 из config.py
+            logging.info(f"🔍 {symbol}: ✅ BUY - RSI={last['rsi']:.1f}, EMA={'↑' if ema_bullish else '↓'}, MACD={'↑' if macd_bullish else '↓'}")
+        
+        # SELL: RSI высокий + подтверждение от EMA или MACD
+        elif last['rsi'] >= RSI_MAX and (ema_bearish or macd_bearish):
             signal_type = 'SELL'
-            logging.info(f"🔍 {symbol}: ✅ НАЙДЕН SELL сигнал! RSI={last['rsi']:.1f} >= {SHORT_MIN_RSI}")
+            logging.info(f"🔍 {symbol}: ✅ SELL - RSI={last['rsi']:.1f}, EMA={'↓' if ema_bearish else '↑'}, MACD={'↓' if macd_bearish else '↑'}")
+        
         else:
-            # Диагностика почему сигнал не найден
-            if buy_triggers >= min_triggers:
-                logging.info(f"🔍 {symbol}: ❌ BUY отклонен: RSI={last['rsi']:.1f} > {LONG_MAX_RSI}")
-            if sell_triggers >= min_triggers:
-                logging.info(f"🔍 {symbol}: ❌ SELL отклонен: RSI={last['rsi']:.1f} < {SHORT_MIN_RSI}")
-            if buy_triggers < min_triggers and sell_triggers < min_triggers:
-                logging.info(f"🔍 {symbol}: ❌ Недостаточно триггеров для любого сигнала")
+            # Диагностика
+            if last['rsi'] <= RSI_MIN:
+                logging.info(f"🔍 {symbol}: ❌ BUY отклонен - нет подтверждения (EMA={ema_bullish}, MACD={macd_bullish})")
+            elif last['rsi'] >= RSI_MAX:
+                logging.info(f"🔍 {symbol}: ❌ SELL отклонен - нет подтверждения (EMA={ema_bearish}, MACD={macd_bearish})")
+            else:
+                logging.info(f"🔍 {symbol}: ❌ Нет сигнала - RSI={last['rsi']:.1f} в нейтральной зоне [{RSI_MIN}-{RSI_MAX}]")
         
-        # MACD Histogram фильтр (как в оптимизаторе)
-        if signal_type and REQUIRE_MACD_HISTOGRAM_CONFIRMATION and 'macd_hist' in df.columns and len(df) > 1:
-            current_hist = last['macd_hist']
-            prev_hist = df['macd_hist'].iloc[-2]
-            if signal_type == 'BUY' and not (current_hist > 0 and prev_hist <= 0):
-                logging.info(f"🔍 {symbol}: ❌ BUY отклонен по MACD Histogram")
-                return []
-            elif signal_type == 'SELL' and not (current_hist < 0 and prev_hist >= 0):
-                logging.info(f"🔍 {symbol}: ❌ SELL отклонен по MACD Histogram")
-                return []
-        
-        # Дополнительные условия для short (как в оптимизаторе)
-        # RSI проверки уже применены при определении типа сигнала
-        if signal_type == 'SELL' and last['adx'] < SHORT_MIN_ADX:  # 23 из config.py (как в оптимизаторе)
-            logging.info(f"🔍 {symbol}: ❌ SELL отклонен по SHORT_MIN_ADX ({last['adx']:.1f} < {SHORT_MIN_ADX})")
-            return []
+        # ADX уже проверен выше, дополнительная проверка не нужна
         
         # === ГЕНЕРАЦИЯ СИГНАЛА ===
         if signal_type:
