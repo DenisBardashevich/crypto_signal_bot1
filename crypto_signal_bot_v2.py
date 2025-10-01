@@ -293,8 +293,24 @@ async def telegram_bot():
 
 async def main():
     logging.info("🚀 Crypto Signal Bot V2")
-    logging.info(f"📊 Логика: БАЛАНС (3/4 условия = 2/3 + ADX)")
+    logging.info(f"📊 Логика: RSI обязателен + подтверждение (EMA или MACD)")
     logging.info(f"⏱️ Cooldown: {SIGNAL_COOLDOWN_MINUTES} мин")
+    
+    # Отправляем уведомление о запуске
+    startup_msg = f"🚀 Бот V2 запущен!\n\n"
+    startup_msg += f"📊 Логика: RSI обязателен + подтверждение\n"
+    startup_msg += f"⏱️ Cooldown: {SIGNAL_COOLDOWN_MINUTES} мин\n"
+    startup_msg += f"🎯 Отслеживаем: {len(SYMBOLS)} монет\n"
+    startup_msg += f"📈 Параметры:\n"
+    startup_msg += f"  • RSI: {RSI_MIN}-{RSI_MAX} (окно {RSI_WINDOW})\n"
+    startup_msg += f"  • ADX: ≥{MIN_ADX} (окно {ADX_WINDOW})\n"
+    startup_msg += f"  • EMA: {MA_FAST}/{MA_SLOW}\n"
+    startup_msg += f"  • MACD: {MACD_FAST}/{MACD_SLOW}/{MACD_SIGNAL}\n"
+    startup_msg += f"  • Веса: RSI={WEIGHT_RSI} MACD={WEIGHT_MACD} ADX={WEIGHT_ADX}\n"
+    startup_msg += f"\n✅ Готов к работе!"
+    
+    await send_telegram(startup_msg)
+    
     await asyncio.gather(telegram_bot(), scan_markets(), monitor_positions())
 
 if __name__ == '__main__':
