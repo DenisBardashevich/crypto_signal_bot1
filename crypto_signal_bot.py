@@ -1099,10 +1099,10 @@ async def main():
     adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
 
     # Запускаем Telegram-бота как асинхронную задачу
-    asyncio.create_task(telegram_bot())
+    telegram_task = asyncio.create_task(telegram_bot())
     
     # Запускаем отдельную задачу для мониторинга открытых позиций
-    asyncio.create_task(monitor_open_positions())
+    monitor_task = asyncio.create_task(monitor_open_positions())
 
     trading_enabled = True
 
@@ -1126,193 +1126,206 @@ async def main():
                     last_buy = None
         return profit
 
-    while True:
-        # Проверка наличия монет
-        if not SYMBOLS:
-            error_msg = "❗️ Ошибка: список монет для анализа пуст. Проверь подключение к бирже или фильтры."
-            logging.error(error_msg)
-            await send_telegram_message(error_msg)
-            await asyncio.sleep(60 * 10)  # Ждать 10 минут перед повтором
-            continue
-        signals_sent = False
-        processed_symbols = []
-        all_current_signals = []  # Собираем все потенциальные сигналы
-        
-        # Асинхронная обработка всех монет параллельно
-        tasks = [process_symbol(symbol) for symbol in SYMBOLS]
-        results = await asyncio.gather(*tasks)
-        
-        # Обработка результатов анализа - СНАЧАЛА СОБИРАЕМ, ПОТОМ ФИЛЬТРУЕМ
-        for result in results:
-            if result is None or len(result) < 2:
+    try:
+        while True:
+            # Проверка наличия монет
+            if not SYMBOLS:
+                error_msg = "❗️ Ошибка: список монет для анализа пуст. Проверь подключение к бирже или фильтры."
+                logging.error(error_msg)
+                await send_telegram_message(error_msg)
+                await asyncio.sleep(60 * 10)  # Ждать 10 минут перед повтором
                 continue
-                
-            if len(result) >= 6:
-                signals, symbol, price, time, df, atr = result
-                processed_symbols.append(symbol)
-                
-                # Если сигналов нет, переходим к следующей монете
-                if not signals:
+            signals_sent = False
+            processed_symbols = []
+            all_current_signals = []  # Собираем все потенциальные сигналы
+            
+            # Асинхронная обработка всех монет параллельно
+            tasks = [process_symbol(symbol) for symbol in SYMBOLS]
+            results = await asyncio.gather(*tasks)
+            
+            # Обработка результатов анализа - СНАЧАЛА СОБИРАЕМ, ПОТОМ ФИЛЬТРУЕМ
+            for result in results:
+                if result is None or len(result) < 2:
                     continue
-                
-                # Получаем правильные TP/SL значения
-                direction = 'SHORT' if '🔴 SHORT' in signals[0] else 'LONG'
-                if symbol in adaptive_targets:
-                    tp_price = adaptive_targets[symbol]['tp']
-                    sl_price = adaptive_targets[symbol]['sl']
-                else:
-                    # Рассчитываем TP/SL правильно
-                    tp_price, sl_price = calculate_tp_sl(df, price, atr, direction)
-                    if tp_price is None or sl_price is None:
-                        logging.error(f"Ошибка расчета TP/SL для {symbol}, пропускаем сигнал")
+                    
+                if len(result) >= 6:
+                    signals, symbol, price, time, df, atr = result
+                    processed_symbols.append(symbol)
+                    
+                    # Если сигналов нет, переходим к следующей монете
+                    if not signals:
                         continue
-                    adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
-                
-                # Рассчитываем проценты для отображения
-                if direction == 'LONG':
-                    tp_pct = ((tp_price - price) / price) * 100
-                    sl_pct = ((price - sl_price) / price) * 100
-                else:  # SHORT
-                    tp_pct = ((price - tp_price) / price) * 100
-                    sl_pct = ((sl_price - price) / price) * 100
-                
-                # Извлекаем силу сигнала для сортировки
-                signal_strength = 0
-                try:
-                    for signal in signals:
-                        if 'Сила:' in signal:
-                            strength_line = [line for line in signal.split('\n') if 'Сила:' in line][0]
-                            signal_strength = float(strength_line.split('(')[1].split(')')[0])
-                            break
-                except:
-                    signal_strength = 0
-                
-                # Собираем информацию о сигнале
-                signal_info = {
-                    'signals': signals,
-                    'symbol': symbol,
-                    'price': price,
-                    'time': time,
-                    'df': df,
-                    'atr': atr,
-                    'tp_price': tp_price,
-                    'sl_price': sl_price,
-                    'tp_pct': tp_pct,
-                    'sl_pct': sl_pct,
-                    'strength': signal_strength,
-                    'direction': direction
-                }
-                all_current_signals.append(signal_info)
-            else:
-                _, symbol = result
-                logging.warning(f"Неполный результат для {symbol}, пропускаем")
-        
-        # Отправляем все найденные надежные сигналы (БЕЗ ЛИМИТОВ!)
-        if all_current_signals and trading_enabled:
-            # Сортируем по силе сигнала (берем самые сильные первыми)
-            all_current_signals.sort(key=lambda x: x['strength'], reverse=True)
-            logging.info(f"Найдено {len(all_current_signals)} надежных сигналов")
-            
-            # УЛУЧШЕНИЕ: Убираем ограничения - пусть ВСЕ качественные сигналы проходят!
-            MAX_SIGNALS_PER_MESSAGE = 3  # Только для группировки по длине сообщения
-            MAX_MESSAGE_LENGTH = 3500  # Максимальная длина сообщения Telegram
-            
-            # Разбиваем сигналы на группы только для удобства отправки
-            signal_groups = []
-            for i in range(0, len(all_current_signals), MAX_SIGNALS_PER_MESSAGE):
-                signal_groups.append(all_current_signals[i:i+MAX_SIGNALS_PER_MESSAGE])
-            
-            # Отправляем ВСЕ группы (убираем ограничение на 3 группы)
-            for group_idx, signal_group in enumerate(signal_groups):
-                combined_msg = f"💰 Надежные сигналы на {signal_group[0]['time'].strftime('%d.%m.%Y %H:%M')}:\n\n"
-                
-                for signal_info in signal_group:
-                    signals = signal_info['signals']
                     
-                    # Добавляем каждый сигнал
-                    signal_text = '\n'.join(signals) + "\n"
-                    
-                    # Проверяем длину сообщения
-                    if len(combined_msg + signal_text) > MAX_MESSAGE_LENGTH:
-                        # Если текущий сигнал не помещается, отправляем то что есть
-                        if len(combined_msg) > 200:  # Если есть что отправить
-                            combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
-                            
-                            # Добавляем номер группы если групп больше одной
-                            if len(signal_groups) > 1:
-                                combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
-                            
-                            # Отправляем накопленное сообщение
-                            try:
-                                await send_telegram_message(combined_msg)
-                                signals_sent = True
-                                await asyncio.sleep(1)  # Пауза между сообщениями
-                            except Exception as e:
-                                logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
-                            
-                            # Начинаем новое сообщение с текущим сигналом
-                            group_idx += 1
-                            combined_msg = f"💰 Надежные сигналы (продолжение):\n\n" + signal_text
-                        else:
-                            break  # Если даже один сигнал не помещается
+                    # Получаем правильные TP/SL значения
+                    direction = 'SHORT' if '🔴 SHORT' in signals[0] else 'LONG'
+                    if symbol in adaptive_targets:
+                        tp_price = adaptive_targets[symbol]['tp']
+                        sl_price = adaptive_targets[symbol]['sl']
                     else:
-                        combined_msg += signal_text
+                        # Рассчитываем TP/SL правильно
+                        tp_price, sl_price = calculate_tp_sl(df, price, atr, direction)
+                        if tp_price is None or sl_price is None:
+                            logging.error(f"Ошибка расчета TP/SL для {symbol}, пропускаем сигнал")
+                            continue
+                        adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
                     
-                    # Позиции уже открыты в check_signals(), не дублируем здесь
-                    symbol = signal_info['symbol']
-                    direction = signal_info['direction']
+                    # Рассчитываем проценты для отображения
+                    if direction == 'LONG':
+                        tp_pct = ((tp_price - price) / price) * 100
+                        sl_pct = ((price - sl_price) / price) * 100
+                    else:  # SHORT
+                        tp_pct = ((price - tp_price) / price) * 100
+                        sl_pct = ((sl_price - price) / price) * 100
                     
-                    if symbol in open_trades:
-                        logging.info(f"{symbol}: {direction} позиция уже открыта")
-                
-                # Отправляем последнее накопленное сообщение
-                if len(combined_msg) > 200:
-                    combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
-                    
-                    # Добавляем номер группы если групп больше одной
-                    if len(signal_groups) > 1:
-                        combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
-                    
-                    # Отправляем сообщение
+                    # Извлекаем силу сигнала для сортировки
+                    signal_strength = 0
                     try:
-                        await send_telegram_message(combined_msg)
-                        signals_sent = True
-                        # Небольшая пауза между сообщениями
-                        if group_idx < len(signal_groups) - 1:
-                            await asyncio.sleep(1)
-                    except Exception as e:
-                        logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
-                        # Если сообщение все еще слишком длинное, отправляем укороченную версию
-                        if "too long" in str(e).lower():
-                            short_msg = f"⚡ {len(signal_group)} сигналов на {signal_group[0]['time'].strftime('%H:%M')}:\n"
-                            for signal_info in signal_group:
-                                symbol = signal_info['symbol']
-                                direction = "🟢 LONG" if signal_info['direction'] == 'LONG' else "🔴 SHORT"
-                                strength = signal_info['strength']
-                                short_msg += f"{direction} {symbol} (сила: {strength:.1f})\n"
-                            await send_telegram_message(short_msg)
+                        for signal in signals:
+                            if 'Сила:' in signal:
+                                strength_line = [line for line in signal.split('\n') if 'Сила:' in line][0]
+                                signal_strength = float(strength_line.split('(')[1].split(')')[0])
+                                break
+                    except:
+                        signal_strength = 0
+                    
+                    # Собираем информацию о сигнале
+                    signal_info = {
+                        'signals': signals,
+                        'symbol': symbol,
+                        'price': price,
+                        'time': time,
+                        'df': df,
+                        'atr': atr,
+                        'tp_price': tp_price,
+                        'sl_price': sl_price,
+                        'tp_pct': tp_pct,
+                        'sl_pct': sl_pct,
+                        'strength': signal_strength,
+                        'direction': direction
+                    }
+                    all_current_signals.append(signal_info)
+                else:
+                    _, symbol = result
+                    logging.warning(f"Неполный результат для {symbol}, пропускаем")
+            
+            # Отправляем все найденные надежные сигналы (БЕЗ ЛИМИТОВ!)
+            if all_current_signals and trading_enabled:
+                # Сортируем по силе сигнала (берем самые сильные первыми)
+                all_current_signals.sort(key=lambda x: x['strength'], reverse=True)
+                logging.info(f"Найдено {len(all_current_signals)} надежных сигналов")
+                
+                # УЛУЧШЕНИЕ: Убираем ограничения - пусть ВСЕ качественные сигналы проходят!
+                MAX_SIGNALS_PER_MESSAGE = 3  # Только для группировки по длине сообщения
+                MAX_MESSAGE_LENGTH = 3500  # Максимальная длина сообщения Telegram
+                
+                # Разбиваем сигналы на группы только для удобства отправки
+                signal_groups = []
+                for i in range(0, len(all_current_signals), MAX_SIGNALS_PER_MESSAGE):
+                    signal_groups.append(all_current_signals[i:i+MAX_SIGNALS_PER_MESSAGE])
+                
+                # Отправляем ВСЕ группы (убираем ограничение на 3 группы)
+                for group_idx, signal_group in enumerate(signal_groups):
+                    combined_msg = f"💰 Надежные сигналы на {signal_group[0]['time'].strftime('%d.%m.%Y %H:%M')}:\n\n"
+                    
+                    for signal_info in signal_group:
+                        signals = signal_info['signals']
+                        
+                        # Добавляем каждый сигнал
+                        signal_text = '\n'.join(signals) + "\n"
+                        
+                        # Проверяем длину сообщения
+                        if len(combined_msg + signal_text) > MAX_MESSAGE_LENGTH:
+                            # Если текущий сигнал не помещается, отправляем то что есть
+                            if len(combined_msg) > 200:  # Если есть что отправить
+                                combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
+                                
+                                # Добавляем номер группы если групп больше одной
+                                if len(signal_groups) > 1:
+                                    combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
+                                
+                                # Отправляем накопленное сообщение
+                                try:
+                                    await send_telegram_message(combined_msg)
+                                    signals_sent = True
+                                    await asyncio.sleep(1)  # Пауза между сообщениями
+                                except Exception as e:
+                                    logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
+                                
+                                # Начинаем новое сообщение с текущим сигналом
+                                group_idx += 1
+                                combined_msg = f"💰 Надежные сигналы (продолжение):\n\n" + signal_text
+                            else:
+                                break  # Если даже один сигнал не помещается
+                        else:
+                            combined_msg += signal_text
+                        
+                        # Позиции уже открыты в check_signals(), не дублируем здесь
+                        symbol = signal_info['symbol']
+                        direction = signal_info['direction']
+                        
+                        if symbol in open_trades:
+                            logging.info(f"{symbol}: {direction} позиция уже открыта")
+                    
+                    # Отправляем последнее накопленное сообщение
+                    if len(combined_msg) > 200:
+                        combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
+                        
+                        # Добавляем номер группы если групп больше одной
+                        if len(signal_groups) > 1:
+                            combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
+                        
+                        # Отправляем сообщение
+                        try:
+                            await send_telegram_message(combined_msg)
+                            signals_sent = True
+                            # Небольшая пауза между сообщениями
+                            if group_idx < len(signal_groups) - 1:
+                                await asyncio.sleep(1)
+                        except Exception as e:
+                            logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
+                            # Если сообщение все еще слишком длинное, отправляем укороченную версию
+                            if "too long" in str(e).lower():
+                                short_msg = f"⚡ {len(signal_group)} сигналов на {signal_group[0]['time'].strftime('%H:%M')}:\n"
+                                for signal_info in signal_group:
+                                    symbol = signal_info['symbol']
+                                    direction = "🟢 LONG" if signal_info['direction'] == 'LONG' else "🔴 SHORT"
+                                    strength = signal_info['strength']
+                                    short_msg += f"{direction} {symbol} (сила: {strength:.1f})\n"
+                                await send_telegram_message(short_msg)
 
-        # Alive-отчёт раз в 6 часов + список обработанных монет  
-        now_utc = datetime.now(timezone.utc)
-        now_msk = now_utc.astimezone(tz_msk)
-        if (now_msk - last_alive) > timedelta(hours=6):
-            msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
-            msg += f"Обработано монет: {len(processed_symbols)}\n"
-            msg += f"📊 Минимальный порог сигналов: {MIN_COMPOSITE_SCORE} (строго фиксированный)\n"
-            msg += ', '.join(processed_symbols) if processed_symbols else 'Монеты не обработаны.'
-            if not signals_sent:
-                msg += "\nСигналов нет."
-            await send_telegram_message(msg)
-            last_alive = now_msk
-        # Ежедневный отчёт в 9:00 и 22:00 по Москве
-        report_hours = [9, 22]
-        current_hour = now_msk.hour
-        if current_hour in report_hours and current_hour not in last_report_hours:
-            await send_daily_report()
-            last_report_hours = {current_hour}  # Сбросить, чтобы не было дублирования в этом часу
-        if current_hour not in report_hours:
-            last_report_hours = set()  # Обнуляем, чтобы в следующий раз снова отправить
-        await asyncio.sleep(60 * 5)  # Проверять каждые 5 минут как раньше
+            # Alive-отчёт раз в 6 часов + список обработанных монет  
+            now_utc = datetime.now(timezone.utc)
+            now_msk = now_utc.astimezone(tz_msk)
+            if (now_msk - last_alive) > timedelta(hours=6):
+                msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
+                msg += f"Обработано монет: {len(processed_symbols)}\n"
+                msg += f"📊 Минимальный порог сигналов: {MIN_COMPOSITE_SCORE} (строго фиксированный)\n"
+                msg += ', '.join(processed_symbols) if processed_symbols else 'Монеты не обработаны.'
+                if not signals_sent:
+                    msg += "\nСигналов нет."
+                await send_telegram_message(msg)
+                last_alive = now_msk
+            # Ежедневный отчёт в 9:00 и 22:00 по Москве
+            report_hours = [9, 22]
+            current_hour = now_msk.hour
+            if current_hour in report_hours and current_hour not in last_report_hours:
+                await send_daily_report()
+                last_report_hours = {current_hour}  # Сбросить, чтобы не было дублирования в этом часу
+            if current_hour not in report_hours:
+                last_report_hours = set()  # Обнуляем, чтобы в следующий раз снова отправить
+            await asyncio.sleep(60 * 5)  # Проверять каждые 5 минут как раньше
+    finally:
+        # Корректно отменяем задачи при завершении
+        telegram_task.cancel()
+        monitor_task.cancel()
+        try:
+            await telegram_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
 
 def calculate_tp_sl(df, price, atr, direction='LONG'):
     """
