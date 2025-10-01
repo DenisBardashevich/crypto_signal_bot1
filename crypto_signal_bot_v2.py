@@ -33,6 +33,9 @@ logging.basicConfig(
     ]
 )
 
+# Отключаем спам от HTTP запросов Telegram
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 EXCHANGE = ccxt.bybit({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 
 TOP_SYMBOLS = ['BNB/USDT:USDT', 'LTC/USDT:USDT', 'IMX/USDT:USDT', 'SUI/USDT:USDT', 'ORDI/USDT:USDT']
