@@ -37,7 +37,7 @@ logging.basicConfig(
 
 EXCHANGE = ccxt.bybit({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 
-TOP_SYMBOLS = ['BNB/USDT:USDT', 'LTC/USDT:USDT', 'IMX/USDT:USDT', 'SUI/USDT:USDT', 'ORDI/USDT:USDT']
+TOP_SYMBOLS = ['BNB/USDT:USDT', 'LTC/USDT:USDT', 'IMX/USDT:USDT', 'SUI/USDT:USDT', 'ORDI/USDT:USDT', 'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'DOGE/USDT:USDT', 'ADA/USDT:USDT']
 
 markets = EXCHANGE.load_markets()
 SYMBOLS = [s for s in TOP_SYMBOLS if s in markets and markets[s]['active'] and markets[s]['type'] == 'swap']
