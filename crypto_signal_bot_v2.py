@@ -37,7 +37,14 @@ logging.basicConfig(
 
 EXCHANGE = ccxt.bybit({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
 
-TOP_SYMBOLS = ['BNB/USDT:USDT', 'LTC/USDT:USDT', 'IMX/USDT:USDT', 'SUI/USDT:USDT', 'ORDI/USDT:USDT', 'BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'DOGE/USDT:USDT', 'ADA/USDT:USDT']
+TOP_SYMBOLS = [
+    'IMX/USDT:USDT',   # 1-е место: 80.8% качество сигналов - ЛУЧШИЙ!
+    'ORDI/USDT:USDT',  # 2-е место: 77.4% качество сигналов
+    'AVAX/USDT:USDT',  # 3-е место: 77.4% качество сигналов (из предыдущего теста)
+    'DOGE/USDT:USDT',  # 4-е место: 75.4% качество сигналов (из предыдущего теста)
+    'SUI/USDT:USDT'    # 5-е место: 70.7% качество сигналов
+
+    ]
 
 markets = EXCHANGE.load_markets()
 SYMBOLS = [s for s in TOP_SYMBOLS if s in markets and markets[s]['active'] and markets[s]['type'] == 'swap']
