@@ -26,13 +26,42 @@ EXCHANGE = ccxt.bybit({
     }
 })
 
-# ОПТИМИЗИРОВАННЫЙ СПИСОК МОНЕТ (топ-5 прибыльных символов)
+# РЕКОМЕНДОВАННЫЙ СПИСОК МОНЕТ (расширенный аудит, лучшие 34)
 TOP_SYMBOLS = [
-    'BNB/USDT:USDT',  # +81.6% прибыль (скор: 72.47)
-    'LTC/USDT:USDT',  # +39.7% прибыль (скор: 24.00)
-    'IMX/USDT:USDT',  # +25.2% прибыль (скор: 9.01)
-    'SUI/USDT:USDT',  # +16.3% прибыль (скор: 2.60)
-    'ORDI/USDT:USDT'  # +10.3% прибыль (скор: -4.09)
+    '1000PEPE/USDT:USDT',
+    'ADA/USDT:USDT',
+    'ALT/USDT:USDT',
+    'AXS/USDT:USDT',
+    'BCH/USDT:USDT',
+    'BNB/USDT:USDT',
+    'COMP/USDT:USDT',
+    'CRV/USDT:USDT',
+    'INJ/USDT:USDT',
+    'JTO/USDT:USDT',
+    'LRC/USDT:USDT',
+    'LTC/USDT:USDT',
+    'MANA/USDT:USDT',
+    'MAVIA/USDT:USDT',
+    'OP/USDT:USDT',
+    'ORDI/USDT:USDT',
+    'PIXEL/USDT:USDT',
+    'PORTAL/USDT:USDT',
+    'SEI/USDT:USDT',
+    'SOL/USDT:USDT',
+    'STX/USDT:USDT',
+    'SUSHI/USDT:USDT',
+    'THETA/USDT:USDT',
+    'TIA/USDT:USDT',
+    'TON/USDT:USDT',
+    'UNI/USDT:USDT',
+    'VET/USDT:USDT',
+    'WIF/USDT:USDT',
+    'ETC/USDT:USDT',
+    'IMX/USDT:USDT',
+    'SAND/USDT:USDT',
+    'SUI/USDT:USDT',
+    'ARB/USDT:USDT',
+    'ENJ/USDT:USDT'
 ]
 markets = EXCHANGE.load_markets()
 # Фильтруем только те пары, которые есть на фьючерсах (swap) и активны
@@ -106,13 +135,16 @@ def record_trade(symbol, action, price, time, side, score=None):
     logging.info(f"Записана сделка: {symbol} {action} {side} по цене {price} в {time} (score: {score})")
 
 # Открытие сделки
-def open_trade(symbol, price, time, side, atr=None, score=None):
+def open_trade(symbol, price, time, side, atr=None, score=None, position_size=0.03):
     open_trades[symbol] = {
         'side': side,  # 'long' или 'short'
         'entry_price': price,
         'time': time.strftime('%Y-%m-%d %H:%M'),
         'atr': atr if atr is not None else 0,
-        'score': score
+        'trail_pct': 7.3,  # Не используется в оптимизированной логике
+        'last_peak': price,
+        'score': score,
+        'position_size': position_size
     }
     save_portfolio()
 
@@ -284,20 +316,50 @@ def analyze(df):
         # RSI с оптимизированным окном
         df['rsi'] = ta.momentum.rsi(df['close'], window=RSI_WINDOW)  # 9
         
-        # Stochastic RSI убран - исключен для упрощения
+        # Stochastic RSI для дополнительного подтверждения
+        stoch_rsi = ta.momentum.stochrsi(df['close'], window=STOCH_RSI_LENGTH, smooth1=STOCH_RSI_K, smooth2=STOCH_RSI_D)
+        df['stoch_rsi_k'] = stoch_rsi * 100  # Приводим к шкале 0-100
         
         # ADX для определения силы тренда
-        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=ADX_WINDOW)
+        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
         
         # ATR для расчёта TP/SL
         df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=ATR_WINDOW)
         
-        # Bollinger Bands убраны - исключены для упрощения
+        # Bollinger Bands с новыми настройками
+        bb_indicator = ta.volatility.BollingerBands(df['close'], window=BB_WINDOW, window_dev=BB_STD_DEV)
+        df['bollinger_mid'] = bb_indicator.bollinger_mavg()
+        df['bollinger_high'] = bb_indicator.bollinger_hband()
+        df['bollinger_low'] = bb_indicator.bollinger_lband()
+        df['bb_width'] = (df['bollinger_high'] - df['bollinger_low']) / df['bollinger_mid']
         
-        # VWAP убран - исключен для упрощения
+        # VWAP (критически важен для 15м)
+        if USE_VWAP:
+            # Простой расчет VWAP
+            df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
+            df['vwap_numerator'] = (df['typical_price'] * df['volume']).cumsum()
+            df['vwap_denominator'] = df['volume'].cumsum()
+            df['vwap'] = df['vwap_numerator'] / df['vwap_denominator']
+            df['vwap_deviation'] = (df['close'] - df['vwap']) / df['vwap']
         
-        # Объемные фильтры убраны - исключены для упрощения
+        # Объём с улучшенной фильтрацией (как в оптимизаторе)
+        if USE_VOLUME_FILTER:
+            df['volume_ma_usdt'] = df['volume_usdt'].rolling(window=20).mean()
+            df['volume_ratio_usdt'] = df['volume_usdt'] / df['volume_ma_usdt']
         
+        # Волатильность за последние периоды
+        df['volatility'] = df['close'].rolling(window=VOLATILITY_LOOKBACK).std() / df['close'].rolling(window=VOLATILITY_LOOKBACK).mean()
+        
+        # Спред и импульс
+        df['spread_pct'] = (df['high'] - df['low']) / df['low']
+        df['momentum'] = df['close'].pct_change(5) * 100  # 5 свечей назад
+        
+        # Дополнительные индикаторы для адаптивной системы
+        # Trending vs Ranging market detection
+        df['ema_slope'] = df['ema_slow'].pct_change(3) * 100  # Наклон EMA
+        
+        # Williams %R для дополнительного подтверждения
+        df['williams_r'] = ta.momentum.williams_r(df['high'], df['low'], df['close'], lbp=14)
         
         # Очистка данных
         df = df.dropna().reset_index(drop=True)
@@ -338,6 +400,10 @@ def evaluate_signal_strength(df, symbol, action):
             current_time_utc = datetime.now(timezone.utc)
         prev2 = df.iloc[-3] if len(df) > 3 else prev
         
+        # Определяем текущую волатильность для адаптации
+        current_volatility = last.get('volatility', 0.02)
+        is_high_vol = current_volatility > HIGH_VOLATILITY_THRESHOLD
+        is_low_vol = current_volatility < LOW_VOLATILITY_THRESHOLD
         
         # Адаптируем пороги в зависимости от времени
         # Используем время последней свечи, если доступно (важно для backtest/оптимизатора)
@@ -355,6 +421,7 @@ def evaluate_signal_strength(df, symbol, action):
                     now_utc = datetime.now(timezone.utc)
         else:
             now_utc = datetime.now(timezone.utc)
+        is_active_hour = now_utc.hour in ACTIVE_HOURS_UTC
         
         # СИНХРОНИЗАЦИЯ: Менее строгие условия как в оптимизаторе
         
@@ -363,30 +430,34 @@ def evaluate_signal_strength(df, symbol, action):
         rsi_momentum = last['rsi'] - prev['rsi']
         
         if action == 'BUY':
-            # Упрощённые условия для BUY
-            if last['rsi'] <= RSI_MIN:
-                rsi_score = 3.0  # Высокий балл за oversold
-            elif RSI_MIN < last['rsi'] < 50:
-                rsi_score = 1.5  # Средний балл
-            elif last['rsi'] > RSI_MAX:
+            # Более мягкие условия для BUY как в оптимизаторе
+            if last['rsi'] < RSI_EXTREME_OVERSOLD:  # Убираем требование momentum
+                rsi_score = 3.0  # Возвращаем высокий балл
+            elif last['rsi'] < RSI_MIN:  # Упрощаем условие
+                rsi_score = 2.5  # Высокий балл за oversold
+            elif RSI_MIN < last['rsi'] < 50:  # Расширяем диапазон
+                rsi_score = 1.5  # Средний балл за умеренные значения
+            elif last['rsi'] > RSI_MAX:  # Уменьшаем штраф
                 rsi_score = -0.5  # Небольшой штраф
                 
         elif action == 'SELL':
-            # Упрощённые условия для SELL
-            if last['rsi'] >= RSI_MAX:
-                rsi_score = 3.0  # Высокий балл за overbought
-            elif 50 < last['rsi'] < RSI_MAX:
-                rsi_score = 1.5  # Средний балл
-            elif last['rsi'] < RSI_MIN:
+            # Более мягкие условия для SELL как в оптимизаторе
+            if last['rsi'] > RSI_EXTREME_OVERBOUGHT:  # Убираем требование momentum
+                rsi_score = 3.0  # Возвращаем высокий балл
+            elif last['rsi'] > RSI_MAX:  # Упрощаем условие
+                rsi_score = 2.5  # Высокий балл за overbought
+            elif 50 < last['rsi'] < RSI_MAX:  # Расширяем диапазон
+                rsi_score = 1.5  # Средний балл за умеренные значения
+            elif last['rsi'] < RSI_MIN:  # Уменьшаем штраф
                 rsi_score = -0.5  # Небольшой штраф
                 
         score += rsi_score * WEIGHT_RSI
         
-        # 2. ИСПРАВЛЕНО: MACD анализ (используем правильные компоненты)
+        # 2. MACD анализ (более мягкие условия как в оптимизаторе)
         macd_score = 0
-        if 'macd_line' in df.columns and 'macd_signal' in df.columns:
-            macd_cross = last['macd_line'] - last['macd_signal']  # ИСПРАВЛЕНО: основная линия - сигнальная линия
-            prev_macd_cross = prev['macd_line'] - prev['macd_signal']  # ИСПРАВЛЕНО: основная линия - сигнальная линия
+        if 'macd' in df.columns and 'macd_signal' in df.columns:
+            macd_cross = last['macd'] - last['macd_signal']
+            prev_macd_cross = prev['macd'] - prev['macd_signal']
             macd_momentum = last['macd'] - prev['macd']
             
             if action == 'BUY':
@@ -412,16 +483,69 @@ def evaluate_signal_strength(df, symbol, action):
                     macd_score = 0  # Нет штрафа
         score += macd_score * WEIGHT_MACD
         
-        # 3. Bollinger Bands убраны - исключены для упрощения
+        # 3. Bollinger Bands (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        bb_score = 0
+        if 'bollinger_low' in df.columns and 'bollinger_high' in df.columns:
+            close = last['close']
+            bb_position = (close - last['bollinger_low']) / (last['bollinger_high'] - last['bollinger_low'])
+            
+            if action == 'BUY':
+                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+                if bb_position <= 0.05:  # как в оптимизаторе
+                    bb_score = 1.5
+                elif bb_position <= 0.15:  # как в оптимизаторе
+                    bb_score = 1.0
+                elif bb_position <= 0.3:  # как в оптимизаторе
+                    bb_score = 0.5
+            elif action == 'SELL':
+                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+                if bb_position >= 0.95:  # как в оптимизаторе
+                    bb_score = 1.5
+                elif bb_position >= 0.85:  # как в оптимизаторе
+                    bb_score = 1.0
+                elif bb_position >= 0.7:  # как в оптимизаторе
+                    bb_score = 0.5
+        score += bb_score * WEIGHT_BB
         
-        # 4. VWAP анализ убран - исключен для упрощения
+        # 4. VWAP анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        vwap_score = 0
+        if USE_VWAP and 'vwap' in df.columns:
+            vwap_dev = last.get('vwap_deviation', 0)
+            if action == 'BUY':
+                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+                if vwap_dev <= -VWAP_DEVIATION_THRESHOLD * 1.5:  # как в оптимизаторе
+                    vwap_score = 1.5
+                elif vwap_dev <= -VWAP_DEVIATION_THRESHOLD:  # как в оптимизаторе
+                    vwap_score = 1.0
+                elif vwap_dev <= 0:  # как в оптимизаторе
+                    vwap_score = 0.3
+            elif action == 'SELL':
+                # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+                if vwap_dev >= VWAP_DEVIATION_THRESHOLD * 1.5:  # как в оптимизаторе
+                    vwap_score = 1.5
+                elif vwap_dev >= VWAP_DEVIATION_THRESHOLD:  # как в оптимизаторе
+                    vwap_score = 1.0
+                elif vwap_dev >= 0:  # как в оптимизаторе
+                    vwap_score = 0.3
+        score += vwap_score * WEIGHT_VWAP
         
-        # 5. Объемный анализ убран - исключен для упрощения
+        # 5. Объём анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        volume_score = 0
+        if USE_VOLUME_FILTER and 'volume_ratio_usdt' in df.columns:
+            vol_ratio = last.get('volume_ratio_usdt', 1.0)
+            # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+            if vol_ratio >= 2.0:  # как в оптимизаторе
+                volume_score = 1.5
+            elif vol_ratio >= 1.5:  # как в оптимизаторе
+                volume_score = 1.0
+            elif vol_ratio >= 1.2:  # как в оптимизаторе
+                volume_score = 0.5
+        score += volume_score * WEIGHT_VOLUME
         
         # 6. ADX анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         adx_score = 0
-        # СИНХРОНИЗИРОВАНО: используем параметр из конфига как в оптимизаторе
-        min_adx = MIN_ADX  # Берем из конфига
+        # СИНХРОНИЗИРОВАНО: используем упрощенные пороги как в оптимизаторе
+        min_adx = 25 if is_high_vol else (15 if is_low_vol else 20)  # Упрощенные пороги
         
         if last['adx'] >= 50:
             adx_score = 3.0
@@ -452,7 +576,14 @@ def evaluate_signal_strength(df, symbol, action):
             elif action == 'SELL' and price_trend > 0.01 and rsi_trend < -0.02:  # Строже
                 bonus_score += 0.5  # было 1.0, теперь 0.5
         
-        # Stochastic RSI убран - исключен для упрощения
+        # Stochastic RSI (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        if 'stoch_rsi_k' in df.columns:
+            stoch_k = last.get('stoch_rsi_k', 50)
+            # СИНХРОНИЗИРОВАНО: используем те же пороги что и в оптимизаторе
+            if action == 'BUY' and stoch_k <= 15:  # как в оптимизаторе
+                bonus_score += 0.3
+            elif action == 'SELL' and stoch_k >= 85:  # как в оптимизаторе
+                bonus_score += 0.3
         
         score += bonus_score
         
@@ -463,8 +594,12 @@ def evaluate_signal_strength(df, symbol, action):
         # Уменьшаем штраф для LONG в нисходящем тренде
         if action == 'BUY' and len(df) >= 10:
             price_trend = (df['close'].iloc[-1] - df['close'].iloc[-10]) / df['close'].iloc[-10]
-            # LONG_PENALTY_IN_DOWNTREND удалён - избыточно при ADX+RSI
+            if price_trend < -0.05:  # Делаем условие строже (было -0.03)
+                score *= max(0.8, LONG_PENALTY_IN_DOWNTREND)  # Ограничиваем штраф
         
+        # Бонус в активные часы (больше чем раньше)
+        if is_active_hour:
+            score *= 1.1  # Увеличиваем бонус
         
         # КРИТИЧНО: Убираем большинство штрафующих корректировок
         # Возвращаем более высокие скоры как в оптимизаторе
@@ -567,9 +702,31 @@ def recommend_leverage(strength_score, history_percent):
     
     return f'x{final_leverage}'
 
+# ========== ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ОБЪЁМА ==========
+def get_24h_volume(symbol):
+    try:
+        ticker = EXCHANGE.fetch_ticker(symbol)
+        volume = ticker.get('quoteVolume', 0)
+        return volume
+    except ccxt.RateLimitExceeded as e:
+        logging.warning(f"Rate limit exceeded for {symbol}, жду {getattr(e, 'retry_after', 1)} сек.")
+        time.sleep(getattr(e, 'retry_after', 1))
+        return 0
+    except Exception as e:
+        logging.error(f"Ошибка получения объёма по {symbol}: {e}")
+        return 0
 
 last_signal_time = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
 
+def get_btc_adx():
+    try:
+        ohlcv = EXCHANGE.fetch_ohlcv('BTC/USDT:USDT', timeframe=TIMEFRAME, limit=50)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
+        return df['adx'].iloc[-1]
+    except Exception as e:
+        logging.error(f"Ошибка получения ADX BTC: {e}")
+        return 99
 
 def check_signals(df, symbol):
     """
@@ -616,10 +773,16 @@ def check_signals(df, symbol):
             logging.info(f"🔍 {symbol}: ОТКЛОНЕН по cooldown")
             return []
         
-        # 4. Проверка открытых позиций убрана - используем только кулдаун
+        # 4. Проверяем открытые позиции
+        if symbol in open_trades:
+            logging.info(f"🔍 {symbol}: ОТКЛОНЕН - есть открытая позиция")
+            return []
         
-        # 5. Временные фильтры (работает в любое время суток)
+        # 5. Временные фильтры (как в оптимизаторе)
         hour_utc = current_time_utc.hour
+        if hour_utc not in ACTIVE_HOURS_UTC:
+            logging.info(f"🔍 {symbol}: ОТКЛОНЕН - неактивные часы UTC {hour_utc}")
+            return []
         
         # 6. Базовые фильтры ADX и RSI (как в оптимизаторе)
         if last['adx'] < MIN_ADX:  # 21 из config.py (как в оптимизаторе)
@@ -641,45 +804,107 @@ def check_signals(df, symbol):
         if 'volume_ma_usdt' in df.columns:
             volume_ma = last.get('volume_ma_usdt', 0)
             if volume_ma > 0:
-                # MIN_VOLUME_MA_RATIO удалён - объемные фильтры убраны
-        # Объёмные фильтры удалены
+                volume_ratio = last['volume_usdt'] / volume_ma
+                if volume_ratio < MIN_VOLUME_MA_RATIO:
+                    logging.info(f"🔍 {symbol}: ОТКЛОНЕН по объему MA ({volume_ratio:.2f} < {MIN_VOLUME_MA_RATIO})")
+                    return []
+        elif 'volume_ratio_usdt' in df.columns:
+            # Альтернативный способ проверки volume ratio если колонка есть
+            volume_ratio = last.get('volume_ratio_usdt', 1.0)
+            if volume_ratio < MIN_VOLUME_MA_RATIO:
+                logging.info(f"🔍 {symbol}: ОТКЛОНЕН по объему ratio ({volume_ratio:.2f} < {MIN_VOLUME_MA_RATIO})")
+                return []
         
+        logging.info(f"🔍 {symbol}: Прошел фильтры. Объем_ratio={volume_ratio:.2f}")
         
         # 12-13. Удалены лишние фильтры (консистентность объёма, волатильность RSI)
         
-        # === ОПРЕДЕЛЕНИЕ ТИПА СИГНАЛА (УПРОЩЁННО) ===
+        # === ТРИГГЕРЫ (точно как в оптимизаторе) ===
+        buy_triggers = 0
+        sell_triggers = 0
+        
+        # КРИТИЧНО: RSI экстремальные значения дают СИЛЬНЫЕ триггеры (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        if last['rsi'] <= RSI_EXTREME_OVERSOLD:  # 12 из config.py
+            buy_triggers += 2.0  # Очень сильный сигнал покупки
+        elif last['rsi'] < RSI_MIN:  # 15 из config.py (как в оптимизаторе)
+            buy_triggers += 1.0  # Сильный сигнал покупки
+            
+        if last['rsi'] >= RSI_EXTREME_OVERBOUGHT:  # 89 из config.py
+            sell_triggers += 2.0  # Очень сильный сигнал продажи
+        elif last['rsi'] > RSI_MAX:  # 77 из config.py (как в оптимизаторе)
+            sell_triggers += 1.0  # Сильный сигнал продажи
+        
+        # EMA кроссовер (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        if prev['ema_fast'] <= prev['ema_slow'] and last['ema_fast'] > last['ema_slow']:
+            buy_triggers += 1.5  # Основной триггер для 15м (как в оптимизаторе)
+        elif last['close'] > last['ema_fast'] and last['close'] > prev['close']:
+            buy_triggers += 0.5
+            
+        if prev['ema_fast'] >= prev['ema_slow'] and last['ema_fast'] < last['ema_slow']:
+            sell_triggers += 1.5  # Основной триггер для 15м (как в оптимизаторе)
+        elif last['close'] < last['ema_fast'] and last['close'] < prev['close']:
+            sell_triggers += 0.5
+            
+        # MACD (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        if hasattr(last, 'macd') and hasattr(last, 'macd_signal'):
+            if last['macd'] > last['macd_signal']:
+                buy_triggers += 0.5
+            if last['macd'] < last['macd_signal']:
+                sell_triggers += 0.5
+                
+        # Bollinger Bands (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
+        if 'bollinger_low' in df.columns:
+            denom = max((last['bollinger_high'] - last['bollinger_low']), 1e-12)
+            bb_position = (last['close'] - last['bollinger_low']) / denom
+            if bb_position <= 0.25:  # Более строго для 15м (как в оптимизаторе)
+                buy_triggers += 0.5
+            if bb_position >= 0.75:  # Более строго для 15м (как в оптимизаторе)
+                sell_triggers += 0.5
+                
+        # VWAP триггеры отключены (упрощение и снижение шума)
+                
+        # Минимальные триггеры (как в оптимизаторе)
+        min_triggers = MIN_TRIGGERS_ACTIVE_HOURS if hour_utc in ACTIVE_HOURS_UTC else MIN_TRIGGERS_INACTIVE_HOURS
+        
+        # === ДИАГНОСТИКА ТРИГГЕРОВ ===
+        logging.info(f"🔍 {symbol}: Триггеры - BUY:{buy_triggers:.1f}, SELL:{sell_triggers:.1f}, мин_требуется:{min_triggers:.1f}")
+        logging.info(f"🔍 {symbol}: RSI_пороги - LONG_MAX_RSI:{LONG_MAX_RSI}, SHORT_MIN_RSI:{SHORT_MIN_RSI}")
+        
+        # === ОПРЕДЕЛЕНИЕ ТИПА СИГНАЛА (ПОЛНОСТЬЮ СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ) ===
         signal_type = None
-        
-        # Проверяем подтверждение от индикаторов
-        ema_bullish = last['ema_fast'] > last['ema_slow']
-        ema_bearish = last['ema_fast'] < last['ema_slow']
-        
-        macd_bullish = False
-        macd_bearish = False
-        if hasattr(last, 'macd_line') and hasattr(last, 'macd_signal'):
-            macd_bullish = last['macd_line'] > last['macd_signal']
-            macd_bearish = last['macd_line'] < last['macd_signal']
-        
-        # BUY: RSI низкий + подтверждение от EMA или MACD
-        if last['rsi'] <= RSI_MIN and (ema_bullish or macd_bullish):
+        # КРИТИЧНО: RSI фильтры применяются ПРИ определении типа сигнала (как в оптимизаторе)
+        # СИНХРОНИЗИРОВАНО: используем параметры из config.py как в оптимизаторе
+        if buy_triggers >= min_triggers and last['rsi'] <= LONG_MAX_RSI:  # 38 из config.py
             signal_type = 'BUY'
-            logging.info(f"🔍 {symbol}: ✅ BUY - RSI={last['rsi']:.1f}, EMA={'↑' if ema_bullish else '↓'}, MACD={'↑' if macd_bullish else '↓'}")
-        
-        # SELL: RSI высокий + подтверждение от EMA или MACD
-        elif last['rsi'] >= RSI_MAX and (ema_bearish or macd_bearish):
+            logging.info(f"🔍 {symbol}: ✅ НАЙДЕН BUY сигнал! RSI={last['rsi']:.1f} <= {LONG_MAX_RSI}")
+        elif sell_triggers >= min_triggers and last['rsi'] >= SHORT_MIN_RSI:  # 32 из config.py
             signal_type = 'SELL'
-            logging.info(f"🔍 {symbol}: ✅ SELL - RSI={last['rsi']:.1f}, EMA={'↓' if ema_bearish else '↑'}, MACD={'↓' if macd_bearish else '↑'}")
-        
+            logging.info(f"🔍 {symbol}: ✅ НАЙДЕН SELL сигнал! RSI={last['rsi']:.1f} >= {SHORT_MIN_RSI}")
         else:
-            # Диагностика
-            if last['rsi'] <= RSI_MIN:
-                logging.info(f"🔍 {symbol}: ❌ BUY отклонен - нет подтверждения (EMA={ema_bullish}, MACD={macd_bullish})")
-            elif last['rsi'] >= RSI_MAX:
-                logging.info(f"🔍 {symbol}: ❌ SELL отклонен - нет подтверждения (EMA={ema_bearish}, MACD={macd_bearish})")
-            else:
-                logging.info(f"🔍 {symbol}: ❌ Нет сигнала - RSI={last['rsi']:.1f} в нейтральной зоне [{RSI_MIN}-{RSI_MAX}]")
+            # Диагностика почему сигнал не найден
+            if buy_triggers >= min_triggers:
+                logging.info(f"🔍 {symbol}: ❌ BUY отклонен: RSI={last['rsi']:.1f} > {LONG_MAX_RSI}")
+            if sell_triggers >= min_triggers:
+                logging.info(f"🔍 {symbol}: ❌ SELL отклонен: RSI={last['rsi']:.1f} < {SHORT_MIN_RSI}")
+            if buy_triggers < min_triggers and sell_triggers < min_triggers:
+                logging.info(f"🔍 {symbol}: ❌ Недостаточно триггеров для любого сигнала")
         
-        # ADX уже проверен выше, дополнительная проверка не нужна
+        # MACD Histogram фильтр (как в оптимизаторе)
+        if signal_type and REQUIRE_MACD_HISTOGRAM_CONFIRMATION and 'macd_hist' in df.columns and len(df) > 1:
+            current_hist = last['macd_hist']
+            prev_hist = df['macd_hist'].iloc[-2]
+            if signal_type == 'BUY' and not (current_hist > 0 and prev_hist <= 0):
+                logging.info(f"🔍 {symbol}: ❌ BUY отклонен по MACD Histogram")
+                return []
+            elif signal_type == 'SELL' and not (current_hist < 0 and prev_hist >= 0):
+                logging.info(f"🔍 {symbol}: ❌ SELL отклонен по MACD Histogram")
+                return []
+        
+        # Дополнительные условия для short (как в оптимизаторе)
+        # RSI проверки уже применены при определении типа сигнала
+        if signal_type == 'SELL' and last['adx'] < SHORT_MIN_ADX:  # 23 из config.py (как в оптимизаторе)
+            logging.info(f"🔍 {symbol}: ❌ SELL отклонен по SHORT_MIN_ADX ({last['adx']:.1f} < {SHORT_MIN_ADX})")
+            return []
         
         # === ГЕНЕРАЦИЯ СИГНАЛА ===
         if signal_type:
@@ -728,6 +953,9 @@ def check_signals(df, symbol):
                     signal += f"Триггеры: {triggers:.1f}"
                     if USE_VWAP and 'vwap' in df.columns:
                         signal += f" | VWAP: {last.get('vwap_deviation', 0)*100:.1f}%"
+                    if 'bb_width' in df.columns:
+                        bb_width = (last['bollinger_high'] - last['bollinger_low']) / last['close']
+                        signal += f" | BB: {bb_width*100:.1f}%"
                     
                     signals.append(signal)
                     
@@ -788,8 +1016,8 @@ async def stats_command(update, context):
         await update.message.reply_text(part)
 
 async def del_command(update, context):
-    """Очистить весь портфель (сброс к начальному состояния)"""
-    global virtual_portfolio, open_trades
+    """Очистить весь портфель (сброс к начальному состоянию)"""
+    global virtual_portfolio, open_trades, adaptive_targets
     
     # Подсчитываем статистику перед удалением
     report, win, loss = simple_stats()
@@ -798,6 +1026,7 @@ async def del_command(update, context):
     # Очищаем портфель
     virtual_portfolio.clear()
     open_trades.clear()
+    adaptive_targets = {}
     virtual_portfolio['open_trades'] = {}
     
     # Сохраняем пустой портфель
@@ -858,7 +1087,6 @@ async def open_positions_command(update, context):
 
 async def close_position_command(update, context):
     """Принудительно закрыть позицию по символу"""
-    global adaptive_targets
     if not context.args:
         await update.message.reply_text("❗️ Укажите символ для закрытия: /close BTCUSDT")
         return
@@ -1024,7 +1252,18 @@ async def process_symbol(symbol):
         signals = check_signals(df, symbol)
         price = df['close'].iloc[-1]
         time = df['timestamp'].iloc[-1]
-        atr = df['atr'].iloc[-1] if 'atr' in df.columns else price * 0.01
+        
+        # Расчёт адаптивных целей по ATR и волатильности
+        atr = df['atr'].iloc[-1]
+        if not pd.isna(atr) and price > 0:
+            # НЕ перезаписываем TP/SL для уже открытых позиций
+            # calculate_tp_sl вызывается уже в check_tp_sl при необходимости
+            pass
+        else:
+            # Не записываем цели до появления реального сигнала/позиции
+            pass
+        
+        # Проверка на открытые сделки (перенесено в monitor_open_positions)
         
         return signals, symbol, price, time, df, atr
     except Exception as e:
@@ -1039,10 +1278,10 @@ async def main():
     adaptive_targets = {}  # symbol: {'tp': ..., 'sl': ...}
 
     # Запускаем Telegram-бота как асинхронную задачу
-    telegram_task = asyncio.create_task(telegram_bot())
+    asyncio.create_task(telegram_bot())
     
     # Запускаем отдельную задачу для мониторинга открытых позиций
-    monitor_task = asyncio.create_task(monitor_open_positions())
+    asyncio.create_task(monitor_open_positions())
 
     trading_enabled = True
 
@@ -1066,206 +1305,190 @@ async def main():
                     last_buy = None
         return profit
 
-    try:
-        while True:
-            # Проверка наличия монет
-            if not SYMBOLS:
-                error_msg = "❗️ Ошибка: список монет для анализа пуст. Проверь подключение к бирже или фильтры."
-                logging.error(error_msg)
-                await send_telegram_message(error_msg)
-                await asyncio.sleep(60 * 10)  # Ждать 10 минут перед повтором
+    while True:
+        # Проверка наличия монет
+        if not SYMBOLS:
+            error_msg = "❗️ Ошибка: список монет для анализа пуст. Проверь подключение к бирже или фильтры."
+            logging.error(error_msg)
+            await send_telegram_message(error_msg)
+            await asyncio.sleep(60 * 10)  # Ждать 10 минут перед повтором
+            continue
+        signals_sent = False
+        processed_symbols = []
+        all_current_signals = []  # Собираем все потенциальные сигналы
+        
+        # Асинхронная обработка всех монет параллельно
+        tasks = [process_symbol(symbol) for symbol in SYMBOLS]
+        results = await asyncio.gather(*tasks)
+        
+        # Обработка результатов анализа - СНАЧАЛА СОБИРАЕМ, ПОТОМ ФИЛЬТРУЕМ
+        for result in results:
+            if result is None or len(result) < 2:
                 continue
-            signals_sent = False
-            processed_symbols = []
-            all_current_signals = []  # Собираем все потенциальные сигналы
-            
-            # Асинхронная обработка всех монет параллельно
-            tasks = [process_symbol(symbol) for symbol in SYMBOLS]
-            results = await asyncio.gather(*tasks)
-            
-            # Обработка результатов анализа - СНАЧАЛА СОБИРАЕМ, ПОТОМ ФИЛЬТРУЕМ
-            for result in results:
-                if result is None or len(result) < 2:
+                
+            if len(result) >= 6:
+                signals, symbol, price, time, df, atr = result
+                processed_symbols.append(symbol)
+                
+                # Если сигналов нет, переходим к следующей монете
+                if not signals:
                     continue
-                    
-                if len(result) >= 6:
-                    signals, symbol, price, time, df, atr = result
-                    processed_symbols.append(symbol)
-                    
-                    # Если сигналов нет, переходим к следующей монете
-                    if not signals:
-                        continue
-                    
-                    # Получаем правильные TP/SL значения
-                    direction = 'SHORT' if '🔴 SHORT' in signals[0] else 'LONG'
-                    if symbol in adaptive_targets:
-                        tp_price = adaptive_targets[symbol]['tp']
-                        sl_price = adaptive_targets[symbol]['sl']
-                    else:
-                        # Рассчитываем TP/SL правильно
-                        tp_price, sl_price = calculate_tp_sl(df, price, atr, direction)
-                        if tp_price is None or sl_price is None:
-                            logging.error(f"Ошибка расчета TP/SL для {symbol}, пропускаем сигнал")
-                            continue
-                        adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
-                    
-                    # Рассчитываем проценты для отображения
-                    if direction == 'LONG':
-                        tp_pct = ((tp_price - price) / price) * 100
-                        sl_pct = ((price - sl_price) / price) * 100
-                    else:  # SHORT
-                        tp_pct = ((price - tp_price) / price) * 100
-                        sl_pct = ((sl_price - price) / price) * 100
-                    
-                    # Извлекаем силу сигнала для сортировки
-                    signal_strength = 0
-                    try:
-                        for signal in signals:
-                            if 'Сила:' in signal:
-                                strength_line = [line for line in signal.split('\n') if 'Сила:' in line][0]
-                                signal_strength = float(strength_line.split('(')[1].split(')')[0])
-                                break
-                    except:
-                        signal_strength = 0
-                    
-                    # Собираем информацию о сигнале
-                    signal_info = {
-                        'signals': signals,
-                        'symbol': symbol,
-                        'price': price,
-                        'time': time,
-                        'df': df,
-                        'atr': atr,
-                        'tp_price': tp_price,
-                        'sl_price': sl_price,
-                        'tp_pct': tp_pct,
-                        'sl_pct': sl_pct,
-                        'strength': signal_strength,
-                        'direction': direction
-                    }
-                    all_current_signals.append(signal_info)
+                
+                # Получаем правильные TP/SL значения
+                direction = 'SHORT' if '🔴 SHORT' in signals[0] else 'LONG'
+                if symbol in adaptive_targets:
+                    tp_price = adaptive_targets[symbol]['tp']
+                    sl_price = adaptive_targets[symbol]['sl']
                 else:
-                    _, symbol = result
-                    logging.warning(f"Неполный результат для {symbol}, пропускаем")
+                    # Рассчитываем TP/SL правильно
+                    tp_price, sl_price = calculate_tp_sl(df, price, atr, direction)
+                    adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
+                
+                # Рассчитываем проценты для отображения
+                if direction == 'LONG':
+                    tp_pct = ((tp_price - price) / price) * 100
+                    sl_pct = ((price - sl_price) / price) * 100
+                else:  # SHORT
+                    tp_pct = ((price - tp_price) / price) * 100
+                    sl_pct = ((sl_price - price) / price) * 100
+                
+                # Извлекаем силу сигнала для сортировки
+                signal_strength = 0
+                try:
+                    for signal in signals:
+                        if 'Сила:' in signal:
+                            strength_line = [line for line in signal.split('\n') if 'Сила:' in line][0]
+                            signal_strength = float(strength_line.split('(')[1].split(')')[0])
+                            break
+                except:
+                    signal_strength = 0
+                
+                # Собираем информацию о сигнале
+                signal_info = {
+                    'signals': signals,
+                    'symbol': symbol,
+                    'price': price,
+                    'time': time,
+                    'df': df,
+                    'atr': atr,
+                    'tp_price': tp_price,
+                    'sl_price': sl_price,
+                    'tp_pct': tp_pct,
+                    'sl_pct': sl_pct,
+                    'strength': signal_strength,
+                    'direction': direction
+                }
+                all_current_signals.append(signal_info)
+            else:
+                _, symbol = result
+                logging.warning(f"Неполный результат для {symbol}, пропускаем")
+        
+        # Отправляем все найденные надежные сигналы (БЕЗ ЛИМИТОВ!)
+        if all_current_signals and trading_enabled:
+            # Сортируем по силе сигнала (берем самые сильные первыми)
+            all_current_signals.sort(key=lambda x: x['strength'], reverse=True)
+            logging.info(f"Найдено {len(all_current_signals)} надежных сигналов")
             
-            # Отправляем все найденные надежные сигналы (БЕЗ ЛИМИТОВ!)
-            if all_current_signals and trading_enabled:
-                # Сортируем по силе сигнала (берем самые сильные первыми)
-                all_current_signals.sort(key=lambda x: x['strength'], reverse=True)
-                logging.info(f"Найдено {len(all_current_signals)} надежных сигналов")
+            # УЛУЧШЕНИЕ: Убираем ограничения - пусть ВСЕ качественные сигналы проходят!
+            MAX_SIGNALS_PER_MESSAGE = 3  # Только для группировки по длине сообщения
+            MAX_MESSAGE_LENGTH = 3500  # Максимальная длина сообщения Telegram
+            
+            # Разбиваем сигналы на группы только для удобства отправки
+            signal_groups = []
+            for i in range(0, len(all_current_signals), MAX_SIGNALS_PER_MESSAGE):
+                signal_groups.append(all_current_signals[i:i+MAX_SIGNALS_PER_MESSAGE])
+            
+            # Отправляем ВСЕ группы (убираем ограничение на 3 группы)
+            for group_idx, signal_group in enumerate(signal_groups):
+                combined_msg = f"💰 Надежные сигналы на {signal_group[0]['time'].strftime('%d.%m.%Y %H:%M')}:\n\n"
                 
-                # УЛУЧШЕНИЕ: Убираем ограничения - пусть ВСЕ качественные сигналы проходят!
-                MAX_SIGNALS_PER_MESSAGE = 3  # Только для группировки по длине сообщения
-                MAX_MESSAGE_LENGTH = 3500  # Максимальная длина сообщения Telegram
-                
-                # Разбиваем сигналы на группы только для удобства отправки
-                signal_groups = []
-                for i in range(0, len(all_current_signals), MAX_SIGNALS_PER_MESSAGE):
-                    signal_groups.append(all_current_signals[i:i+MAX_SIGNALS_PER_MESSAGE])
-                
-                # Отправляем ВСЕ группы (убираем ограничение на 3 группы)
-                for group_idx, signal_group in enumerate(signal_groups):
-                    combined_msg = f"💰 Надежные сигналы на {signal_group[0]['time'].strftime('%d.%m.%Y %H:%M')}:\n\n"
+                for signal_info in signal_group:
+                    signals = signal_info['signals']
                     
-                    for signal_info in signal_group:
-                        signals = signal_info['signals']
-                        
-                        # Добавляем каждый сигнал
-                        signal_text = '\n'.join(signals) + "\n"
-                        
-                        # Проверяем длину сообщения
-                        if len(combined_msg + signal_text) > MAX_MESSAGE_LENGTH:
-                            # Если текущий сигнал не помещается, отправляем то что есть
-                            if len(combined_msg) > 200:  # Если есть что отправить
-                                combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
-                                
-                                # Добавляем номер группы если групп больше одной
-                                if len(signal_groups) > 1:
-                                    combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
-                                
-                                # Отправляем накопленное сообщение
-                                try:
-                                    await send_telegram_message(combined_msg)
-                                    signals_sent = True
-                                    await asyncio.sleep(1)  # Пауза между сообщениями
-                                except Exception as e:
-                                    logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
-                                
-                                # Начинаем новое сообщение с текущим сигналом
-                                group_idx += 1
-                                combined_msg = f"💰 Надежные сигналы (продолжение):\n\n" + signal_text
-                            else:
-                                break  # Если даже один сигнал не помещается
+                    # Добавляем каждый сигнал
+                    signal_text = '\n'.join(signals) + "\n"
+                    
+                    # Проверяем длину сообщения
+                    if len(combined_msg + signal_text) > MAX_MESSAGE_LENGTH:
+                        # Если текущий сигнал не помещается, отправляем то что есть
+                        if len(combined_msg) > 200:  # Если есть что отправить
+                            combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
+                            
+                            # Добавляем номер группы если групп больше одной
+                            if len(signal_groups) > 1:
+                                combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
+                            
+                            # Отправляем накопленное сообщение
+                            try:
+                                await send_telegram_message(combined_msg)
+                                signals_sent = True
+                                await asyncio.sleep(1)  # Пауза между сообщениями
+                            except Exception as e:
+                                logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
+                            
+                            # Начинаем новое сообщение с текущим сигналом
+                            group_idx += 1
+                            combined_msg = f"💰 Надежные сигналы (продолжение):\n\n" + signal_text
                         else:
-                            combined_msg += signal_text
-                        
-                        # Позиции уже открыты в check_signals(), не дублируем здесь
-                        symbol = signal_info['symbol']
-                        direction = signal_info['direction']
-                        
-                        if symbol in open_trades:
-                            logging.info(f"{symbol}: {direction} позиция уже открыта")
+                            break  # Если даже один сигнал не помещается
+                    else:
+                        combined_msg += signal_text
                     
-                    # Отправляем последнее накопленное сообщение
-                    if len(combined_msg) > 200:
-                        combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
-                        
-                        # Добавляем номер группы если групп больше одной
-                        if len(signal_groups) > 1:
-                            combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
-                        
-                        # Отправляем сообщение
-                        try:
-                            await send_telegram_message(combined_msg)
-                            signals_sent = True
-                            # Небольшая пауза между сообщениями
-                            if group_idx < len(signal_groups) - 1:
-                                await asyncio.sleep(1)
-                        except Exception as e:
-                            logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
-                            # Если сообщение все еще слишком длинное, отправляем укороченную версию
-                            if "too long" in str(e).lower():
-                                short_msg = f"⚡ {len(signal_group)} сигналов на {signal_group[0]['time'].strftime('%H:%M')}:\n"
-                                for signal_info in signal_group:
-                                    symbol = signal_info['symbol']
-                                    direction = "🟢 LONG" if signal_info['direction'] == 'LONG' else "🔴 SHORT"
-                                    strength = signal_info['strength']
-                                    short_msg += f"{direction} {symbol} (сила: {strength:.1f})\n"
-                                await send_telegram_message(short_msg)
+                    # Позиции уже открыты в check_signals(), не дублируем здесь
+                    symbol = signal_info['symbol']
+                    direction = signal_info['direction']
+                    
+                    if symbol in open_trades:
+                        logging.info(f"{symbol}: {direction} позиция уже открыта")
+                
+                # Отправляем последнее накопленное сообщение
+                if len(combined_msg) > 200:
+                    combined_msg += f"\n📊 Всего найдено: {len(all_current_signals)} надежных сигналов"
+                    
+                    # Добавляем номер группы если групп больше одной
+                    if len(signal_groups) > 1:
+                        combined_msg = f"📋 Сигналы (часть {group_idx + 1}/{len(signal_groups)}):\n\n" + combined_msg[combined_msg.find('💰'):]
+                    
+                    # Отправляем сообщение
+                    try:
+                        await send_telegram_message(combined_msg)
+                        signals_sent = True
+                        # Небольшая пауза между сообщениями
+                        if group_idx < len(signal_groups) - 1:
+                            await asyncio.sleep(1)
+                    except Exception as e:
+                        logging.error(f"Ошибка отправки группы сигналов {group_idx + 1}: {e}")
+                        # Если сообщение все еще слишком длинное, отправляем укороченную версию
+                        if "too long" in str(e).lower():
+                            short_msg = f"⚡ {len(signal_group)} сигналов на {signal_group[0]['time'].strftime('%H:%M')}:\n"
+                            for signal_info in signal_group:
+                                symbol = signal_info['symbol']
+                                direction = "🟢 LONG" if signal_info['direction'] == 'LONG' else "🔴 SHORT"
+                                strength = signal_info['strength']
+                                short_msg += f"{direction} {symbol} (сила: {strength:.1f})\n"
+                            await send_telegram_message(short_msg)
 
-            # Alive-отчёт раз в 6 часов + список обработанных монет  
-            now_utc = datetime.now(timezone.utc)
-            now_msk = now_utc.astimezone(tz_msk)
-            if (now_msk - last_alive) > timedelta(hours=6):
-                msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
-                msg += f"Обработано монет: {len(processed_symbols)}\n"
-                msg += f"📊 Минимальный порог сигналов: {MIN_COMPOSITE_SCORE} (строго фиксированный)\n"
-                msg += ', '.join(processed_symbols) if processed_symbols else 'Монеты не обработаны.'
-                if not signals_sent:
-                    msg += "\nСигналов нет."
-                await send_telegram_message(msg)
-                last_alive = now_msk
-            # Ежедневный отчёт в 9:00 и 22:00 по Москве
-            report_hours = [9, 22]
-            current_hour = now_msk.hour
-            if current_hour in report_hours and current_hour not in last_report_hours:
-                await send_daily_report()
-                last_report_hours = {current_hour}  # Сбросить, чтобы не было дублирования в этом часу
-            if current_hour not in report_hours:
-                last_report_hours = set()  # Обнуляем, чтобы в следующий раз снова отправить
-            await asyncio.sleep(60 * 5)  # Проверять каждые 5 минут как раньше
-    finally:
-        # Корректно отменяем задачи при завершении
-        telegram_task.cancel()
-        monitor_task.cancel()
-        try:
-            await telegram_task
-        except asyncio.CancelledError:
-            pass
-        try:
-            await monitor_task
-        except asyncio.CancelledError:
-            pass
+        # Alive-отчёт раз в 6 часов + список обработанных монет  
+        now_utc = datetime.now(timezone.utc)
+        now_msk = now_utc.astimezone(tz_msk)
+        if (now_msk - last_alive) > timedelta(hours=6):
+            msg = f"⏳ Бот работает, обновил данные на {now_msk.strftime('%d.%m.%Y %H:%M')}\n"
+            msg += f"Обработано монет: {len(processed_symbols)}\n"
+            msg += f"📊 Минимальный порог сигналов: {MIN_COMPOSITE_SCORE} (строго фиксированный)\n"
+            msg += ', '.join(processed_symbols) if processed_symbols else 'Монеты не обработаны.'
+            if not signals_sent:
+                msg += "\nСигналов нет."
+            await send_telegram_message(msg)
+            last_alive = now_msk
+        # Ежедневный отчёт в 9:00 и 22:00 по Москве
+        report_hours = [9, 22]
+        current_hour = now_msk.hour
+        if current_hour in report_hours and current_hour not in last_report_hours:
+            await send_daily_report()
+            last_report_hours = {current_hour}  # Сбросить, чтобы не было дублирования в этом часу
+        if current_hour not in report_hours:
+            last_report_hours = set()  # Обнуляем, чтобы в следующий раз снова отправить
+        await asyncio.sleep(60 * 5)  # Проверять каждые 5 минут как раньше
 
 def calculate_tp_sl(df, price, atr, direction='LONG'):
     """
@@ -1301,8 +1524,11 @@ def calculate_tp_sl(df, price, atr, direction='LONG'):
 
     except Exception as e:
         logging.error(f"Ошибка в calculate_tp_sl: {e}")
-        # Возвращаем None при ошибке - пусть система сама решает
-        return None, None
+        # Возвращаем консервативные значения по конфигу
+        if direction.upper() == 'LONG':
+            return price * (1 + max(TP_MIN, 0.008)), price * (1 - max(SL_MIN, 0.025))
+        else:
+            return price * (1 - max(TP_MIN, 0.008)), price * (1 + max(SL_MIN, 0.025))
 
 def check_tp_sl(symbol, price, time, df):
     global adaptive_targets
@@ -1328,9 +1554,6 @@ def check_tp_sl(symbol, price, time, df):
         # Рассчитываем TP/SL - возвращает абсолютные цены
         direction = 'LONG' if side == 'long' else 'SHORT'
         tp_price, sl_price = calculate_tp_sl(df, entry, atr, direction)
-        if tp_price is None or sl_price is None:
-            logging.error(f"Ошибка расчета TP/SL для {symbol}, не можем закрыть позицию")
-            return False
         adaptive_targets[symbol] = {'tp': tp_price, 'sl': sl_price}
     
     # Определяем логику закрытия на основе реального движения цены
@@ -1409,14 +1632,11 @@ def check_tp_sl(symbol, price, time, df):
 def simple_stats():
     """
     Формирует простую статистику: для каждой завершённой сделки — только монета и результат (УДАЧНО/НЕУДАЧНО),
-    внизу — общий итог по удачным и неудачным сделкам с общим P&L.
+    внизу — общий итог по удачным и неудачным сделкам.
     """
     report = []
     total_win = 0
     total_loss = 0
-    total_pnl_pct = 0.0  # Общий P&L в процентах
-    total_trades = 0
-    
     for symbol, trades in virtual_portfolio.items():
         if symbol == 'open_trades':
             continue
@@ -1463,34 +1683,16 @@ def simple_stats():
             else:
                 total_loss += 1
             
-            # Накапливаем общий P&L
-            total_pnl_pct += pnl_pct
-            total_trades += 1
-            
             # Монета, результат и процент прибыли/убытка
             report.append(f"{symbol}: {result} ({pnl_pct:+.2f}%)")
-    
     # Добавляем общую статистику
     if total_win + total_loss > 0:
         winrate = (total_win / (total_win + total_loss)) * 100
-        avg_pnl_pct = total_pnl_pct / total_trades if total_trades > 0 else 0
-        
         report.append(f"\nВсего удачных: {total_win}")
         report.append(f"Всего неудачных: {total_loss}")
         report.append(f"Винрейт: {winrate:.1f}%")
-        report.append(f"Общий P&L: {total_pnl_pct:+.2f}%")
-        report.append(f"Средний P&L: {avg_pnl_pct:+.2f}%")
-        
-        # Добавляем общую оценку результата
-        if total_pnl_pct > 0:
-            report.append(f"💰 Общий результат: ПРИБЫЛЬ (+{total_pnl_pct:.2f}%)")
-        elif total_pnl_pct < 0:
-            report.append(f"📉 Общий результат: УБЫТОК ({total_pnl_pct:.2f}%)")
-        else:
-            report.append(f"⚖️ Общий результат: БЕЗУБЫТОЧНО (0.00%)")
     else:
         report.append("\nНет завершённых сделок.")
-    
     return report, total_win, total_loss
 
 logging.basicConfig(level=logging.ERROR,
