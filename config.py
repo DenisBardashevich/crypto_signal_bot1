@@ -7,8 +7,9 @@
 # =============================================================================
 
 # === ОСНОВНЫЕ НАСТРОЙКИ ===
-TIMEFRAME        = '15m'     
-BACKUP_TIMEFRAME = '1h'      
+TIMEFRAME        = '15m'
+BACKUP_TIMEFRAME = '1h'
+MARKET_SNAPSHOT_TTL_SECONDS = 300
 
 # --- EMA периоды ---
 MA_FAST = 27
@@ -19,36 +20,37 @@ LIMIT = 400
 
 
 # === ОПТИМИЗИРОВАННЫЕ ПАРАМЕТРЫ ===
-MIN_COMPOSITE_SCORE = 1.3
-MIN_ADX = 40
-RSI_MIN = 46
-RSI_MAX = 60
-SHORT_MIN_RSI_MAX = 85
-SHORT_MIN_ADX = 18
-SHORT_MIN_RSI = 57
-LONG_MAX_RSI = 50
+MIN_COMPOSITE_SCORE = 1.4
+MIN_ADX = 23
+RSI_MIN = 40
+RSI_MAX = 62
+SHORT_MIN_RSI_MAX = 82
+SHORT_MIN_ADX = 26
+SHORT_MIN_RSI = 60
+LONG_MAX_RSI = 55
 
-TP_ATR_MULT = 2.6
-SL_ATR_MULT = 3.0
-TP_MIN = 0.013
-SL_MIN = 0.057
+TP_ATR_MULT = 2.1
+SL_ATR_MULT = 2.4
+TP_MIN = 0.009
+SL_MIN = 0.028
 
 # === ВРЕМЕННЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
 SIGNAL_COOLDOWN_MINUTES = 15
-MIN_TRIGGERS_ACTIVE_HOURS = 0.3
-MIN_TRIGGERS_INACTIVE_HOURS = 0.9
+MIN_TRIGGERS_ACTIVE_HOURS = 0.8
+MIN_TRIGGERS_INACTIVE_HOURS = 1.2
 
 # === ОБЪЕМНЫЕ ФИЛЬТРЫ (ОПТИМИЗИРОВАНЫ) ===
-MIN_VOLUME_USDT = 0.0001  
-MIN_VOLUME_MA_RATIO = 0.3
+MIN_VOLUME_USDT = 2_000_000
+MIN_VOLUME_MA_RATIO = 0.85
+MIN_24H_VOLUME_USDT = 75_000_000
 REQUIRE_MACD_HISTOGRAM_CONFIRMATION = False
 
 # === RSI ПАРАМЕТРЫ ===
 RSI_WINDOW = 9  # Оптимизировано Optuna для стабильного расчета
-RSI_EXTREME_OVERSOLD = 20  # Более реалистичное значение для экстремальной перепроданности
-RSI_EXTREME_OVERBOUGHT = 80  # Более реалистичное значение для экстремальной перекупленности
-RSI_OVERSOLD = RSI_MIN       # 46 
-RSI_OVERBOUGHT = RSI_MAX     # 60
+RSI_EXTREME_OVERSOLD = 22  # Подстроено под волатильность 2025
+RSI_EXTREME_OVERBOUGHT = 78  # Подстроено под волатильность 2025
+RSI_OVERSOLD = RSI_MIN       # 40
+RSI_OVERBOUGHT = RSI_MAX     # 62
 
 # --- ATR ---
 ATR_WINDOW = 14  # Стандартное значение для надежного расчета волатильности
@@ -67,7 +69,7 @@ MACD_SIGNAL = 9  # Стандартное значение для сигналь
 
 # --- VWAP ---
 USE_VWAP = True
-VWAP_DEVIATION_THRESHOLD = 0.5  
+VWAP_DEVIATION_THRESHOLD = 0.006
 
 # --- Telegram ---
 TELEGRAM_TOKEN = '8046529777:AAHV4BfC_cPz7AptR8k6MOKxGQA6FVMm6oM'
@@ -77,12 +79,16 @@ TELEGRAM_CHAT_ID = 931346988
 FEE_RATE = 0.0006
 
 # === БАЗОВЫЕ ПАРАМЕТРЫ ===
-MIN_15M_CANDLES = 50  
-VOLATILITY_LOOKBACK = 48  
-HIGH_VOLATILITY_THRESHOLD = 0.99   
-LOW_VOLATILITY_THRESHOLD = 0.001   
-HIGH_VOL_ADX_MIN = 1    
-LOW_VOL_ADX_MIN = 1     
+MIN_15M_CANDLES = 50
+VOLATILITY_LOOKBACK = 48
+HIGH_VOLATILITY_THRESHOLD = 0.05
+LOW_VOLATILITY_THRESHOLD = 0.012
+HIGH_VOL_ADX_MIN = 28
+LOW_VOL_ADX_MIN = 18
+MIN_ATR_PCT = 0.0025
+MAX_SPREAD_PCT = 0.0025
+MAX_FUNDING_RATE_ABS = 0.0008
+GLOBAL_MAX_ABS_FUNDING = 0.0006
 
 # Адаптивные настройки по времени
 ACTIVE_HOURS_UTC = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
@@ -90,6 +96,9 @@ ACTIVE_HOURS_UTC = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
 # --- Фильтры ---
 USE_VOLUME_FILTER = True
 USE_VOLATILITY_FILTER = True
+USE_GLOBAL_TREND_FILTER = True
+GLOBAL_TREND_SYMBOL = 'BTC/USDT:USDT'
+GLOBAL_MIN_ADX = 18
 
 # --- Стохастический RSI ---
 STOCH_RSI_K = 14   # Стандартное значение для %K
@@ -97,13 +106,13 @@ STOCH_RSI_D = 3    # Стандартное значение для %D
 STOCH_RSI_LENGTH = 14  # Стандартная длина для стабильного расчета
 
 # === СИСТЕМА СКОРИНГА (ОПТИМИЗИРОВАНЫ) ===
-WEIGHT_RSI = 3.8
-WEIGHT_MACD = 1.7
-WEIGHT_BB = 0.8
-WEIGHT_VWAP = 2.9
-WEIGHT_VOLUME = 0.6
-WEIGHT_ADX = 0.3
+WEIGHT_RSI = 3.4
+WEIGHT_MACD = 1.6
+WEIGHT_BB = 0.9
+WEIGHT_VWAP = 2.2
+WEIGHT_VOLUME = 0.8
+WEIGHT_ADX = 0.5
 
 # === СИСТЕМА ДЛЯ SHORT/LONG (ОПТИМИЗИРОВАНЫ) ===
-SHORT_BOOST_MULTIPLIER = 2.7
-LONG_PENALTY_IN_DOWNTREND = 0.05
+SHORT_BOOST_MULTIPLIER = 1.85
+LONG_PENALTY_IN_DOWNTREND = 0.9

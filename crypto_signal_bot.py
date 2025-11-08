@@ -26,42 +26,45 @@ EXCHANGE = ccxt.bybit({
     }
 })
 
-# РЕКОМЕНДОВАННЫЙ СПИСОК МОНЕТ (расширенный аудит, лучшие 34)
+MARKET_SNAPSHOT_CACHE = {}
+MARKET_SNAPSHOT_TTL = MARKET_SNAPSHOT_TTL_SECONDS
+GLOBAL_MARKET_STATE = {'ts': 0.0, 'adx': None, 'funding': 0.0}
+
+# РЕКОМЕНДОВАННЫЙ СПИСОК МОНЕТ (обновлён 2025-11-08 по ликвидности Bybit)
 TOP_SYMBOLS = [
-    '1000PEPE/USDT:USDT',
-    'ADA/USDT:USDT',
-    'ALT/USDT:USDT',
-    'AXS/USDT:USDT',
-    'BCH/USDT:USDT',
-    'BNB/USDT:USDT',
-    'COMP/USDT:USDT',
-    'CRV/USDT:USDT',
-    'INJ/USDT:USDT',
-    'JTO/USDT:USDT',
-    'LRC/USDT:USDT',
-    'LTC/USDT:USDT',
-    'MANA/USDT:USDT',
-    'MAVIA/USDT:USDT',
-    'OP/USDT:USDT',
-    'ORDI/USDT:USDT',
-    'PIXEL/USDT:USDT',
-    'PORTAL/USDT:USDT',
-    'SEI/USDT:USDT',
+    'BTC/USDT:USDT',
+    'ETH/USDT:USDT',
     'SOL/USDT:USDT',
-    'STX/USDT:USDT',
-    'SUSHI/USDT:USDT',
-    'THETA/USDT:USDT',
-    'TIA/USDT:USDT',
-    'TON/USDT:USDT',
-    'UNI/USDT:USDT',
-    'VET/USDT:USDT',
+    'XRP/USDT:USDT',
+    'FIL/USDT:USDT',
+    'DOGE/USDT:USDT',
+    'NEAR/USDT:USDT',
+    'ICP/USDT:USDT',
+    'ZEC/USDT:USDT',
+    'LTC/USDT:USDT',
+    'SUI/USDT:USDT',
+    'ADA/USDT:USDT',
+    'BNB/USDT:USDT',
+    'DOT/USDT:USDT',
+    'LINK/USDT:USDT',
+    'ENA/USDT:USDT',
+    'STRK/USDT:USDT',
     'WIF/USDT:USDT',
     'ETC/USDT:USDT',
-    'IMX/USDT:USDT',
-    'SAND/USDT:USDT',
-    'SUI/USDT:USDT',
+    'AVAX/USDT:USDT',
+    'ORDI/USDT:USDT',
+    'TAO/USDT:USDT',
+    'AIA/USDT:USDT',
+    'MMT/USDT:USDT',
+    '1000PEPE/USDT:USDT',
+    'SEI/USDT:USDT',
+    'TIA/USDT:USDT',
     'ARB/USDT:USDT',
-    'ENJ/USDT:USDT'
+    'INJ/USDT:USDT',
+    'APT/USDT:USDT',
+    'MNT/USDT:USDT',
+    'WLD/USDT:USDT',
+    'AAVE/USDT:USDT'
 ]
 markets = EXCHANGE.load_markets()
 # Фильтруем только те пары, которые есть на фьючерсах (swap) и активны
@@ -545,7 +548,12 @@ def evaluate_signal_strength(df, symbol, action):
         # 6. ADX анализ (СИНХРОНИЗИРОВАНО С ОПТИМИЗАТОРОМ)
         adx_score = 0
         # СИНХРОНИЗИРОВАНО: используем упрощенные пороги как в оптимизаторе
-        min_adx = 25 if is_high_vol else (15 if is_low_vol else 20)  # Упрощенные пороги
+        if is_high_vol:
+            min_adx = max(HIGH_VOL_ADX_MIN, 5)
+        elif is_low_vol:
+            min_adx = max(LOW_VOL_ADX_MIN, 5)
+        else:
+            min_adx = max(MIN_ADX, 5)
         
         if last['adx'] >= 50:
             adx_score = 3.0
@@ -703,11 +711,32 @@ def recommend_leverage(strength_score, history_percent):
     return f'x{final_leverage}'
 
 # ========== ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ОБЪЁМА ==========
-def get_24h_volume(symbol):
+def get_market_snapshot(symbol):
+    now = time.time()
+    cached = MARKET_SNAPSHOT_CACHE.get(symbol)
+    if cached and (now - cached['ts']) < MARKET_SNAPSHOT_TTL:
+        return cached['data']
     try:
         ticker = EXCHANGE.fetch_ticker(symbol)
-        volume = ticker.get('quoteVolume', 0)
-        return volume
+        MARKET_SNAPSHOT_CACHE[symbol] = {'ts': now, 'data': ticker}
+        return ticker
+    except ccxt.RateLimitExceeded as e:
+        logging.warning(f"Rate limit snapshot {symbol}, жду {getattr(e, 'retry_after', 1)} сек.")
+        time.sleep(getattr(e, 'retry_after', 1))
+    except ccxt.BaseError as e:
+        logging.error(f"Биржевой API snapshot ошибка {symbol}: {e}")
+    except Exception as e:
+        logging.error(f"Не удалось получить snapshot {symbol}: {e}")
+    return {}
+
+
+def get_24h_volume(symbol):
+    try:
+        ticker = get_market_snapshot(symbol)
+        if not ticker:
+            return 0
+        volume = ticker.get('quoteVolume') or ticker.get('baseVolume') or 0
+        return float(volume)
     except ccxt.RateLimitExceeded as e:
         logging.warning(f"Rate limit exceeded for {symbol}, жду {getattr(e, 'retry_after', 1)} сек.")
         time.sleep(getattr(e, 'retry_after', 1))
@@ -718,15 +747,41 @@ def get_24h_volume(symbol):
 
 last_signal_time = defaultdict(lambda: datetime.min.replace(tzinfo=timezone.utc))
 
-def get_btc_adx():
+def get_btc_adx(symbol=GLOBAL_TREND_SYMBOL):
     try:
-        ohlcv = EXCHANGE.fetch_ohlcv('BTC/USDT:USDT', timeframe=TIMEFRAME, limit=50)
+        ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=50)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
-        return df['adx'].iloc[-1]
+        return float(df['adx'].iloc[-1])
     except Exception as e:
-        logging.error(f"Ошибка получения ADX BTC: {e}")
-        return 99
+        logging.error(f"Ошибка получения ADX {symbol}: {e}")
+        return None
+
+
+def get_global_market_state():
+    now = time.time()
+    if (now - GLOBAL_MARKET_STATE['ts']) < MARKET_SNAPSHOT_TTL:
+        return GLOBAL_MARKET_STATE
+
+    adx = get_btc_adx(GLOBAL_TREND_SYMBOL)
+    funding = 0.0
+    snapshot = get_market_snapshot(GLOBAL_TREND_SYMBOL) if USE_GLOBAL_TREND_FILTER else {}
+    info = snapshot.get('info') if isinstance(snapshot, dict) else {}
+    if isinstance(info, dict):
+        for key in ('funding_rate', 'fundingRate'):
+            if key in info:
+                try:
+                    funding = float(info[key])
+                except (TypeError, ValueError):
+                    funding = 0.0
+                break
+
+    GLOBAL_MARKET_STATE.update({
+        'ts': now,
+        'adx': adx if adx is not None else 0.0,
+        'funding': funding
+    })
+    return GLOBAL_MARKET_STATE
 
 def check_signals(df, symbol):
     """
@@ -761,6 +816,78 @@ def check_signals(df, symbol):
         
         # Диагностика: начальные значения
         logging.info(f"🔍 {symbol}: RSI={last['rsi']:.1f}, ADX={last['adx']:.1f}, час_UTC={current_time_utc.hour}")
+
+        market_snapshot = {}
+        if MIN_24H_VOLUME_USDT or MAX_FUNDING_RATE_ABS or MAX_SPREAD_PCT:
+            market_snapshot = get_market_snapshot(symbol)
+
+        if MIN_24H_VOLUME_USDT:
+            volume_24h = 0.0
+            if isinstance(market_snapshot, dict):
+                raw_volume = market_snapshot.get('quoteVolume') or market_snapshot.get('baseVolume') or 0.0
+                try:
+                    volume_24h = float(raw_volume)
+                except (TypeError, ValueError):
+                    volume_24h = 0.0
+            if volume_24h < MIN_24H_VOLUME_USDT:
+                logging.info(f"🔍 {symbol}: ОТКЛОНЕН по 24h объёму ({volume_24h:,.0f} < {MIN_24H_VOLUME_USDT:,.0f})")
+                return []
+
+        if MIN_VOLUME_USDT and last.get('volume_usdt', 0) < MIN_VOLUME_USDT:
+            logging.info(f"🔍 {symbol}: ОТКЛОНЕН по объёму свечи ({last.get('volume_usdt', 0):,.0f} < {MIN_VOLUME_USDT:,.0f})")
+            return []
+
+        if USE_GLOBAL_TREND_FILTER:
+            global_state = get_global_market_state()
+            if global_state['adx'] < GLOBAL_MIN_ADX:
+                logging.info(f"🔍 {symbol}: ОТКЛОНЕН по глобальному ADX ({global_state['adx']:.1f} < {GLOBAL_MIN_ADX})")
+                return []
+            if GLOBAL_MAX_ABS_FUNDING and abs(global_state['funding']) > GLOBAL_MAX_ABS_FUNDING:
+                logging.info(f"🔍 {symbol}: ОТКЛОНЕН из-за funding BTC ({global_state['funding']:.5f})")
+                return []
+
+        if MAX_FUNDING_RATE_ABS and isinstance(market_snapshot, dict):
+            funding = 0.0
+            info = market_snapshot.get('info', {})
+            if isinstance(info, dict):
+                for key in ('funding_rate', 'fundingRate'):
+                    if key in info:
+                        try:
+                            funding = float(info[key])
+                        except (TypeError, ValueError):
+                            funding = 0.0
+                        break
+            if abs(funding) > MAX_FUNDING_RATE_ABS:
+                logging.info(f"🔍 {symbol}: ОТКЛОНЕН по funding ({funding:.5f} > {MAX_FUNDING_RATE_ABS:.5f})")
+                return []
+
+        if MAX_SPREAD_PCT:
+            spread_pct = None
+            if isinstance(market_snapshot, dict):
+                bid = market_snapshot.get('bid')
+                ask = market_snapshot.get('ask')
+                try:
+                    bid = float(bid)
+                    ask = float(ask)
+                except (TypeError, ValueError):
+                    bid = ask = None
+                if bid and ask:
+                    mid = (bid + ask) / 2
+                    if mid:
+                        spread_pct = (ask - bid) / mid
+            if spread_pct is None:
+                spread_pct = last.get('spread_pct', 0)
+            if spread_pct and spread_pct > MAX_SPREAD_PCT:
+                logging.info(f"🔍 {symbol}: ОТКЛОНЕН по спреду ({spread_pct:.4f} > {MAX_SPREAD_PCT:.4f})")
+                return []
+
+        if MIN_ATR_PCT:
+            atr = last.get('atr')
+            if atr and last['close'] > 0:
+                atr_pct = atr / last['close']
+                if atr_pct < MIN_ATR_PCT:
+                    logging.info(f"🔍 {symbol}: ОТКЛОНЕН по ATR ({atr_pct:.4f} < {MIN_ATR_PCT:.4f})")
+                    return []
         
         # 3. Проверка Cooldown
         if symbol not in last_signal_time:
