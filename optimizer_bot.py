@@ -24,6 +24,7 @@ def get_historical_data(symbol, hours_back=72):
         logging.warning(f"Ошибка загрузки {symbol}: {e}")
         return pd.DataFrame()
 
+
 def simulate_signals(df, symbol, params, active_hours_utc):
     if df.empty or len(df) < MIN_15M_CANDLES + 50:
         return []
