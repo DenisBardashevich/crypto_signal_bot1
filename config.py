@@ -6,10 +6,29 @@
 # ⚡ PROFIT FACTOR: 2.62, мат.ожидание: 0.912%
 # =============================================================================
 
+import os
+
 # === ОСНОВНЫЕ НАСТРОЙКИ ===
-TIMEFRAME        = '15m'
+TIMEFRAME        = os.getenv('SIGNAL_TIMEFRAME', '15m')
 BACKUP_TIMEFRAME = '1h'
 MARKET_SNAPSHOT_TTL_SECONDS = 300
+
+# === СТАРШИЙ ТАЙМФРЕЙМ ДЛЯ ПОДТВЕРЖДЕНИЯ ===
+HIGHER_TIMEFRAME = os.getenv('SIGNAL_HIGHER_TIMEFRAME', '30m')
+REQUIRE_HIGHER_TF = True
+HIGHER_TF_CACHE_SECONDS = 480
+HIGHER_TF_MIN_BARS = 140
+HIGHER_TF_EMA_FAST = 34
+HIGHER_TF_EMA_SLOW = 89
+HIGHER_TF_RSI_WINDOW = 14
+HIGHER_TF_RSI_BULL = 52
+HIGHER_TF_RSI_BEAR = 48
+HIGHER_TF_ADX_MIN = 18
+
+# === ФИЛЬТРАЦИЯ КАЧЕСТВА СИГНАЛОВ ===
+MIN_SIGNAL_SCORE_TO_SEND = 6.5
+RISK_REWARD_MIN = 1.2
+MAX_SIGNALS_PER_ROUND = 5
 
 # --- EMA периоды ---
 MA_FAST = 27

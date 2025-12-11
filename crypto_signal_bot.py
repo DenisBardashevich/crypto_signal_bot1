@@ -29,6 +29,7 @@ EXCHANGE = ccxt.bybit({
 MARKET_SNAPSHOT_CACHE = {}
 MARKET_SNAPSHOT_TTL = MARKET_SNAPSHOT_TTL_SECONDS
 GLOBAL_MARKET_STATE = {'ts': 0.0, 'adx': None, 'funding': 0.0}
+HIGHER_TF_CACHE = {}
 
 # РЕКОМЕНДОВАННЫЙ СПИСОК МОНЕТ (обновлён 2025-11-08 по ликвидности Bybit)
 TOP_SYMBOLS = [
@@ -293,6 +294,57 @@ def get_ohlcv(symbol):
             logging.error(f"Ошибка получения OHLCV по {symbol}: {e}")
             return pd.DataFrame()
     return pd.DataFrame()
+
+def get_higher_tf_context(symbol):
+    """
+    Получает контекст старшего таймфрейма для подтверждения направления сделки.
+    Возвращает словарь с bias: long/short/neutral.
+    """
+    now = time.time()
+    cached = HIGHER_TF_CACHE.get(symbol)
+    if cached and (now - cached['ts']) < HIGHER_TF_CACHE_SECONDS:
+        return cached['data']
+
+    try:
+        ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=HIGHER_TIMEFRAME, limit=HIGHER_TF_MIN_BARS)
+        if not ohlcv or len(ohlcv) < HIGHER_TF_MIN_BARS:
+            logging.info(f"{symbol}: недостаточно данных старшего ТФ ({HIGHER_TIMEFRAME})")
+            return None
+
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('Europe/Moscow')
+        df['ema_fast'] = ta.trend.ema_indicator(df['close'], window=HIGHER_TF_EMA_FAST)
+        df['ema_slow'] = ta.trend.ema_indicator(df['close'], window=HIGHER_TF_EMA_SLOW)
+        df['rsi'] = ta.momentum.rsi(df['close'], window=HIGHER_TF_RSI_WINDOW)
+        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=ADX_WINDOW)
+        df = df.dropna().reset_index(drop=True)
+        if df.empty:
+            return None
+
+        last = df.iloc[-1]
+        bias = 'neutral'
+        if last['ema_fast'] > last['ema_slow'] and last['rsi'] >= HIGHER_TF_RSI_BULL and last['adx'] >= HIGHER_TF_ADX_MIN:
+            bias = 'long'
+        elif last['ema_fast'] < last['ema_slow'] and last['rsi'] <= HIGHER_TF_RSI_BEAR and last['adx'] >= HIGHER_TF_ADX_MIN:
+            bias = 'short'
+
+        context = {
+            'bias': bias,
+            'timestamp': last['timestamp'],
+            'adx': float(last['adx']),
+            'rsi': float(last['rsi'])
+        }
+        HIGHER_TF_CACHE[symbol] = {'ts': now, 'data': context}
+        return context
+
+    except ccxt.RateLimitExceeded as e:
+        wait_time = getattr(e, 'retry_after', 1)
+        logging.warning(f"Rate limit higher TF {symbol}, жду {wait_time} сек.")
+        time.sleep(wait_time)
+        return cached['data'] if cached else None
+    except Exception as e:
+        logging.error(f"Ошибка получения старшего ТФ {symbol}: {e}")
+        return cached['data'] if cached else None
 
 def analyze(df):
     """ОПТИМИЗИРОВАННЫЙ анализ для 15-минутных фьючерсов с современными настройками 2025."""
@@ -946,6 +998,22 @@ def check_signals(df, symbol):
         
         # 12-13. Удалены лишние фильтры (консистентность объёма, волатильность RSI)
         
+        # === СТАРШИЙ ТАЙМФРЕЙМ ДЛЯ ПОДТВЕРЖДЕНИЯ ===
+        higher_tf_bias = 'neutral'
+        long_allowed = True
+        short_allowed = True
+        if REQUIRE_HIGHER_TF:
+            higher_context = get_higher_tf_context(symbol)
+            if not higher_context:
+                logging.info(f"🔍 {symbol}: ОТКЛОНЕН - нет данных {HIGHER_TIMEFRAME} для подтверждения")
+                return []
+            higher_tf_bias = higher_context.get('bias', 'neutral')
+            long_allowed = higher_tf_bias == 'long'
+            short_allowed = higher_tf_bias == 'short'
+            if higher_tf_bias == 'neutral':
+                logging.info(f"🔍 {symbol}: ОТКЛОНЕН - нейтральный тренд на {HIGHER_TIMEFRAME}")
+                return []
+        
         # === ТРИГГЕРЫ (точно как в оптимизаторе) ===
         buy_triggers = 0
         sell_triggers = 0
@@ -1016,6 +1084,14 @@ def check_signals(df, symbol):
             if buy_triggers < min_triggers and sell_triggers < min_triggers:
                 logging.info(f"🔍 {symbol}: ❌ Недостаточно триггеров для любого сигнала")
         
+        # Подтверждение направления по старшему таймфрейму
+        if signal_type == 'BUY' and not long_allowed:
+            logging.info(f"🔍 {symbol}: ❌ BUY отклонен: старший ТФ {HIGHER_TIMEFRAME} в сторону {higher_tf_bias}")
+            signal_type = None
+        if signal_type == 'SELL' and not short_allowed:
+            logging.info(f"🔍 {symbol}: ❌ SELL отклонен: старший ТФ {HIGHER_TIMEFRAME} в сторону {higher_tf_bias}")
+            signal_type = None
+        
         # MACD Histogram фильтр (как в оптимизаторе)
         if signal_type and REQUIRE_MACD_HISTOGRAM_CONFIRMATION and 'macd_hist' in df.columns and len(df) > 1:
             current_hist = last['macd_hist']
@@ -1038,6 +1114,9 @@ def check_signals(df, symbol):
             try:
                 score, pattern = evaluate_signal_strength(df, symbol, signal_type)
                 logging.info(f"🔍 {symbol}: Оценка сигнала {signal_type}: score={score:.2f}, требуется >= {MIN_COMPOSITE_SCORE}")
+                if score < MIN_SIGNAL_SCORE_TO_SEND:
+                    logging.info(f"🔍 {symbol}: ❌ Сигнал {signal_type} отклонен: score {score:.2f} < {MIN_SIGNAL_SCORE_TO_SEND}")
+                    return []
                 if score >= MIN_COMPOSITE_SCORE:
                     # Получаем метку силы
                     strength_label, win_prob = signal_strength_label(score)
@@ -1065,6 +1144,9 @@ def check_signals(df, symbol):
                     
                     # Рассчитываем реальное соотношение R:R
                     real_rr = tp_pct / sl_pct if sl_pct > 0 else 0
+                    if real_rr < RISK_REWARD_MIN:
+                        logging.info(f"🔍 {symbol}: ❌ Сигнал {signal_type} отклонен: R:R {real_rr:.2f} < {RISK_REWARD_MIN}")
+                        return []
                     
                     # Составляем сообщение
                     signal = f"{signal_emoji} {symbol}\n"
@@ -1074,6 +1156,7 @@ def check_signals(df, symbol):
                     signal += f"TP: +{tp_pct:.2f}% | SL: -{sl_pct:.2f}%\n"
                     signal += f"R:R = {real_rr:.2f}:1\n"
                     signal += f"RSI: {last['rsi']:.1f} | ADX: {last['adx']:.1f}\n"
+                    signal += f"Старший ТФ ({HIGHER_TIMEFRAME}): {higher_tf_bias.upper()}\n"
                     
                     # Добавляем детали триггеров
                     triggers = buy_triggers if signal_type == 'BUY' else sell_triggers
@@ -1107,7 +1190,12 @@ def check_signals(df, symbol):
 # Функция calculate_rr_ratio удалена - теперь используется реальное соотношение TP/SL
 
 # ========== ОТПРАВКА В TELEGRAM ==========
+def ensure_telegram_config():
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        raise ValueError("Не заданы TELEGRAM_TOKEN и TELEGRAM_CHAT_ID в переменных окружения")
+
 async def send_telegram_message(text):
+    ensure_telegram_config()
     bot = Bot(token=TELEGRAM_TOKEN)
     for attempt in range(3):
         try:
@@ -1319,6 +1407,11 @@ async def status_command(update, context):
 
 # ========== ОСНОВНОЙ ЦИКЛ ==========
 async def telegram_bot():
+    try:
+        ensure_telegram_config()
+    except Exception as e:
+        logging.error(f"Telegram config error: {e}")
+        return
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
     # Добавляем обработчики команд
@@ -1510,13 +1603,15 @@ async def main():
                 _, symbol = result
                 logging.warning(f"Неполный результат для {symbol}, пропускаем")
         
-        # Отправляем все найденные надежные сигналы (БЕЗ ЛИМИТОВ!)
+        # Отправляем все найденные надежные сигналы
         if all_current_signals and trading_enabled:
             # Сортируем по силе сигнала (берем самые сильные первыми)
             all_current_signals.sort(key=lambda x: x['strength'], reverse=True)
+            if MAX_SIGNALS_PER_ROUND:
+                all_current_signals = all_current_signals[:MAX_SIGNALS_PER_ROUND]
             logging.info(f"Найдено {len(all_current_signals)} надежных сигналов")
             
-            # УЛУЧШЕНИЕ: Убираем ограничения - пусть ВСЕ качественные сигналы проходят!
+            # Отправляем в несколько сообщений по группам
             MAX_SIGNALS_PER_MESSAGE = 3  # Только для группировки по длине сообщения
             MAX_MESSAGE_LENGTH = 3500  # Максимальная длина сообщения Telegram
             
